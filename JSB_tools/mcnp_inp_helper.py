@@ -7,11 +7,12 @@ import warnings
 from functools import cached_property
 import platform
 import os
-import shutil
-
+import stat
 
 
 def _split_line(line):
+    # todo: do this for phits too. Max line length is 200, where \ (or /) is used as the continue line symbol.
+    #  Also, continue line must begin with 5 spaces
     _line0 = line
     assert isinstance(line, str)
     l_striped_line = line.lstrip()
@@ -67,6 +68,8 @@ class InputFile:
 
         self.__auto_directory__ = False
         self.__auto_file_names__ = False
+
+        self.platform = platform.system()  # 'Linux', 'Darwin', 'Java', 'Windows'
 
         self.gen_run_script = kwargs.get("gen_run_script", True)
         assert isinstance(self.gen_run_script, bool)
@@ -188,15 +191,19 @@ class InputFile:
         else:
             self.new_name = new_file_name
 
-        if self.new_directory is None:
-            self.new_directory = self.inp_file_path.parent/new_file_name
-            self.new_directory.mkdir(exist_ok=True)
+        if new_file_dir is None:
+            self.new_directory = self.inp_file_path.parent
         else:
             self.new_directory = Path(new_file_dir)
+        self.new_directory = self.new_directory/self.new_name
+        if not self.new_directory.exists():
+            print("Creating new directory: {0}".format(self.new_directory))
+        self.new_directory.mkdir(exist_ok=True)
 
         assert self.new_directory.exists(), "Directory '{0}' doesn't exist.".format(self.new_directory)
 
-    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, new_file_dir=None, script_name="cmd", script_kwargs=None):
+    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, new_file_dir=None, script_name="cmd",
+                           **mcnp_or_phits_kwargs):
         assert len(self.__new_inp_lines__) == 0
         self.__set_directory_etc__(new_file_name, new_file_dir)
 
@@ -218,7 +225,7 @@ class InputFile:
         self.__split_new_lines__()
         self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
         if self.gen_run_script is True:
-            self.__gen_run_script__(script_name, script_kwargs)
+            self.__gen_run_script__(script_name, mcnp_or_phits_kwargs)
         self.__write_file__()
 
         self.__new_inp_lines__ = []
@@ -239,29 +246,42 @@ class InputFile:
         self.__num_writes__ += 1
         self.__files_written_so_far__.append(self.new_directory / self.new_name)
 
-    def __gen_run_script__(self, script_name, script_kwargs):
+    def __gen_run_script__(self, script_name, mcnp_or_phits_kwargs):
         f_path = self.new_directory.parent / script_name
-        if script_kwargs is None:
+        if mcnp_or_phits_kwargs is None:
             script_kwargs = ""
         else:
-            assert isinstance(script_kwargs, dict)
-            script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in script_kwargs.items()])
+            assert isinstance(mcnp_or_phits_kwargs, dict)
+            script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in mcnp_or_phits_kwargs.items()])
+
+        cd_cmd = "cd {0}".format(self.new_directory)
+        run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, self.new_name, script_kwargs) if self.is_mcnp else \
+            "{0};phits.sh {1} {2}".format(cd_cmd, self.new_name, script_kwargs)
+
+        if self.platform == "Darwin":
+            new_cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0} 2>&1 | tee -i log_{1}.txt;exit\"\nend " \
+                      "tell'\n".format(run_cmd, self.new_name)
+        elif self.platform == "Linux":
+            new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd, self.new_name)
+        elif self.platform == "Windows":
+            warnings.warn("Currently no implementation of the creation of a .bat file to automatically run the "
+                          "simulations on Windows. ")
+            return
+        else:
+            warnings.warn("Run script not generated. Platform not supported.")
+            return
 
         with open(f_path, "w" if self.__num_writes__ == 0 else "a") as f:
-            cd_cmd = "cd {0}".format(self.new_directory)
-            run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, self.new_name, script_kwargs) if self.is_mcnp else \
-                "{0};phits.sh {1} {2}".format(cd_cmd, self.new_name, script_kwargs)
-
-            os = platform.system()
-            if os == "Darwin":
-                new_cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0} 2>&1 | tee -i log_{1}.txt;exit\"\nend " \
-                          "tell'\n".format(run_cmd, self.new_name)
-            else:
-                raise NotImplementedError("Operating system '{0}' not yet implemented".format(os))
             f.write(new_cmd)
 
         if self.__num_writes__ == 0:
-            print("Directory:\ncd {0}".format(self.new_directory))
+            print("Directory:\ncd {0}".format(self.new_directory.parent))
+            if self.platform in ["Linux", "Darwin"]:
+                st = os.stat(f_path)
+                os.chmod(f_path, st.st_mode | stat.S_IEXEC)
+
+        if self.__num_writes__ == 1:
+            print("./cmd")
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, cycle_rnd_seed=False, gen_run_script=True):
