@@ -184,10 +184,12 @@ class Poisson(UncertainValue):
     def __init__(self, mean, tag=None, mc_samples=10000):
         super().__init__(scipy.stats.poisson(mean), tag=tag, mc_samples=mc_samples)
 
-a = Poisson(5)
-print(a.prob(6))
-# print(a, np.sqrt(5))
 
-plt.show()
+if __name__ == "__main__":
+    a = Poisson(5)
+    print(a.prob(6))
+    # print(a, np.sqrt(5))
+
+    plt.show()
 
 

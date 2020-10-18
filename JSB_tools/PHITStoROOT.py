@@ -4,6 +4,8 @@ import os
 import re
 import numpy as np
 
+__all__ = ["phits_to_root"]
+
 # TOdo write lookup tables.
 "see https://root.cern.ch/doc/v610/staff_8py_source.html"
 ROOT.gROOT.ProcessLine(
@@ -27,10 +29,14 @@ ROOT.gROOT.ProcessLine(
 "Should I include dirx/y/z in the above?"
 
 class Container:
-    def __init__(self, input_file_path, output_file_name=None, max_events=None, tree_name=None):
-        self.input_file_path = input_file_path
+    def __init__(self, sim_dump_file_path, output_file_name, output_directory, max_events, tree_name, overwrite):
+        self.sim_dump_file_path = sim_dump_file_path
+        assert Path(self.sim_dump_file_path).exists(), "Cannot find simulation dump file: {}".format(
+            self.sim_dump_file_path)
         self.output_file_name = output_file_name
+        self.output_file_dir = output_directory
         self.max_events = max_events
+        self.overwrite = overwrite
 
         self.tree_name = "tree" if tree_name is None else tree_name
         self.root_file, self.tree = self.__make_ROOT_file_and_tree__()
@@ -73,6 +79,16 @@ class Container:
         self.make_branch("charge_state", float)  # Charge state (this varies with ionization)
 
         self.make_branch("de_dx", float)
+
+        self.make_branch("is_term", int, reset=0)
+
+    @property
+    def is_term(self):
+        return self.is_term_br[0]
+
+    @is_term.setter
+    def is_term(self, value):
+        self.is_term_br[0] = value
 
     @property
     def de_dx(self):
@@ -326,17 +342,31 @@ class Container:
             self.__br_arrays__.append((getattr(self, b_name + "_br"), reset))
         assert hasattr(self, b_name), "define a getter and setter named '{0}' for Container".format(b_name)
 
-    def __make_ROOT_file_and_tree__(self):
-        directory = Path(os.path.dirname(self.input_file_path))
+    def __make_ROOT_file_and_tree__(self, __rename_index__=0):
+        if self.output_file_dir is None:
+            directory = Path(self.sim_dump_file_path).parent
+        else:
+            directory = Path(self.output_file_dir)
+
         if self.output_file_name is None:
-            new_file_name = os.path.basename(self.input_file_path)
-            _m = re.match(r"([^\.]+).*", new_file_name)
-            assert _m, "Could not set correct file name using: {0}".format(new_file_name)
-            new_file_name = _m.group(1) + ".root"
+            new_file_name = Path(self.sim_dump_file_path).name
+        else:
+            new_file_name = self.output_file_name
 
-        new_file_name = directory / new_file_name
+        _m = re.match(r"^([^\.]+).*", new_file_name)  # Remove the .xxx from end of file name
+        assert _m, "Could not set correct file name for '{0}'".format(new_file_name)
+        new_file_name = _m.group(1)
+        if __rename_index__ > 0:
+            new_file_name = "{0}_{1}".format(new_file_name, __rename_index__)
+        new_file_name += ".root"
 
-        file = ROOT.TFile(str(new_file_name), "RECREATE")
+        new_file_path = directory / new_file_name
+
+        if (not self.overwrite) and Path.exists(new_file_path):
+            self.__make_ROOT_file_and_tree__(__rename_index__ + 1)
+
+        file = ROOT.TFile(str(new_file_path), "RECREATE")
+        print("Creating: {0}".format(new_file_path))
 
         tree = ROOT.TTree("tree", self.tree_name)
         return file, tree
@@ -374,8 +404,8 @@ class PrevParameters:
         else:
             return de/dx
 
-def phits_to_root(input_file_path, output_file_name=None, max_events=None, tree_name=None):
-    container = Container(input_file_path, output_file_name, max_events, tree_name )
+def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_events=None, tree_name="tree", overwrite=True):
+    container = Container(input_file_path, output_file_name, output_directory, max_events, tree_name, overwrite)
 
     ncol_re = re.compile("NCOL=")
     nps_re = re.compile("NOCAS,")
@@ -391,7 +421,12 @@ def phits_to_root(input_file_path, output_file_name=None, max_events=None, tree_
     
     prev_params = PrevParameters()
 
-    file = open(container.input_file_path)
+    file = open(container.sim_dump_file_path)
+    try:
+        file.readline()
+        file.seek(0, 0)
+    except UnicodeDecodeError as e:
+        assert False, "Cannot read simulation file: {}".format(container.sim_dump_file_path)
 
     n_events = 0
 
@@ -406,14 +441,19 @@ def phits_to_root(input_file_path, output_file_name=None, max_events=None, tree_
         if line == "":
             break
         if ncol_re.match(line):
+            # If previous value ncol does not indicate start of calculation, then fill previous event
+            if container.prev_ncol > 1:
+                container.fill()
+                n_events += 1
+
             line = file.readline()
             container.ncol = int(line)
+
             if container.ncol == 4:
                 container.is_src = 1
 
-            if container.prev_ncol > 1:  # If previous ncol appearance does not indicate start of calculation
-                container.fill()
-                n_events += 1
+            if container.ncol in [7, 8, 9, 11, 12]:
+                container.is_term = 1
 
         elif nps_re.match(line):
             line = file.readline()
@@ -472,6 +512,9 @@ def phits_to_root(input_file_path, output_file_name=None, max_events=None, tree_
             prev_params.set(values)
 
     container.close()
+    print("'{0}' is done!".format(Path(input_file_path).name))
+
+    return container.tree
 
 
 if __name__ == "__main__":
