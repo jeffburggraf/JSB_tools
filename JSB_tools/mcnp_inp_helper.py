@@ -192,15 +192,19 @@ class InputFile:
             self.new_name = new_file_name
 
         if new_file_dir is None:
-            self.new_directory = self.inp_file_path.parent
+            self.new_directory = self.inp_file_path.parent/self.new_name
         else:
-            self.new_directory = Path(new_file_dir)
-        self.new_directory = self.new_directory/self.new_name
+            self.new_directory = Path(new_file_dir)/self.new_name
+
         if not self.new_directory.exists():
             print("Creating new directory: {0}".format(self.new_directory))
         self.new_directory.mkdir(exist_ok=True)
 
         assert self.new_directory.exists(), "Directory '{0}' doesn't exist.".format(self.new_directory)
+
+    @property
+    def new_file_full_path(self):
+        return self.new_directory / self.new_name
 
     def write_inp_in_scope(self, dict_of_globals, new_file_name=None, new_file_dir=None, script_name="cmd",
                            **mcnp_or_phits_kwargs):
@@ -222,8 +226,10 @@ class InputFile:
         if len(exception_msgs) > 0:
             raise Exception(exception_msgs)
 
-        self.__split_new_lines__()
-        self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
+        if self.is_mcnp:
+            self.__split_new_lines__()
+        if self.is_mcnp:
+            self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
         if self.gen_run_script is True:
             self.__gen_run_script__(script_name, mcnp_or_phits_kwargs)
         self.__write_file__()
