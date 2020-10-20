@@ -187,7 +187,12 @@ class InputFile:
 
     def __set_directory_etc__(self,  new_file_name, new_file_dir):
         if new_file_name is None:
-            self.new_name = "{0}_{1}".format(self.__num_writes__, self.inp_file_path.name)
+            new_name = self.inp_file_path.name
+            _m = re.match("(.+)\..+", new_name)
+            if _m:
+                new_name = _m.groups()[0]
+
+            self.new_name = "{0}_{1}".format(self.__num_writes__, new_name)
         else:
             self.new_name = new_file_name
 

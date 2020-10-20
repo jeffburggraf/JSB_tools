@@ -4,6 +4,7 @@ from uncertainties import ufloat
 from uncertainties.core import AffineScalarFunc
 from pathlib import Path
 import sys
+import time
 
 try:
     import soerp
@@ -20,6 +21,51 @@ import time
 import scipy.stats
 from numbers import Number
 
+class ProgressReport:
+    def __init__(self, i_final, sec_per_print=2, i_init=0):
+        self.__i_final__ = i_final
+        self.__i_init__ = i_init
+        self.__sec_per_print__ = sec_per_print
+        # self.__i_current__ = i_init
+        self.__next_print_time__ = time.time() + sec_per_print
+        self.__init_time__ = time.time()
+        self.__rolling_average__ = []
+
+    def __report__(self, t_now, i):
+        evt_per_sec = (i-self.__i_init__)/(t_now - self.__init_time__)
+        self.__rolling_average__.append(evt_per_sec)
+        evt_per_sec = np.mean(self.__rolling_average__)
+        if len(self.__rolling_average__) >= 5:
+            self.__rolling_average__ = self.__rolling_average__[:5]
+        evt_remaining = self.__i_final__ - i
+        sec_remaining = evt_remaining/evt_per_sec
+        sec_per_day = 60**2*24
+        days = sec_remaining//sec_per_day
+        hours = (sec_remaining % sec_per_day)//60**2
+        minutes = (sec_remaining % 60**2)//60
+        sec = (sec_remaining % 60)
+        msg = " {0} seconds".format(int(sec))
+        if minutes:
+            msg = " {0} minutes,".format(minutes) + msg
+        if hours:
+            msg = " {0} hours,".format(hours) + msg
+        if days:
+            msg = "{0} days,".format(days) + msg
+        print(msg + " remaining.", i/self.__i_final__)
+
+    def log(self, i):
+        t_now = time.time()
+        if t_now > self.__next_print_time__:
+            self.__report__(t_now, i)
+            self.__next_print_time__ += self.__sec_per_print__
+
+
+
+p = ProgressReport(24*60*59.85)
+t0 = time.time()
+for i in range(60*59):
+    p.log(i)
+    time.sleep(1)
 
 class UncertainValue:
     def __init__(self, distribution, mc_samples=10000, tag=None):

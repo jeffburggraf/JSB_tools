@@ -404,7 +404,9 @@ class PrevParameters:
         else:
             return de/dx
 
+
 def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_events=None, tree_name="tree", overwrite=True):
+
     container = Container(input_file_path, output_file_name, output_directory, max_events, tree_name, overwrite)
 
     ncol_re = re.compile("NCOL=")
