@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import re
 import numpy as np
+from .core import ProgressReport
 
 __all__ = ["phits_to_root"]
 
@@ -137,7 +138,7 @@ class Container:
     @z.setter
     def z(self, value):
         self.z_br[0] = value
-        
+
     @property
     def y(self):
         return self.y_br[0]
@@ -145,7 +146,7 @@ class Container:
     @y.setter
     def y(self, value):
         self.y_br[0] = value
-        
+
     @property
     def x(self):
         return self.x_br[0]
@@ -153,7 +154,7 @@ class Container:
     @x.setter
     def x(self, value):
         self.x_br[0] = value
-        
+
     @property
     def time(self):
         return self.time_br[0]
@@ -169,7 +170,7 @@ class Container:
     @erg.setter
     def erg(self, value):
         self.erg_br[0] = value
-        
+
     @property
     def dirz(self):
         return self.dirz_br[0]
@@ -177,7 +178,7 @@ class Container:
     @dirz.setter
     def dirz(self, value):
         self.dirz_br[0] = value
-        
+
     @property
     def diry(self):
         return self.diry_br[0]
@@ -185,7 +186,7 @@ class Container:
     @diry.setter
     def diry(self, value):
         self.diry_br[0] = value
-        
+
     @property
     def dirx(self):
         return self.dirx_br[0]
@@ -193,7 +194,7 @@ class Container:
     @dirx.setter
     def dirx(self, value):
         self.dirx_br[0] = value
-        
+
     @property
     def wgt(self):
         return self.wgt_br[0]
@@ -201,7 +202,7 @@ class Container:
     @wgt.setter
     def wgt(self, value):
         self.wgt_br[0] = value
-        
+
     @property
     def _col_counts(self):
         return self._col_counts_br
@@ -370,7 +371,7 @@ class Container:
 
         tree = ROOT.TTree("tree", self.tree_name)
         return file, tree
-    
+
 """prev_params.erg = values[0]
             prev_params.time = values[1]
             prev_params.x = values[2]
@@ -405,9 +406,14 @@ class PrevParameters:
             return de/dx
 
 
-def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_events=None, tree_name="tree", overwrite=True):
+def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_histories=None, tree_name="tree", overwrite=True):
 
-    container = Container(input_file_path, output_file_name, output_directory, max_events, tree_name, overwrite)
+    container = Container(input_file_path, output_file_name, output_directory, max_histories, tree_name, overwrite)
+    file_size = Path(input_file_path).stat().st_size
+    if max_histories is None:
+        progress = ProgressReport(file_size)
+    else:
+        progress = None
 
     ncol_re = re.compile("NCOL=")
     nps_re = re.compile("NOCAS,")
@@ -418,9 +424,9 @@ def phits_to_root(input_file_path, output_file_name=None, output_directory=None,
     info_5_re = re.compile("EC,TC,XC")
     info_6_re = re.compile("SPX,SPY")
     info_7_re = re.compile("NZST=")
-    
+
     prev_params_re = re.compile("E,T,X")
-    
+
     prev_params = PrevParameters()
 
     file = open(container.sim_dump_file_path)
@@ -438,8 +444,16 @@ def phits_to_root(input_file_path, output_file_name=None, output_directory=None,
         else:
             return list(map(map_func, l.replace("D", "E").split()))
 
-    while max_events is None or n_events < max_events:
+    while max_histories is None or n_events < max_histories:
         line = file.readline()
+        bytes_read = file.tell()
+        if progress is not None:
+            progress.log(bytes_read)
+        else:
+            if n_events > 5000:
+                i_final = bytes_read * max_histories / n_events
+                progress = ProgressReport(i_final, i_init=bytes_read)
+
         if line == "":
             break
         if ncol_re.match(line):
@@ -508,7 +522,7 @@ def phits_to_root(input_file_path, output_file_name=None, output_directory=None,
         elif info_7_re.match(line):
             value = int(file.readline())
             container.charge_state = value
-        
+
         elif prev_params_re.match(line):  # Previous energy and position
             values = line_of_values(file.readline(), float)
             prev_params.set(values)

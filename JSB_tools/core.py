@@ -60,13 +60,6 @@ class ProgressReport:
             self.__next_print_time__ += self.__sec_per_print__
 
 
-
-p = ProgressReport(24*60*59.85)
-t0 = time.time()
-for i in range(60*59):
-    p.log(i)
-    time.sleep(1)
-
 class UncertainValue:
     def __init__(self, distribution, mc_samples=10000, tag=None):
         self.mc_samples = mc_samples
