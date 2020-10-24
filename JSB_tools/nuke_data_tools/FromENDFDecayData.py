@@ -3,9 +3,9 @@ import pickle
 import re
 from pathlib import Path
 from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
-#  Download decay data from https://www.nndc.bnl.gov/endf/b7.1/download.html
 
-data_directory = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay/decay_data.pickle"
+pwd = Path(__file__).parent
+pickle_data_directory = pwd / "data" / "decay"
 
 
 def prettier_symbol(s):
@@ -16,83 +16,112 @@ def prettier_symbol(s):
 
 
 class Nuclide:
-    def __init__(self, z, a, **kwargs):
-        self.z = int(z)
-        self.a = int(a)
-        self.isomeric_state = kwargs.get("isomeric_state", 0)
-        self.symbol = "{0}-{1}{2}".format(ATOMIC_SYMBOL[int(z)], a,
-                                          "m{0}".format(self.isomeric_state) if self.isomeric_state else "")
-
-    def __repr__(self):
-        return "<Nuclide: {0}>".format(self.symbol)
-
-
-class RadioactiveNuclide(Nuclide):
     __instances__ = {}
 
+    no_pickle_data_error_msg = "No decay data available! " \
+                               "Download decay data from  https://www.nndc.bnl.gov/endf/b7.1/download.html\n" \
+                               "Then run Nuclide.__write_classes__(<path/to/decay/data>) ".format(Path(__file__))
+
     def __init__(self, openmc_decay, **kwargs):
-        super().__init__(openmc_decay.nuclide["atomic_number"], openmc_decay.nuclide["mass_number"],
-                         **kwargs)
-        self.half_life = openmc_decay.half_life
-        self.isomeric_state = openmc_decay.nuclide["isomeric_state"]
-
-        self.gamma_lines = []
-        if "gamma" in openmc_decay.spectra and openmc_decay.spectra["gamma"]["continuous_flag"] == "discrete" \
-                and openmc_decay.spectra["gamma"]["discrete_normalization"].n == 1:
-            self.gamma_lines = [{k: v for k, v in gamma.items() if k in ["energy", "from_mode", "intensity"]} for gamma
-                                in openmc_decay.spectra["gamma"]["discrete"]]
-
-        self.__openmc_decay__ = openmc_decay
-        # for m in openmc_decay.modes:
-        # decay_data._daughters_and_b_ratios[prettier_symbol(m.daughter)] = m.branching_ratio
         self.daughters = []
+        self.__daughter__info__ = []
         self.parents = []
-        RadioactiveNuclide.__instances__[self.symbol] = self
+        self.__parent__info__ = []
+        self.gamma_lines = []
+
+        if openmc_decay is not None:
+            self.z = openmc_decay.nuclide["atomic_number"]
+            self.a = openmc_decay.nuclide["mass_number"]
+            self.half_life = openmc_decay.half_life
+            self.isomeric_state = openmc_decay.nuclide["isomeric_state"]
+            self.spin = openmc_decay.nuclide["spin"]
+            self.symbol = "{0}-{1}{2}".format(ATOMIC_SYMBOL[int(self.z)], self.a,
+                                              "m{0}".format(self.isomeric_state) if self.isomeric_state else "")
+
+            if "gamma" in openmc_decay.spectra and openmc_decay.spectra["gamma"]["continuous_flag"] == "discrete" \
+                    and openmc_decay.spectra["gamma"]["discrete_normalization"].n == 1:
+                self.gamma_lines = [{k: v for k, v in gamma.items() if k in ["energy", "from_mode", "intensity"]} for gamma
+                                    in openmc_decay.spectra["gamma"]["discrete"]]
+
+            self.__openmc_decay__ = openmc_decay
+            for m in self.__openmc_decay__.modes:
+                info = {"daughter_symbol": prettier_symbol(m.daughter), "branching_ratio": m.branching_ratio,
+                        "modes": m.modes}
+                self.__daughter__info__.append(info)
+            self.__daughter__info__ = list(sorted(self.__daughter__info__, key=lambda x: -x["branching_ratio"]))
+
+        else:
+            self.z = kwargs.get("z")
+            self.a = kwargs.get("a")
+            self.isomeric_state = kwargs.get("isomeric_state", None)
+            self.spin = kwargs.get("spin", None)
+            self.symbol = kwargs.get("symbol")
+            self.half_life = kwargs.get("half_life", None)
+
+        if self.symbol not in Nuclide.__instances__:
+            Nuclide.__instances__[self.symbol] = self
+
+    def __write_class__(self):
+        file_name = self.symbol + ".pickle"
+        print("writing pickle data file {0} in directory {1}".format(file_name, pickle_data_directory))
+        with open(pickle_data_directory/file_name, "wb") as f:
+            pickle.dump(self, f)
 
     @staticmethod
-    def __set_daughters__(instances=None):
+    def __write_classes__(endf_decay_data_directory):
+        endf_decay_data_directory = Path(endf_decay_data_directory)
+        assert endf_decay_data_directory.exists(), Nuclide.no_pickle_data_error_msg
+        for path in endf_decay_data_directory.iterdir():
+            f = Path(path)
+            if f.name[-5:] != ".endf":
+                continue
+            openmc_decay = openmc.data.Decay(openmc.data.endf.Evaluation(f))
+            Nuclide(openmc_decay)
 
-        if instances is None:  # instances: set of all RadioactiveNuclide instances.
-            instances = RadioactiveNuclide.__instances__
-        for parent in instances.values():  # loop through every instance and set daughters
-            for m in parent.__openmc_decay__.modes:  # __openmc_decay__ is set during instantiation
-                daughter_symbol = prettier_symbol(m.daughter)  # ket the key of the daughter
-                # If daughter in instances then set nuclide to instance. Else, must use Nuclide cls
-                if daughter_symbol in instances:
-                    daughter_nuclide = instances[daughter_symbol]
-                    # if daughter_symbol != parent.symbol:
-                    #     daughter_nuclide.parents.append(parent.symbol)
-                else:
-                    _m = re.match("([A-Za-z]+)-([0-9]*)m*([1-9]{0,1})", parent.symbol)
-                    z = ATOMIC_NUMBER[_m.groups()[0]]
-                    a = _m.groups()[1]
-                    isomeric_state = _m.groups()[2]
-                    daughter_nuclide = Nuclide(z, a, isomeric_state=isomeric_state)
-                if 'sf' in m.modes:
-                    daughter_nuclide = None  # Todo
-                daughter_info = {"nuclide": daughter_nuclide, "branching_ratio": m.branching_ratio,
-                                 "modes": m.modes}
-                # Todo: 'sf' decay mode doesnt give list of nuclides. This could ben fixed.
-                parent.daughters.append(daughter_info)
-            parent.daughters = sorted(parent.daughters, key=lambda x: -x["branching_ratio"])
+        for key in list(Nuclide.__instances__.keys()):
+            parent = Nuclide.__instances__[key]
+            for d_info in parent.__daughter__info__:
+                daughter_symbol = d_info["daughter_symbol"]
+                try:
+                    daughter_class = Nuclide.__instances__[daughter_symbol]
+                except KeyError:
+                    daughter_class = Nuclide.from_symbol(daughter_symbol, False)
+                p_info = {"parent_symbol": parent.symbol, "branching_ratio": d_info["branching_ratio"],
+                          "modes": d_info["modes"]}
+                daughter_class.__parent__info__.append(p_info)
 
-    @staticmethod
-    def __set_parents__(instances=None):
-        if instances is None:  # instances: set of all RadioactiveNuclide instances.
-            instances = RadioactiveNuclide.__instances__
-        for obj in instances.values():
-            assert isinstance(obj,  RadioactiveNuclide), type(obj)
-            for daughter_info in obj.daughters:
-                daughter = daughter_info["nuclide"]
+            parent.__write_class__()
 
-                if isinstance(daughter, RadioactiveNuclide):
-                    if not hasattr(daughter, "parents"):
-                        daughter.parents = []
-                        print("adding pparent att", daughter)
-                    daughter.parents.append(obj)
+    def __set_daughters__(self):
+        if len(self.daughters) != 0:
+            return
+        for daughter_info in self.__daughter__info__:
+            daughter_symbol = daughter_info["daughter_symbol"]
+            del daughter_info["daughter_symbol"]
+
+            if self.symbol == daughter_symbol:
+                daughter_info["nuclide"] = None  # Todo
+            else:
+                daughter_info["nuclide"] = Nuclide.from_symbol(daughter_symbol, __set_related__=False)
+
+            self.daughters.append(daughter_info)
+
+    def __set_parents__(self):
+        if len(self.parents) != 0:
+            return
+        for parent_info in self.__parent__info__:
+            parent_symbol = parent_info["parent_symbol"]
+            del parent_info["parent_symbol"]
+
+            if self.symbol == parent_symbol:
+                parent_info["nuclide"] = None  # Todo
+            else:
+                parent_info["nuclide"] = Nuclide.from_symbol(parent_symbol, False)
+
+            self.parents.append(parent_info)
 
     def __repr__(self):
-        return "<RadioactiveNuclide: {}; t_1/2 = {}>".format(self.symbol, self.half_life)
+        return "<Nuclide: {}; t_1/2 = {}>".format(self.symbol, self.half_life)
 
     def __getstate__(self):
         state = self.__dict__
@@ -102,57 +131,60 @@ class RadioactiveNuclide(Nuclide):
     def __setstate__(self, state):
         self.__dict__ = state
 
+    @classmethod
+    def from_symbol(cls, symbol, __set_related__=True):
+        _m = re.match("([A-Za-z]+)-([0-9]*)m*([1-9]?)", symbol)
+        assert _m, "Wrong isotope symbol format. Correct examples: Xe-139; Cl-38m1"
+        if symbol not in cls.__instances__:
+            f_name = symbol + ".pickle"
+            f_path = pickle_data_directory/f_name
+            if not f_path.exists():
+                "Nuclide data for {0} not found".format(symbol)
 
-def process_files(paths, write_directory):
-    write_directory = Path(write_directory)
-    assert write_directory.exists()
-    pickle_file = open(write_directory/"decay_data.pickle", "wb")
-    for path in paths:
-        f = Path(path)
-        assert f.exists()
-        if not f.name[-4:] == "endf":
-            continue
-        openmc_decay = openmc.data.Decay(openmc.data.endf.Evaluation(f))
-        RadioactiveNuclide(openmc_decay)
-    # RadioactiveNuclide.__set_daughters__()
-    # RadioactiveNuclide.__set_parents__()
+                z = ATOMIC_NUMBER[_m.groups()[0]]
+                a = int(_m.groups()[1])
+                if len(_m.groups()[2]):
+                    isomeric_state = int(_m.groups()[2])
+                else:
+                    isomeric_state = 0
+                out = Nuclide(None, a=a, z=z, isomeric_state=isomeric_state)
+            else:
+                out = pickle.load(open(f_path, "rb"))
+            cls.__instances__[symbol] = out
+        else:
+            out = cls.__instances__[symbol]
+        assert isinstance(out, Nuclide)
+        if __set_related__:
+            out.__set_daughters__()
+            out.__set_parents__()
 
-    pickle.dump(RadioactiveNuclide.__instances__, pickle_file)
-#
-# data = pickle.load(open("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay/decay_data.pickle", "rb"))
-# d = (data["U-238"])
-#
-# assert isinstance(d, RadioactiveNuclide)
-# print(d.parents)
-# print(d.daughters)
-# print(data["Xe-139"].parents)
+        return out
+
+    @staticmethod
+    def __all_available_nuclides__():
+        out = []
+        for path in pickle_data_directory.iterdir():
+            _m = re.match(r"([A-Za-z]+-[0-9]*m*[1-9]?)\.pickle", path.name)
+            if _m:
+                out.append(_m.groups()[0])
+
+        return out
+
+    @staticmethod
+    def all_nuclides():
+        out = []
+        for symbol in Nuclide.__all_available_nuclides__():
+            out.append(Nuclide.from_symbol(symbol))
+        return out
+
+    def get_nuclides_with_cut(self, exp):
+        pass
+    # todo: e.g. get_nuclides_with_cut("z==3 qnd n>0) -> all valid nuclides
+
 
 if __name__ == "__main__":
-    path = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay"
-    data = process_files(Path(path).iterdir(), "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay")
+    #  Download decay data from https://www.nndc.bnl.gov/endf/b7.1/download.html
 
-    #
-    # e = openmc.data.endf.Evaluation("/Users/jeffreyburggraf/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/18040")
-    # # e = openmc.data.endf.get_evaluations("/Users/jeffreyburggraf/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/18040")
-    # # for a in e:
-    # #     print(a)
-    #
-    # print(e.reaction_list)
-    # print(e.info )
-    # r = openmc.data.Reaction.from_endf(e, 5)
-    # print(r)
-    # print(r.xs)
-    # for prod in r.products:
-    #     print(type(prod.particle))
-    #     if str(prod.particle) == "Cl39":
-    #         plt.plot(prod.yield_.x/1E6, prod.yield_.y*1E3)
-    #         break
-    #     print(prod.particle, prod.yield_.y)
-    #     print(dir(prod))
-    #
-    #     #
-    #
-    # plt.show()
-    # print(r.products)
-    # print(r)
+    # Nuclide.__write_classes__("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay")
 
+    pass
