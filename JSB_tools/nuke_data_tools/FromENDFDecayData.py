@@ -6,9 +6,17 @@ from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
 
 pwd = Path(__file__).parent
 pickle_data_directory = pwd / "data" / "decay"
+NUCLIDE_SYMBOL_MATCH = re.compile("([A-Za-z]+)-([0-9]*)m*([1-9]?)")
 
 
 def prettier_symbol(s):
+    _m = NUCLIDE_SYMBOL_MATCH.match(s)
+    if _m:
+        return s
+    if s == "neutron":
+        return "n-1"
+    if s == "photon":
+        return s
     assert isinstance(s, str)
     s = s.replace("_", "")
     _m = re.match("([a-zA-Z]*)([0-9]+.*)", s)
@@ -134,7 +142,7 @@ class Nuclide:
     @classmethod
     def from_symbol(cls, symbol, __set_related__=True):
         _m = re.match("([A-Za-z]+)-([0-9]*)m*([1-9]?)", symbol)
-        assert _m, "Wrong isotope symbol format. Correct examples: Xe-139; Cl-38m1"
+        assert _m, "Wrong isotope symbol format '{0}'. Correct examples: Xe-139; Cl-38m1".format(symbol)
         if symbol not in cls.__instances__:
             f_name = symbol + ".pickle"
             f_path = pickle_data_directory/f_name
