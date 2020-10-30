@@ -37,7 +37,6 @@ class GammaLine:
         Rate [s^-1] of gammas with energy self.erg emitted per nuclide.
     """
         self.erg: uncertainties.UFloat = erg
-        # mean number of gammas with energy self.erg emitted per parent nucleus decay (through any decay channel)
         self.intensity: uncertainties.UFloat = intensity
         self.from_mode: DecayMode = from_mode
         self.intensity_thu_mode: uncertainties.UFloat = intensity_thu_mode
