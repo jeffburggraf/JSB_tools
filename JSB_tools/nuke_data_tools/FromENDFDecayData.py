@@ -3,7 +3,7 @@ import pickle
 import re
 from pathlib import Path
 from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
-
+from . import CustomUnpickler
 pwd = Path(__file__).parent
 pickle_data_directory = pwd / "data" / "decay"
 NUCLIDE_SYMBOL_MATCH = re.compile("([A-Za-z]+)-([0-9]*)m*([1-9]?)")
@@ -38,11 +38,11 @@ class Nuclide:
         self.gamma_lines = []
 
         if openmc_decay is not None:
-            self.z = openmc_decay.nuclide["atomic_number"]
-            self.a = openmc_decay.nuclide["mass_number"]
+            self.z = openmc_decay.daughter_nuclide["atomic_number"]
+            self.a = openmc_decay.daughter_nuclide["mass_number"]
             self.half_life = openmc_decay.half_life
-            self.isomeric_state = openmc_decay.nuclide["isomeric_state"]
-            self.spin = openmc_decay.nuclide["spin"]
+            self.isomeric_state = openmc_decay.daughter_nuclide["isomeric_state"]
+            self.spin = openmc_decay.daughter_nuclide["spin"]
             self.symbol = "{0}-{1}{2}".format(ATOMIC_SYMBOL[int(self.z)], self.a,
                                               "m{0}".format(self.isomeric_state) if self.isomeric_state else "")
 
@@ -53,7 +53,7 @@ class Nuclide:
 
             self.__openmc_decay__ = openmc_decay
             for m in self.__openmc_decay__.modes:
-                info = {"daughter_symbol": prettier_symbol(m.daughter), "branching_ratio": m.branching_ratio,
+                info = {"daughter_symbol": prettier_symbol(m.daughter_name), "branching_ratio": m.branching_ratio,
                         "modes": m.modes}
                 self.__daughter__info__.append(info)
             self.__daughter__info__ = list(sorted(self.__daughter__info__, key=lambda x: -x["branching_ratio"]))
@@ -157,7 +157,8 @@ class Nuclide:
                     isomeric_state = 0
                 out = Nuclide(None, a=a, z=z, isomeric_state=isomeric_state)
             else:
-                out = pickle.load(open(f_path, "rb"))
+                # out = pickle.load(open(f_path, "rb"))
+                out = CustomUnpickler(open(f_path, "rb")).load()
             cls.__instances__[symbol] = out
         else:
             out = cls.__instances__[symbol]
