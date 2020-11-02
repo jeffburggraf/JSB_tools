@@ -12,18 +12,50 @@ from warnings import warn
 from uncertainties import ufloat
 from uncertainties.umath import isinf, isnan
 import uncertainties
+from functools import cached_property
+from openmc.data.data import NATURAL_ABUNDANCE
 pwd = Path(__file__).parent
+
+#  Todo:
+#   * Add a custom exception, not AssertionError, when an unknown symbol is passed to Nuclide.
+#   * Investigate why some half-lives, such as Te-123, are 0 when they are in actuality very very long.
+#     Is this an artifact of openmc?
+#   * Add doc strings.
+#   * Add documentation, and exception messages, to explain where the data can be downloaded and how to regenerate
+#     the pickle files.
+#   * Add more  comments to document code.
+#   * Implement openmc.FissionProductYields
+#   * Any speed enhancements would be nice.
+#   * Use pyne to read latest ENDSFs and fill in some missing halk lives via a pickle file.
+#     Then, read results into <additional_nuclide_data> variable.
+
 
 NUCLIDE_INSTANCES = {}
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")
 
-additional_nuclide_data = {"In101_m1": {"half_life":ufloat(10, 5)},
-                           "Lu159_m1": {"half_life":ufloat(10, 5)},
+additional_nuclide_data = {"In101_m1": {"half_life": ufloat(10, 5)},
+                           "Lu159_m1": {"half_life": ufloat(10, 5)},
                            "Rh114_m1": {"half_life": ufloat(1.85, 0.05), "__decay_daughters_str__": "Pd114"},
                            "Pr132_m1": {"half_life": ufloat(20, 5), "__decay_daughters_str__": "Ce132"}}
 
+XS_BIN_WIDTH_INTERPOLATION = 0.1
+
+
+class CustomUnpickler(pickle.Unpickler):
+
+    def find_class(self, module, name):
+        if name == 'GammaLine':
+            return GammaLine
+        elif name == 'DecayMode':
+            return DecayMode
+        elif name == '__Reaction__':
+            return __Reaction__
+        elif name == 'CrossSection1D':
+            return CrossSection1D
+
+        return super().find_class(module, name)
 
 class GammaLine:
     def __init__(self, nuclide: Nuclide, erg, intensity, intensity_thu_mode, from_mode):
@@ -53,10 +85,20 @@ class GammaLine:
 
 
 class CrossSection1D:
-    def __init__(self, ergs, xss, fig_label=None):
-        self.ergs = ergs
-        self.xss = xss
-        self.fig_label = fig_label
+    def __init__(self, ergs, xss, fig_label=None, incident_particle='particle'):
+        self.__ergs__ = np.array(ergs)
+        self.__xss__ = np.array(xss)
+        self.__fig_label__ = fig_label
+        self.__incident_particle__ = incident_particle
+
+    @cached_property
+    def xss(self):
+        return np.interp(self.ergs, self.__ergs__, self.__xss__)
+
+    @cached_property
+    def ergs(self):
+        return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
+
 
     def plot(self, ax=None, fig_title=None, units="b"):
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
@@ -69,18 +111,51 @@ class CrossSection1D:
             if fig_title is not None:
                 ax.set_title(fig_title)
             else:
-                if self.fig_label is not None:
-                    ax.set_title(self.fig_label)
+                if self.__fig_label__ is not None:
+                    ax.set_title(self.__fig_label__)
 
-        ax.plot(self.ergs, self.xss*unit_factor)
+        ax.plot(self.__ergs__, self.__xss__ * unit_factor)
         ax.set_ylabel("Cross-section [{}]".format(units))
-        ax.set_xlabel("Incident particle energy [MeV]")
+        ax.set_xlabel("Incident {} energy [MeV]".format(self.__incident_particle__))
 
         return ax
 
+    @property
+    def bin_widths(self):
+        return XS_BIN_WIDTH_INTERPOLATION
+
+        # out = [high - low for low, high in zip(self.__ergs__[:-1], self.__ergs__[1:])]
+        # not sure how to deduce the bin width of final bin. Hopefully bin widths are usually all the same
+        # out += [np.mean(out)]
+        # out = np.array(out)
+        # return out
+
+    def mean_xs(self, erg_low=None, erg_high=None, weight_callable=None):
+        if erg_low is None and erg_high is None:
+            xss = self.xss
+            ergs = self.ergs
+        else:
+            if erg_high is None:
+                erg_high = self.__ergs__[-1]
+            if erg_low is None:
+                erg_low = self.__ergs__[0]
+            cut = [i for i in range(len(self.ergs)) if erg_low <= self.ergs[i] <= erg_high]
+            xss = self.xss[cut]
+            ergs = self.ergs[cut]
+        if weight_callable is not None:
+            assert hasattr(weight_callable, "__call__"), "<weighting_function> must be a callable function that takes" \
+                                                         " incident energy as it's sole argument"
+            weights = [weight_callable(e) for e in ergs]
+            if sum(weights) == 0:
+                warn("weights in mean_xs for '{0}' summed to zero. Returning 0")
+                return 0
+            return np.average(xss, weights=weights)
+        else:
+            return np.mean(xss)
+
     def __repr__(self):
-        ergs = ", ".join(["{:.2e}".format(e) for e in self.ergs])
-        xss = ", ".join(["{:.2e}".format(e) for e in self.xss])
+        ergs = ", ".join(["{:.2e}".format(e) for e in self.__ergs__])
+        xss = ", ".join(["{:.2e}".format(e) for e in self.__xss__])
         return "ergs: {0}\n" \
                "  xs: {1}".format(ergs, xss)
 
@@ -135,6 +210,31 @@ def get_name_from_z_a_m(z, a, m):
     return symbol
 
 
+def __nuclide_cut__(a_z_hl_cut: str, is_stable_only, nuclide: Nuclide):
+    makes_cut = True
+
+    assert isinstance(is_stable_only, bool)
+    if is_stable_only is True:
+        if not nuclide.is_stable:
+            return False
+
+    if len(a_z_hl_cut) > 0:
+        a_z_hl_cut = a_z_hl_cut.lower()
+        if 'hl' in a_z_hl_cut and nuclide.half_life is None:
+            makes_cut = False
+        else:
+            try:
+                makes_cut = eval(a_z_hl_cut, {"hl": nuclide.half_life, 'a': nuclide.A, 'z': nuclide.Z})
+                assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
+            except NameError as e:
+                invalid_name = str(e).split("'")[1]
+
+                raise Exception("\nInvalid name '{}' used in cut. Valid names are: 'z', 'a', and 'hl',"
+                                " which stand for atomic-number, mass-number, and half-life, respectively."
+                                .format(invalid_name)) from e
+
+    return makes_cut
+
 class Nuclide:
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
@@ -155,7 +255,7 @@ class Nuclide:
         self.half_life = kwargs.get("half_life", None)
         self.spin = kwargs.get("spin", None)
         self.mean_energies = kwargs.get("mean_energies", None)  # look into this
-        self.is_stable = kwargs.get("is_stable", None)  # maybe default to something else
+        self.is_stable: bool = kwargs.get("is_stable", None)  # maybe default to something else
 
         self.__decay_daughters_str__: List[str] = kwargs.get("__decay_daughters__", [])  # self.decay_daughters -> List[Nuclide] in corresponding order as self.decay_modes
         self.decay_gamma_lines: List[GammaLine] = kwargs.get("decay_gamma_lines", [])
@@ -163,6 +263,25 @@ class Nuclide:
         self.__decay_parents_str__: List[str] = kwargs.get("__decay_parents__", [])  # self.decay_parents -> List[Nuclide]
 
         self.__decay_mode_for_print__ = None
+
+    @property
+    def isotopic_abundance(self):
+        _m = re.match('([A-Za-z]{1,2}[0-9]+)(?:m_[0-9]+)?', self.name)
+        if _m:
+            s = _m.groups()[0]
+            try:
+                return NATURAL_ABUNDANCE[s]
+            except KeyError:
+                pass
+        return 0
+
+    @property
+    def atomic_symbol(self):
+        _m = re.match('([A-Za-z]{1,2}).+', self.name)
+        if _m:
+            return _m.groups()[0]
+        else:
+            return None
 
     @classmethod
     def from_Z_A_M(cls, z, a, m=0):
@@ -195,23 +314,17 @@ class Nuclide:
                     instance = Nuclide(symbol, half_life=ufloat(np.nan, np.nan))
             else:
                 with open(pickle_file, "rb") as pickle_file:
-                    instance = pickle.load(pickle_file)
+                    instance = CustomUnpickler(pickle_file).load()
         else:
             instance = NUCLIDE_INSTANCES[symbol]
         assert isinstance(instance, Nuclide)
         return instance
 
     def __repr__(self):
-        out = "<Nuclide: {}; t_1/2 = {}> ".format(self.name, self.half_life)
+        out = "<Nuclide: {}; t_1/2 = {}>".format(self.name, self.half_life)
         if self.__decay_mode_for_print__ is not None:
             out += self.__decay_mode_for_print__.__repr__()
         return out
-
-    def daughter_decay_mode(self, daughter_nuclide_instance: Nuclide):
-        raise NotImplementedError
-
-    def parent_decay_mode(self, daughter_nuclide_instance: Nuclide):
-        raise NotImplementedError
 
     @property
     def decay_constant(self):
@@ -231,48 +344,51 @@ class Nuclide:
 
         return out
 
-    def get_incident_proton_parents(self) -> Dict[str, InducedParent]:  # todo
+    def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         pickle_path = PROTON_PICKLE_DIR / (self.name + ".pickle")
         if not pickle_path.exists():
             warn("No proton-induced data for any parents of {}".format(self.name))
-            return None
+            return {}
 
         with open(pickle_path, "rb") as f:
-            daughter_reaction = pickle.load(f)
+            daughter_reaction = CustomUnpickler(f).load()
 
         assert isinstance(daughter_reaction, __Reaction__)
-        out = []
+        out = {}
         parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
         daughter_nuclide = self
         for parent_nuclide in parent_nuclides:
             parent_pickle_path = PROTON_PICKLE_DIR/(parent_nuclide.name + ".pickle")
             with open(parent_pickle_path, "rb") as f:
-                parent_reaction = pickle.load(f)
+                parent_reaction = CustomUnpickler(f).load()
                 assert isinstance(parent_reaction, __Reaction__)
             parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle="proton")
-            parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
-            out.append(parent)
+            if __nuclide_cut__(a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only, nuclide=parent):
+                parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
+                out[parent.name] = parent
 
-        return {n.name: n for n in out}
+        return out
 
-    def get_incident_proton_daughters(self):
+    def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False):
         pickle_path = PROTON_PICKLE_DIR/(self.name + ".pickle")
         if not pickle_path.exists():
             warn("No proton-induced data for {}".format(self.name))
             return None
 
         with open(pickle_path, "rb") as f:
-            reaction = pickle.load(f)
+            reaction = CustomUnpickler(f).load()
 
         assert isinstance(reaction, __Reaction__)
-        out: Dict[str, InducedParent] = []
+        out: Dict[str, InducedParent] = {}
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
-            daughter = InducedDaughter(daughter_nuclide, self, "proton")
-            daughter.xs = xs
-            out.append(daughter)
+            if __nuclide_cut__(a_z_hl_cut, is_stable_only, daughter_nuclide):
+                daughter = InducedDaughter(daughter_nuclide, self, "proton")
+                daughter.xs = xs
+                out[daughter_name] = daughter
 
-        return {n.name: n for n in out}
+            # todo: Is using a dict of name and Nuclides necessary? Maybe just return a list instead.
+        return out
 
     def __set_data_from_open_mc__(self, open_mc_decay):
         self.half_life = open_mc_decay.half_life
@@ -309,6 +425,19 @@ class Nuclide:
         except KeyError:
             pass
         # Todo: Add decay channels other than "gamma"
+
+    @ classmethod
+    def get_all_nuclides(cls, a_z_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
+        assert isinstance(a_z_hl_cut, str), 'All cuts must be a string instance.'
+        nuclides = []
+        for f_path in DECAY_PICKLE_DIR.iterdir():
+            f_name = f_path.name.replace(".pickle", '')
+            _m = NUCLIDE_NAME_MATCH.match(f_name)
+            if _m:
+                nuclide = cls.from_symbol(f_name)
+                if __nuclide_cut__(a_z_hl_cut, is_stable_only, nuclide):
+                    nuclides.append(nuclide)
+        return nuclides
 
 
 def pickle_decay_data(directory):
@@ -365,8 +494,12 @@ class InducedDaughter(Nuclide):
         kwargs = {k: v for k, v in daughter_nuclide.__dict__.items() if k != "name"}
         super().__init__(daughter_nuclide.name, **kwargs)
         self.xs: CrossSection1D = None
-        self.parent = parent_nuclide
+        self.parent:Nuclide = parent_nuclide
         self.inducing_particle = inducing_particle
+
+    def __repr__(self):
+        par_symbol = self.inducing_particle[0]
+        return '{0}({1},X) --> {2}'.format(self.parent, par_symbol, super().__repr__())
 
 
 class InducedParent(Nuclide):
@@ -376,8 +509,12 @@ class InducedParent(Nuclide):
         kwargs = {k: v for k, v in parent_nuclide.__dict__.items() if k != "name"}
         super().__init__(parent_nuclide.name, **kwargs)
         self.xs: CrossSection1D = None
-        self.daughter = daughter_nuclide
+        self.daughter:Nuclide = daughter_nuclide
         self.inducing_particle = inducing_particle
+
+    def __repr__(self):
+        par_symbol = self.inducing_particle[0]
+        return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
 
 # modularize the patch work of reading PADF and ENDF-B-VIII.0_protons data.
@@ -437,7 +574,7 @@ def pickle_proton_data():
             if heavy_product_name == "neutron":
                 heavy_product_name = "Nn1"
             xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
-            xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label)
+            xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
             reaction.product_nuclide_names_xss[heavy_product_name] = xs
             if heavy_product_name in all_reactions:
                 daughter_reaction = all_reactions[heavy_product_name]
@@ -447,8 +584,6 @@ def pickle_proton_data():
             daughter_reaction.parent_nuclide_names.append(nuclide_name)
         i += 1
 
-        # if i > 10:
-        #     break
     for nuclide_name, reaction in all_reactions.items():
         pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
         with open(pickle_file_name, "bw") as f:
@@ -463,34 +598,27 @@ decay_data_dir = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay"
 dir_old = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay/"
 dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
 
-proton_endf_file(proton_padf_data_dir, proton_enfd_b_data_dir)
 
-n = Nuclide.from_symbol("C10")
-p = n.get_incident_proton_parents()["N14"]
-print(p.xs.plot(units="mb"))
-plt.show()
 if __name__ == "__main__":
     assert Path(decay_data_dir).exists, "Cannot find decay data files. " \
                                          "Download decay files from https://www.nndc.bnl.gov/endf/b7.1/download.html" \
                                          " and set the <decay_data_dir> " \
                                          "variable to the location of the unzipped directory"
-    # from openmc.data.decay import FissionProductYields
+     # from openmc.data.decay import FissionProductYields
 
     #  How to get SF yields:
     #  Download from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
     # y = FissionProductYields("/Users/jeffreyburggraf/Downloads/gefy81_s/GEFY_92_238_s.dat")
-    # print(y.independent[0])
 
-    # Nuclide("Cl38_m1")
-    # pickle_decay_data(decay_data_dir)
-    # n = Nuclide.from_symbol("Cf-252")
-    # print(n.decay_parents)
-    # print(n.decay_daughters)
+    #  Uncomment code below to pickle Nuclide data
+    pickle_decay_data(decay_data_dir)
+
 
     assert Path(proton_padf_data_dir).exists, "Cannot find proton data files. " \
                                          "Download proton files from https://www-nds.iaea.org/padf/ and set the " \
                                          "<proton_dir> variable to the location of the unzipped directory"
-    # pickle_proton_data()
+    #  Uncomment code below to pickle incident proton data
+    pickle_proton_data()
 
     pass
 
