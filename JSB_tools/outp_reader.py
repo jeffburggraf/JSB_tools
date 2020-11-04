@@ -171,7 +171,7 @@ class OutP:
                                                                         ' inconsistent. '.format(cell_num_4_density)
             else:
                 material_id = self.cells[cell_num_4_density].mat
-                s.cell_density = self.cells[cell_num_4_density].density
+            s.cell_density = self.cells[cell_num_4_density].density
 
         else:
             assert material_id is not None, "At least one of `material_id` or `cell_num` must be given."
@@ -224,10 +224,10 @@ class StoppingPowerData:
         self.__energies__ = value
         self.erg_bin_widths = np.array([b2 - b1 for b1, b2 in zip(value[:-1], value[1:])])
 
-    def eval_de_dx(self, erg):
+    def eval_de_dx_at_erg(self, erg):
         return np.interp(erg, self.energies, self.dedxs)
 
-    def eval_dx_de(self, erg):
+    def eval_dx_de_at_erg(self, erg):
         return np.interp(erg, self.energies, 1.0/self.dedxs)
 
     def plot_dedx(self, ax=None, label=None, title=None, material_name_4_title=None, density=None):
@@ -275,6 +275,8 @@ class StoppingPowerData:
         y = self.ranges
         if density is not None:
             y = self.ranges/density
+            if self.cell_density is not None:
+                warn('Overriding cell density deduced from `cell_num_4_density` argument.')
         else:
             if self.cell_density is not None:
                 density = self.cell_density
