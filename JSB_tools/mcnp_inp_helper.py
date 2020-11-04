@@ -6,6 +6,27 @@ import os
 import stat
 
 
+class Cell:
+    def __init__(self, cell_num):
+        self.cell_num = cell_num
+
+
+class Cuboid(Cell):  # Todo:
+    def __init__(self, cell_num, xmin, xmax, ymin, ymax, zmin, zmax):
+        super(Cuboid, self).__init__(cell_num)
+        self.xmin = xmin
+        self.xmax = xmax
+        self.ymin = ymin
+        self.ymax = ymax
+        self.zmin = zmin
+        self.zmax = zmax
+
+    @property
+    def volume(self):
+        pass
+        return
+
+
 def _split_line(line):
     # todo: do this for phits too. Max line length is 200, where \ (or /) is used as the continue line symbol.
     #  Also, continue line must begin with 5 spaces
