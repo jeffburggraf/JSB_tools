@@ -4,3 +4,5 @@ mcerp~=0.12
 scipy>=1.5.2
 uncertainties~=3.1.4
 matplotlib>=3.3.2
+soerp~=0.9.6
+openmc~=0.12.1.dev0

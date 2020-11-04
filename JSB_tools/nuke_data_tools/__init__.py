@@ -14,8 +14,12 @@ from uncertainties.umath import isinf, isnan
 import uncertainties
 from functools import cached_property
 from openmc.data.data import NATURAL_ABUNDANCE
+
 pwd = Path(__file__).parent
 
+__all__ = ['Nuclide']
+
+#  Note to myself: Pickled nuclear data is on your personal SSD
 #  Todo:
 #   * Add a custom exception, not AssertionError, when an unknown symbol is passed to Nuclide.
 #   * Investigate why some half-lives, such as Te-123, are 0 when they are in actuality very very long.
@@ -28,34 +32,40 @@ pwd = Path(__file__).parent
 #   * Any speed enhancements would be nice.
 #   * Use pyne to read latest ENDSFs and fill in some missing halk lives via a pickle file.
 #     Then, read results into <additional_nuclide_data> variable.
+#   * Uncertainty in xs values? Values are ufloats
+#   * Find a way to include data files in the pip package
 
 
-NUCLIDE_INSTANCES = {}
-DECAY_PICKLE_DIR = pwd/'data'/'nuclides'
-PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"
-NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")
+NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
+DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
+PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
+NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
+
+# Some additional nuclide info that aren't in ENDSFs
 additional_nuclide_data = {"In101_m1": {"half_life": ufloat(10, 5)},
                            "Lu159_m1": {"half_life": ufloat(10, 5)},
                            "Rh114_m1": {"half_life": ufloat(1.85, 0.05), "__decay_daughters_str__": "Pd114"},
                            "Pr132_m1": {"half_life": ufloat(20, 5), "__decay_daughters_str__": "Ce132"}}
 
+# global variable for the bin-width of xs interpolation
 XS_BIN_WIDTH_INTERPOLATION = 0.1
 
 
+# Needed because classes in this __init__ file will not be in scope of __main__ as required for unpickling
 class CustomUnpickler(pickle.Unpickler):
-
     def find_class(self, module, name):
         if name == 'GammaLine':
             return GammaLine
         elif name == 'DecayMode':
             return DecayMode
-        elif name == '__Reaction__':
-            return __Reaction__
+        elif name == '_Reaction':
+            return _Reaction
         elif name == 'CrossSection1D':
             return CrossSection1D
 
         return super().find_class(module, name)
+
 
 class GammaLine:
     def __init__(self, nuclide: Nuclide, erg, intensity, intensity_thu_mode, from_mode):
@@ -81,7 +91,8 @@ class GammaLine:
         self.absolute_rate: uncertainties.UFloat = nuclide.decay_constant*self.intensity
 
     def __repr__(self):
-        return "Gamma line at {0:.1f} KeV; true_intensity = {1:.2e}; decay: {2} ".format(self.erg, self.intensity, self.from_mode)
+        return "Gamma line at {0:.1f} KeV; true_intensity = {1:.2e}; decay: {2} ".format(self.erg, self.intensity,
+                                                                                         self.from_mode)
 
 
 class CrossSection1D:
@@ -99,6 +110,20 @@ class CrossSection1D:
     def ergs(self):
         return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
 
+    @classmethod
+    def from_endf(cls, endf_path, product_name, mt=5):
+        e = Evaluation(endf_path)
+        r = Reaction.from_endf(e, mt)
+        for prod in r.products:
+            if prod.particle == product_name:
+                break
+        else:
+            assert False, 'could not find product in endf file {0}. Available products: {1}'\
+                .format(Path(endf_path).name, [prod.particle for prod in r.products])
+
+        erg = prod.yield_.x/1E6
+        xs = prod.yield_.y
+        return CrossSection1D(erg, xs)
 
     def plot(self, ax=None, fig_title=None, units="b"):
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
@@ -123,12 +148,6 @@ class CrossSection1D:
     @property
     def bin_widths(self):
         return XS_BIN_WIDTH_INTERPOLATION
-
-        # out = [high - low for low, high in zip(self.__ergs__[:-1], self.__ergs__[1:])]
-        # not sure how to deduce the bin width of final bin. Hopefully bin widths are usually all the same
-        # out += [np.mean(out)]
-        # out = np.array(out)
-        # return out
 
     def mean_xs(self, erg_low=None, erg_high=None, weight_callable=None):
         if erg_low is None and erg_high is None:
@@ -176,6 +195,7 @@ class DecayMode:
 
         return "{0} -> {1} via {2} with BR of {3}".format(self.parent_name, self.daughter_name, self.modes, self.branching_ratio)
 
+
 def get_z_a_m_from_name(name):
     _m = NUCLIDE_NAME_MATCH.match(name)
 
@@ -199,7 +219,7 @@ def get_z_a_m_from_name(name):
 
 
 def get_name_from_z_a_m(z, a, m):
-    z, a, m = map(int, [z,a ,m])
+    z, a, m = map(int, [z, a, m])
     if z == 0:
         symbol = "Nn"
     else:
@@ -234,6 +254,7 @@ def __nuclide_cut__(a_z_hl_cut: str, is_stable_only, nuclide: Nuclide):
                                 .format(invalid_name)) from e
 
     return makes_cut
+
 
 class Nuclide:
     def __init__(self, name, **kwargs):
@@ -353,7 +374,7 @@ class Nuclide:
         with open(pickle_path, "rb") as f:
             daughter_reaction = CustomUnpickler(f).load()
 
-        assert isinstance(daughter_reaction, __Reaction__)
+        assert isinstance(daughter_reaction, _Reaction)
         out = {}
         parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
         daughter_nuclide = self
@@ -361,7 +382,7 @@ class Nuclide:
             parent_pickle_path = PROTON_PICKLE_DIR/(parent_nuclide.name + ".pickle")
             with open(parent_pickle_path, "rb") as f:
                 parent_reaction = CustomUnpickler(f).load()
-                assert isinstance(parent_reaction, __Reaction__)
+                assert isinstance(parent_reaction, _Reaction)
             parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle="proton")
             if __nuclide_cut__(a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only, nuclide=parent):
                 parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
@@ -378,7 +399,7 @@ class Nuclide:
         with open(pickle_path, "rb") as f:
             reaction = CustomUnpickler(f).load()
 
-        assert isinstance(reaction, __Reaction__)
+        assert isinstance(reaction, _Reaction)
         out: Dict[str, InducedParent] = {}
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
@@ -441,11 +462,9 @@ class Nuclide:
 
 
 def pickle_decay_data(directory):
-    directory = Path(directory)
+    directory = Path(directory)  # Path to downloaded ENDF decay data
     assert directory.exists()
-    i=0
     for file_path in directory.iterdir():
-        i += 1
         file_name = file_path.name
         _m = re.match(r"dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf", file_name)
         if _m:
@@ -494,7 +513,7 @@ class InducedDaughter(Nuclide):
         kwargs = {k: v for k, v in daughter_nuclide.__dict__.items() if k != "name"}
         super().__init__(daughter_nuclide.name, **kwargs)
         self.xs: CrossSection1D = None
-        self.parent:Nuclide = parent_nuclide
+        self.parent: Nuclide = parent_nuclide
         self.inducing_particle = inducing_particle
 
     def __repr__(self):
@@ -509,7 +528,7 @@ class InducedParent(Nuclide):
         kwargs = {k: v for k, v in parent_nuclide.__dict__.items() if k != "name"}
         super().__init__(parent_nuclide.name, **kwargs)
         self.xs: CrossSection1D = None
-        self.daughter:Nuclide = daughter_nuclide
+        self.daughter: Nuclide = daughter_nuclide
         self.inducing_particle = inducing_particle
 
     def __repr__(self):
@@ -546,7 +565,7 @@ class proton_endf_file:
                 self.nuclide_name_and_file_path[nuclide_name] = path
 
 
-class __Reaction__:
+class _Reaction:
     def __init__(self, name):
         self.name = name
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
@@ -563,7 +582,7 @@ def pickle_proton_data():
         if nuclide_name in all_reactions:
             reaction = all_reactions[nuclide_name]
         else:
-            reaction = __Reaction__(nuclide_name)
+            reaction = _Reaction(nuclide_name)
             all_reactions[nuclide_name] = reaction
 
         e = Evaluation(f_path)
@@ -579,7 +598,7 @@ def pickle_proton_data():
             if heavy_product_name in all_reactions:
                 daughter_reaction = all_reactions[heavy_product_name]
             else:
-                daughter_reaction = __Reaction__(heavy_product_name)
+                daughter_reaction = _Reaction(heavy_product_name)
                 all_reactions[heavy_product_name] = daughter_reaction
             daughter_reaction.parent_nuclide_names.append(nuclide_name)
         i += 1
