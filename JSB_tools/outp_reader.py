@@ -16,22 +16,22 @@ class F4Tally:
 
         assert tally_number[-1] == "4", "Incorrect tally!"
 
-        tally_modifiers = set()
+        self.tally_modifiers = set()
 
         for card in outp.input_deck:
             _m = re.match("^([fcemt]+){}.+".format(tally_number), card)
             if _m:
                 if _m.group(1) != "f":
-                    tally_modifiers.add(_m.group(1))
+                    self.tally_modifiers.add(_m.group(1))
         for index, line in enumerate(outp.__outp_lines__):
-            _m = re.match(r"1tally +{} +nps".format(tally_number), line)
+            _m = re.match(r"1tally +{}".format(tally_number), line)
             if _m:
                 break
         else:
             assert False, "Cannot find tally {}".format(tally_number)
 
         # initialize
-        if tally_modifiers == set() or tally_modifiers == {"e"}:
+        if self.tally_modifiers == set() or self.tally_modifiers == {"e"}:
             index += 2
             _m = re.match(r" +particle\(s\): +([a-z]+)", outp.__outp_lines__[index])
             if _m:
@@ -58,9 +58,9 @@ class F4Tally:
 
             index += 1
         else:
-            assert False, "Tally modifiers {} not yet supported!".format(tally_modifiers)
+            assert False, "Tally modifiers {} not yet supported!".format(self.tally_modifiers)
 
-        if tally_modifiers == set():
+        if self.tally_modifiers == set():
             self.underflow = None
             self.energies = np.array([])
             self.fluxes = np.array([])
@@ -68,7 +68,7 @@ class F4Tally:
             _flux_error = _flux*float(outp.__outp_lines__[index+2].split()[1])
             self.flux = ufloat(_flux, _flux_error)
 
-        elif tally_modifiers == {"e"}:
+        elif self.tally_modifiers == {"e"}:
             while index < len(outp.__outp_lines__):
                 line = outp.__outp_lines__[index]
                 if "energy" in line:
@@ -104,7 +104,10 @@ class F4Tally:
             self.flux = ufloat(_flux, _flux_error)
 
         else:
-            assert False, "Tally modifiers {} not supported yet!".format(tally_modifiers)
+            assert False, "Tally modifiers {} not supported yet!".format(self.tally_modifiers)
+
+    def __repr__(self):
+        return 'F4 Tally in cell {0}, With {1} modifier.'.format(self.cell.cell_num, self.tally_modifiers)
 
 
 class Cell:

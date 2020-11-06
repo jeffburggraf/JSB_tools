@@ -74,6 +74,7 @@ def _split_line(line):
 
 
 class InputFile:
+    __has_printed_dir__ = set()
     def __init__(self, **kwargs):
         assert "inp_file_path" in kwargs, "Must supply 'inp_file_path' keyword argument."
         self.inp_file_path = Path(kwargs["inp_file_path"])
@@ -122,7 +123,10 @@ class InputFile:
         new_inp_lines = self.__new_inp_lines__[:]
         self.__new_inp_lines__ = []
         for line in new_inp_lines[:self.MCNP_EOF]:
-            self.__new_inp_lines__.append(_split_line(line))
+            split_lines = line.split('\n')
+            # In case evaluated code returns multiple lines, append on a line by line basis
+            self.__new_inp_lines__.extend('\n'.join(split_lines))
+
         self.__new_inp_lines__.extend(new_inp_lines[self.MCNP_EOF:])
 
     def cycle_random_number_mcnp(self):
@@ -303,13 +307,18 @@ class InputFile:
             f.write(new_cmd)
 
         if self.__num_writes__ == 0:
-            print("Directory:\ncd {0}".format(self.new_directory.parent))
             if self.platform in ["Linux", "Darwin"]:
                 st = os.stat(f_path)
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
 
-        if self.__num_writes__ == 1:
-            print("./cmd")
+    def __del__(self):
+        path = self.new_directory.parent
+
+        if path not in InputFile.__has_printed_dir__:
+            if len(self.__has_printed_dir__) == 0:
+                print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
+            print('cd {0}\n./cmd\n'.format(path))
+            InputFile.__has_printed_dir__.add(path)
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, cycle_rnd_seed=False, gen_run_script=True):
