@@ -6,6 +6,9 @@ from uncertainties import ufloat
 import uncertainties.unumpy as unp
 from matplotlib import pyplot as plt
 from pathlib import Path
+from typing import List, Dict
+#  Todo:
+#   Add function to access num particles entering cells
 
 
 class F4Tally:
@@ -87,7 +90,11 @@ class F4Tally:
                 _m = re.match(r" +[0-9\.E+-]+", line)
 
                 if _m:
-                    erg_bin, flux, rel_error = tuple(map(float, line.split()))
+                    try:
+                        erg_bin, flux, rel_error = tuple(map(float, line.split()))
+                    except ValueError as e:
+                        assert False, 'Error parsing tally {0}. Outp line:\n{1}\n{2}'.format(self.tally_number,
+                                                                                             line, e)
                     fluxes.append(flux)
                     flux_errors.append(flux*rel_error)
                     self.__energy_bins__.append(erg_bin)
@@ -107,19 +114,41 @@ class F4Tally:
             assert False, "Tally modifiers {} not supported yet!".format(self.tally_modifiers)
 
     def __repr__(self):
-        return 'F4 Tally in cell {0}, With {1} modifier.'.format(self.cell.cell_num, self.tally_modifiers)
+        return 'F4 Tally ({2}) in cell {0}, With {1} modifier.'.format(self.cell.cell_num, self.tally_modifiers,
+                                                                      self.tally_number)
 
 
 class Cell:
-    def __init__(self, data):
+    def __init__(self, data, outp=None):
         self.cell_num = int(data[1])
         self.mat = int(data[2])
         self.atom_density = float(data[3])  # atoms/barn*cm
         self.density = float(data[4])
         self.volume = float(data[5])
+        self.outp = outp
+
+        if self.outp is not None:
+            assert isinstance(outp, OutP)
 
     def __repr__(self):
         return "Cell {0}, mat:{1}".format(self.cell_num, self.mat)
+
+    def get_tallys(self) -> List[F4Tally]:
+        tallies = []
+        for line in self.outp.input_deck:
+            _m = re.match(' *f([0-9]*([0-9])): *. +([0-9]+)', line)
+            if _m:
+                cell_num = int(_m.groups()[2])
+                tally_num = int(_m.groups()[0])
+                tally_type = int(_m.groups()[1])
+                if tally_type != 4:
+                    warn('Tally other than 4 not implemented yet (from Cell.get_tallys)')
+                else:
+                    if cell_num == self.cell_num:
+                        tallies.append(self.outp.get_tally(tally_num))
+        return tallies
+
+
 
 
 class OutP:
@@ -151,7 +180,7 @@ class OutP:
                 if self.__outp_lines__[index].split():
                     data = self.__outp_lines__[index].split()
                     cell_num = int(data[1])
-                    self.cells[cell_num] = Cell(data)
+                    self.cells[cell_num] = Cell(data, self)
                 else:
                     break
                 index += 1

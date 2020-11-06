@@ -73,8 +73,15 @@ def _split_line(line):
     return fixed
 
 
+CLEAN_MATCHES = [re.compile(p) for p in
+                 [r"ptra[a-z]+$", r"runtpe[0-9]+", r"runtp[a-z]", r"mcta[a-z]", r"out[a-z]$", r"outp[0-9]+$",
+                  r"comou[a-z]", r"meshta[a-z]", r"mdat[a-z]"]]
+
+
 class InputFile:
-    __has_printed_dir__ = set()
+    __directories_for_messeges__ = set()
+    directories_created = []
+
     def __init__(self, **kwargs):
         assert "inp_file_path" in kwargs, "Must supply 'inp_file_path' keyword argument."
         self.inp_file_path = Path(kwargs["inp_file_path"])
@@ -221,6 +228,7 @@ class InputFile:
             self.new_directory = self.inp_file_path.parent/self.new_name
         else:
             self.new_directory = Path(new_file_dir)/self.new_name
+        InputFile.__directories_for_messeges__.add(self.new_directory.parent)
 
         if not self.new_directory.exists():
             print("Creating new directory: {0}".format(self.new_directory))
@@ -275,6 +283,8 @@ class InputFile:
             for line in self.__new_inp_lines__:
                 f.write(line)
 
+        InputFile.directories_created.append(self.new_directory)
+
         self.__num_writes__ += 1
         self.__files_written_so_far__.append(self.new_directory / self.new_name)
 
@@ -312,13 +322,26 @@ class InputFile:
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
 
     def __del__(self):
-        path = self.new_directory.parent
+        print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
+        for path in InputFile.__directories_for_messeges__:
 
-        if path not in InputFile.__has_printed_dir__:
-            if len(self.__has_printed_dir__) == 0:
-                print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
             print('cd {0}\n./cmd\n'.format(path))
-            InputFile.__has_printed_dir__.add(path)
+        python_strings = ['from pathlib import Path']
+
+        for path in InputFile.directories_created:
+            for path in Path(path).iterdir():
+                f_name = path.name
+                if any([r.match(f_name) for r in CLEAN_MATCHES]):
+                    cmd = "Path('{}').unlink()".format(path)
+                    python_strings.append(cmd)
+        py_cmds = '\n'.join(python_strings)
+        if len(InputFile.__directories_for_messeges__) == 1:
+
+            for d in InputFile.__directories_for_messeges__:
+                break
+
+            with open(Path(d)/'Clean.py', 'w') as clean_file:
+                clean_file.write(py_cmds)
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, cycle_rnd_seed=False, gen_run_script=True):
