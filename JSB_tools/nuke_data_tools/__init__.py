@@ -19,7 +19,7 @@ pwd = Path(__file__).parent
 
 __all__ = ['Nuclide']
 
-#  Note to myself: Pickled nuclear data is on your personal SSD
+#  Note to myself: Pickled nuclear data is on personal SSD
 #  Todo:
 #   * Add a custom exception, not AssertionError, when an unknown symbol is passed to Nuclide.
 #   * Investigate why some half-lives, such as Te-123, are 0 when they are in actuality very very long.
@@ -30,9 +30,9 @@ __all__ = ['Nuclide']
 #   * Add more  comments to document code.
 #   * Implement openmc.FissionProductYields
 #   * Any speed enhancements would be nice.
-#   * Use pyne to read latest ENDSFs and fill in some missing halk lives via a pickle file.
+#   * Use pyne to read latest ENDSFs and fill in some missing half lives via a pickle file.
 #     Then, read results into <additional_nuclide_data> variable.
-#   * Uncertainty in xs values? Values are ufloats
+#   * Uncertainty in xs values for CrossSection1D.plot? xs values are ufloats
 #   * Find a way to include data files in the pip package
 
 
@@ -41,15 +41,14 @@ DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
+# global variable for the bin-width of xs interpolation
+XS_BIN_WIDTH_INTERPOLATION = 0.1
 
 # Some additional nuclide info that aren't in ENDSFs
 additional_nuclide_data = {"In101_m1": {"half_life": ufloat(10, 5)},
                            "Lu159_m1": {"half_life": ufloat(10, 5)},
                            "Rh114_m1": {"half_life": ufloat(1.85, 0.05), "__decay_daughters_str__": "Pd114"},
                            "Pr132_m1": {"half_life": ufloat(20, 5), "__decay_daughters_str__": "Ce132"}}
-
-# global variable for the bin-width of xs interpolation
-XS_BIN_WIDTH_INTERPOLATION = 0.1
 
 
 # Needed because classes in this __init__ file will not be in scope of __main__ as required for unpickling
@@ -400,7 +399,7 @@ class Nuclide:
             reaction = CustomUnpickler(f).load()
 
         assert isinstance(reaction, _Reaction)
-        out: Dict[str, InducedParent] = {}
+        out: Dict[str, InducedDaughter] = {}
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
             if __nuclide_cut__(a_z_hl_cut, is_stable_only, daughter_nuclide):
@@ -537,7 +536,7 @@ class InducedParent(Nuclide):
 
 
 # modularize the patch work of reading PADF and ENDF-B-VIII.0_protons data.
-class proton_endf_file:
+class ProtonENDFFile:
     def __init__(self, padf_directory, endf_b_directory):
         self.nuclide_name_and_file_path = {}
 
@@ -557,7 +556,7 @@ class proton_endf_file:
 
         for path in Path(endf_b_directory).iterdir():
             f_name = path.name
-            _m = re.match("p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
+            _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
             if _m:
                 z = _m.groups()[0]
                 a = _m.groups()[2]
@@ -576,7 +575,7 @@ def pickle_proton_data():
     assert PROTON_PICKLE_DIR.exists()
     i = 0
     all_reactions = {}
-    files = proton_endf_file(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
+    files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
 
     for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
         if nuclide_name in all_reactions:
@@ -630,16 +629,15 @@ if __name__ == "__main__":
     # y = FissionProductYields("/Users/jeffreyburggraf/Downloads/gefy81_s/GEFY_92_238_s.dat")
 
     #  Uncomment code below to pickle Nuclide data
-    pickle_decay_data(decay_data_dir)
+    # pickle_decay_data(decay_data_dir)
 
 
     assert Path(proton_padf_data_dir).exists, "Cannot find proton data files. " \
                                          "Download proton files from https://www-nds.iaea.org/padf/ and set the " \
                                          "<proton_dir> variable to the location of the unzipped directory"
     #  Uncomment code below to pickle incident proton data
-    pickle_proton_data()
+    # pickle_proton_data()
 
-    pass
 
 
 
