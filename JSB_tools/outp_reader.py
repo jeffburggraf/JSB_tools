@@ -26,13 +26,18 @@ class F4Tally:
             if _m:
                 if _m.group(1) != "f":
                     self.tally_modifiers.add(_m.group(1))
+        found_n_tallies = 0
+        tally_begin_index = None
         for index, line in enumerate(outp.__outp_lines__):
             _m = re.match(r"1tally +{}".format(tally_number), line)
             if _m:
-                break
-        else:
+                found_n_tallies += 1
+                tally_begin_index = index
+        if found_n_tallies == 0:
             assert False, "Cannot find tally {}".format(tally_number)
-
+        elif found_n_tallies > 1:
+            warn('\nSeveral dumps of tally {0} found. Using last entry.'.format(self.tally_number))
+        index = tally_begin_index
         # initialize
         if self.tally_modifiers == set() or self.tally_modifiers == {"e"}:
             index += 2
@@ -112,6 +117,11 @@ class F4Tally:
 
         else:
             assert False, "Tally modifiers {} not supported yet!".format(self.tally_modifiers)
+
+    def interp_energy(self, new_ergs):
+        out = unp.uarray(np.interp(new_ergs, self.energies, unp.nominal_values(self.fluxes)),
+                         np.interp(new_ergs, self.energies, unp.std_devs(self.fluxes)))
+        return out
 
     def __repr__(self):
         return 'F4 Tally ({2}) in cell {0}, With {1} modifier.'.format(self.cell.cell_num, self.tally_modifiers,

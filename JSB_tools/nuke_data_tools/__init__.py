@@ -138,7 +138,7 @@ class CrossSection1D:
                 if self.__fig_label__ is not None:
                     ax.set_title(self.__fig_label__)
 
-        ax.plot(self.__ergs__, self.__xss__ * unit_factor)
+        ax.plot(self.__ergs__, self.__xss__ * unit_factor, label=self.__fig_label__)
         ax.set_ylabel("Cross-section [{}]".format(units))
         ax.set_xlabel("Incident {} energy [MeV]".format(self.__incident_particle__))
 
