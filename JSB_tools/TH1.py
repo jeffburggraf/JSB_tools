@@ -80,6 +80,10 @@ class TH1F:
         self.bin_widths = np.array(
             [c2 - c1 for c1, c2 in zip(self.__bin_left_edges__[:-1], self.__bin_left_edges__[1:])])
 
+        self.draw_expression = None
+        self.cut = None
+        self.draw_weight = None
+
     @property
     def bin_width(self):
         assert len(set(
@@ -554,20 +558,39 @@ class TH1F:
 
         return self
 
+    def set_draw_expression(self, draw_expression, cut='', weight=1):
+        assert isinstance(draw_expression, str)
+        assert isinstance(cut, str)
+        assert isinstance(weight, (Number, str))
+        self.draw_expression = draw_expression
+        self.cut = cut
+        if weight != 1:
+            assert len(cut) >= 1
+            self.draw_weight = str(weight)
+
     @staticmethod
-    def multi_fill(tree, histos, expressions, cuts, max_entries =None):
+    def multi_fill(tree, histos, max_entries=None):
+        """
+        Generates and runs a C file that efficiently fills multiple histograms in a single loop through a TTree.
+        The cuts and the expressions/weights that will be passed to TH1F->Fill are set by calling
+        TH1F.set_draw_expression(exp, cut, weight) on each histogram in `histos` argument prior to using this method.
+
+        Parameters:
+                tree (ROOT.TTree): A ROOT tree (or TChain)
+                histos (List[TH1F]): An iterable of TH1F instances (not the native ROOT TH1F, but the ROOT inspired
+                TH1F class defined here).
+                max_entries (int): Maximum number of entries to loop through.
+        Returns:
+                None
+        """
+        assert hasattr(histos, '__iter__')
+        assert all([isinstance(h, TH1F) for h in histos]), '`histos` arg must ba an iterator of TH1F types'
+        expressions = [h.draw_expression for h in histos]
+        cuts = [h.cut for h in histos]
         assert isinstance(tree, ROOT.TTree), '`tree` arg must be ROOT.TTree instance'
+        if max_entries is None:
+            max_entries = tree.GetEntries()
         tree.MakeClass('__temp__')
-        msg = 'Invalid arguments:\n' \
-              '`histos`, `expressions`, and `cuts` must be iterables of equal lengths.\n' \
-              '`histos` argument must be an iterator of TH1F instances.\n' \
-              '`expressions` and `cuts` arguments must be iterables of strings'
-        assert hasattr(histos, '__iter__'), msg
-        assert all([isinstance(h, TH1F) for h in histos]), msg
-        for s in [expressions, cuts]:
-            assert hasattr(s, '__iter__'), msg
-            assert all([isinstance(i, str) for i in s]), msg
-        assert len(histos) == len(expressions) == len(cuts), msg
 
         with open(Path(__file__).parent/'__temp__.h') as header_file:
             header_lines = header_file.readlines()
@@ -578,7 +601,6 @@ class TH1F:
 
         for line in header_lines:
             if re.match(' +virtual void + Loop\(\);', line):
-                print('dsljkfgnalrsgndfgnldnkgjbndkgjh')
                 new_line = '   virtual void     Loop({0});'.format(histo_args)+'\n'
                 new_header_lines.append(new_line)
             else:
@@ -588,7 +610,7 @@ class TH1F:
             for line in new_header_lines:
                 header_file.write(line)
 
-        with open(Path(__file__).parent/'__temp__.c') as c_file:
+        with open(Path(__file__).parent/'__temp__.C') as c_file:
             c_lines = c_file.readlines()
         new_c_lines = []
 
@@ -596,6 +618,8 @@ class TH1F:
             if re.match(r'.+\/\/ if \(Cut\(ientry\) < 0\) continue', line):
                 analysis_lines = ['\n']
                 for index, (expression, cut) in enumerate(zip(expressions, cuts)):
+                    if histos[index].draw_weight is not None:
+                        expression = '{1}, {0}'.format(histos[index].draw_weight, expression)
                     fill_line = 'h{0}->Fill({1});'.format(index, expression)
 
                     if cut.rstrip() != '':
@@ -606,20 +630,19 @@ class TH1F:
                 new_c_lines.append('\n'.join(analysis_lines))
                 new_c_lines.append('\t  if (jentry > max_entries){break;}\n')
 
-            elif re.match('void __temp__::Loop()', line):
+            elif re.match('void __temp__::Loop\(\)', line):
                 new_c_lines.append('void __temp__::Loop({})\n'.format(histo_args))
             else:
                 new_c_lines.append(line)
 
-        with open(Path(__file__).parent/'__temp__.c', 'w') as c_file:
+        with open(Path(__file__).parent/'__temp__.C', 'w') as c_file:
             for line in new_c_lines:
                 c_file.write(line)
 
-
-
-
-
-
+        print(ROOT.gROOT.LoadMacro(str(Path(__file__).parent/'__temp__.C')))
+        ROOT.gROOT.ProcessLine('cls = __temp__()')
+        _histos_for_ROOT = [h.__ROOT_hist__ for h in histos]
+        cls = ROOT.cls.Loop(*_histos_for_ROOT, max_entries)
 
 
 def ttree_cut_range(min_max_tuplee, expression, greater_then_or_equal=True, weight=None):
@@ -638,53 +661,8 @@ def ttree_and(expressions):
 
 
 if __name__ == "__main__":
-    from FFandProtonSims.GlobalValues import *
-    hist = TH1F(0,1000,1)
-    exp = 'erg'
-    cut = 'erg>999'
-    tree = shot_groups['He'].tree
-
-    TH1F.multi_fill(tree, [hist], [exp], [cut])
-    for b in tree.GetListOfBranches():
-        print(b)
-
-
-
-
-
-
+    import time
     #
-    # hist1 = TH1F(-10, 10, 40)
-    # hist2 = TH1F(-10, 10, 40)
-    # hist3 = TH1F(-10, 10, 40)
-    # hist4 = TH1F(-10, 10, 40)
-    # hist1.FillRandom(n=2000)
-    # hist2.FillRandom(n=2000)
-    # hist3.FillRandom(n=3000)
-    # hist4.FillRandom(n=300)
-    # hist1.shift_left_or_right(4)
-    # hist2.shift_left_or_right(-2)
-    # hist3.shift_left_or_right(-6)
-    #
-    # hist = hist1 + hist2 + hist3 + hist4
-    # for i in range(4000):
-    #     hist.Fill(np.random.uniform(-10,10))
-    # print("True c0 = ", 4000./len(hist)/hist.bin_width)
-    #
-    # hist /= hist.bin_widths
-    # fit = hist.peak_fit(peak_center=-2.5, background="linear")
-    # plt.errorbar(hist.bin_centers, unp.nominal_values(hist.bin_values), yerr=unp.std_devs(hist.bin_values))
-    # plt.plot(hist.bin_centers, fit.eval(params=fit.params, x=hist.bin_centers), label="fit")
-    # print(fit_report(fit))
-    # print(fit.data, "data")
-    # fit.plot_fit(plt)
-    # # print()
-    # plt.legend()
-    #
-    # plt.show()
-
-    # import time
-    #
-    # while True:
-    #     ROOT.gSystem.ProcessEvents()
-    #     time.sleep(0.05)
+    while True:
+        ROOT.gSystem.ProcessEvents()
+        time.sleep(0.05)
