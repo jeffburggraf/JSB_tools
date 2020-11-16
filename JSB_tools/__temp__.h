@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////
 // This class has been automatically generated on
-// Sun Nov 15 22:31:20 2020 by ROOT version 6.20/04
+// Sun Nov 15 23:30:50 2020 by ROOT version 6.20/04
 // from TChain tree/
 //////////////////////////////////////////////////////////
 
@@ -44,7 +44,7 @@ public :
    virtual Int_t    GetEntry(Long64_t entry);
    virtual Long64_t LoadTree(Long64_t entry);
    virtual void     Init(TTree *tree);
-   virtual void     Loop(TH1F *h0, TH1F *h1, int max_entries);
+   virtual void     Loop(TH1F *h0, TH1F *h1, TH1F *h2, TH1F *h3, TH1F *h4, TH1F *h5, TH1F *h6, TH1F *h7, TH1F *h8, TH1F *h9, TH1F *h10, int max_entries);
    virtual Bool_t   Notify();
    virtual void     Show(Long64_t entry = -1);
 };

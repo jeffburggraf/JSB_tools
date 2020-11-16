@@ -4,7 +4,7 @@ import warnings
 import platform
 import os
 import stat
-
+from atexit import register
 
 class Cell:
     def __init__(self, cell_num):
@@ -125,6 +125,7 @@ class InputFile:
                     break
             else:
                 self.MCNP_EOF = len(self.inp_lines)
+        register(InputFile.__del)
 
     def __split_new_lines__(self):
         new_inp_lines = self.__new_inp_lines__[:]
@@ -132,7 +133,7 @@ class InputFile:
         for line in new_inp_lines[:self.MCNP_EOF]:
             split_lines = line.split('\n')
             # In case evaluated code returns multiple lines, append on a line by line basis
-            self.__new_inp_lines__.extend('\n'.join(split_lines))
+            self.__new_inp_lines__.extend('\n'.join([_split_line(l) for l in split_lines]))
 
         self.__new_inp_lines__.extend(new_inp_lines[self.MCNP_EOF:])
 
@@ -320,8 +321,8 @@ class InputFile:
             if self.platform in ["Linux", "Darwin"]:
                 st = os.stat(f_path)
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
-
-    def __del__(self):
+    @staticmethod
+    def __del():
         print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
         for path in InputFile.__directories_for_messeges__:
 
@@ -342,6 +343,7 @@ class InputFile:
 
             with open(Path(d)/'Clean.py', 'w') as clean_file:
                 clean_file.write(py_cmds)
+                print('here')
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, cycle_rnd_seed=False, gen_run_script=True):

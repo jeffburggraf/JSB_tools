@@ -209,6 +209,8 @@ class TH1F:
     def plot(self, ax=None, leg_label=None, line_color=None):
         if ax is None:
             fig, ax = plt.subplots()
+        else:
+            fig = None
         ax.bar(self.bin_centers, unp.nominal_values(self.bin_values), width=self.bin_widths,
                yerr=unp.std_devs(self.bin_values), align="center", fill=False, label=leg_label, edgecolor=line_color)
         return fig, ax
