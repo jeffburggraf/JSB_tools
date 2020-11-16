@@ -16,7 +16,7 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 from typing import List
 import re
-
+import os
 
 class HistoBinMerger:
     def __init__(self, start_stop_tuples, new_bin_left_edges, old_hist):
@@ -166,10 +166,7 @@ class TH1F:
         plt.plot([peak_center-peak_width/2., peak_center+peak_width/2.], [0, 0], marker="p", label="Peak width")
         fit_selector = np.where((self.bin_centers >= min_x) &
                                 (self.bin_centers <= max_x))
-        # if len
 
-        plt.plot(self.bin_centers[fit_selector], np.zeros_like(fit_selector[0]), marker="p", label="Fit range")
-        # _x_offset = np.mean(self.bin_centers[fit_selector])
         _x = self.bin_centers[fit_selector]
         _y = unp.nominal_values(self.bin_values[fit_selector])
         _y_err = unp.std_devs(self.bin_values[fit_selector])
@@ -208,6 +205,13 @@ class TH1F:
         fit_result = model.fit(_y, x=_x, weights=weights,
                                params=model_params)
         return fit_result
+
+    def plot(self, ax=None, leg_label=None, line_color=None):
+        if ax is None:
+            fig, ax = plt.subplots()
+        ax.bar(self.bin_centers, unp.nominal_values(self.bin_values), width=self.bin_widths,
+               yerr=unp.std_devs(self.bin_values), align="center", fill=False, label=leg_label, edgecolor=line_color)
+        return fig, ax
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
         bin_start_stops = []
@@ -590,7 +594,10 @@ class TH1F:
         assert isinstance(tree, ROOT.TTree), '`tree` arg must be ROOT.TTree instance'
         if max_entries is None:
             max_entries = tree.GetEntries()
+        d = os.getcwd()
+        os.chdir(Path(__file__).parent)
         tree.MakeClass('__temp__')
+        os.chdir(d)
 
         with open(Path(__file__).parent/'__temp__.h') as header_file:
             header_lines = header_file.readlines()
@@ -609,6 +616,7 @@ class TH1F:
         with open(Path(__file__).parent/'__temp__.h', 'w') as header_file:
             for line in new_header_lines:
                 header_file.write(line)
+            print(header_file.name)
 
         with open(Path(__file__).parent/'__temp__.C') as c_file:
             c_lines = c_file.readlines()
