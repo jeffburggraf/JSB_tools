@@ -4,7 +4,7 @@
 #include <TStyle.h>
 #include <TCanvas.h>
 
-void __temp__::Loop(TH1F *h0, TH1F *h1, TH1F *h2, TH1F *h3, TH1F *h4, TH1F *h5, TH1F *h6, TH1F *h7, TH1F *h8, TH1F *h9, TH1F *h10, int max_entries)
+void __temp__::Loop(TH1F *h0, TH1F *h1, int max_entries)
 {
 //   In a ROOT session, you can do:
 //      root> .L __temp__.C
@@ -40,27 +40,9 @@ void __temp__::Loop(TH1F *h0, TH1F *h1, TH1F *h2, TH1F *h3, TH1F *h4, TH1F *h5, 
       nb = fChain->GetEntry(jentry);   nbytes += nb;
 
 
-	  if (shot == 42 && (10 <= (t_rnd) && (t_rnd) <= 200)){h0->Fill(erg);}
+	  if (((2313.9754257951786 <= (erg) && (erg) <= 2313.9786551677093)) && (((0 <= (t_rnd) && (t_rnd) <= 330)))){h0->Fill(t_rnd, (1/eff));}
 
-	  if (shot == 43 && (10 <= (t_rnd) && (t_rnd) <= 200)){h1->Fill(erg);}
-
-	  if (shot == 44 && (10 <= (t_rnd) && (t_rnd) <= 200)){h2->Fill(erg);}
-
-	  if (shot == 45 && (10 <= (t_rnd) && (t_rnd) <= 200)){h3->Fill(erg);}
-
-	  if (shot == 46 && (10 <= (t_rnd) && (t_rnd) <= 200)){h4->Fill(erg);}
-
-	  if (shot == 47 && (10 <= (t_rnd) && (t_rnd) <= 200)){h5->Fill(erg);}
-
-	  if (shot == 48 && (10 <= (t_rnd) && (t_rnd) <= 200)){h6->Fill(erg);}
-
-	  if (shot == 49 && (10 <= (t_rnd) && (t_rnd) <= 200)){h7->Fill(erg);}
-
-	  if (shot == 50 && (10 <= (t_rnd) && (t_rnd) <= 200)){h8->Fill(erg);}
-
-	  if (shot == 51 && (10 <= (t_rnd) && (t_rnd) <= 200)){h9->Fill(erg);}
-
-	  if (shot == 52 && (10 <= (t_rnd) && (t_rnd) <= 200)){h10->Fill(erg);}
+	  if ((((2313.9786551677093 <= (erg) && (erg) <= 2313.980269853975)) || ((2313.9738111089127 <= (erg) && (erg) <= 2313.9754257951786))) && (((0 <= (t_rnd) && (t_rnd) <= 330)))){h1->Fill(t_rnd, (1/eff));}
 	  if (jentry > max_entries){break;}
    }
 }

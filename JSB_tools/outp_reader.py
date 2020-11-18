@@ -113,10 +113,15 @@ class F4Tally:
             self.__energy_bins__ = np.array(self.__energy_bins__)
             _flux = float(outp.__outp_lines__[index].split()[1])
             _flux_error = _flux * float(outp.__outp_lines__[index].split()[2])
-            self.flux = ufloat(_flux, _flux_error)
+            self.flux = ufloat(_flux, _flux_error)  # total flux
 
         else:
             assert False, "Tally modifiers {} not supported yet!".format(self.tally_modifiers)
+
+    @property
+    def erg_bin_widths(self):
+        out = [e2-e1 for e1, e2 in zip(self.__energy_bins__[:-1], self.__energy_bins__[1:])]
+        return np.array(out)
 
     def interp_energy(self, new_ergs):
         out = unp.uarray(np.interp(new_ergs, self.energies, unp.nominal_values(self.fluxes)),
