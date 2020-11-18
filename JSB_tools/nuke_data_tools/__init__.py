@@ -183,8 +183,8 @@ class CrossSection1D:
     def __repr__(self):
         ergs = ", ".join(["{:.2e}".format(e) for e in self.__ergs__])
         xss = ", ".join(["{:.2e}".format(e) for e in self.__xss__])
-        return "ergs: {0}\n" \
-               "  xs: {1}".format(ergs, xss)
+        out = "{0}:\nergs: {1}\nxs: {2}".format(self.__fig_label__, ergs, xss)
+        return out
 
 
 class DecayMode:
@@ -226,18 +226,6 @@ def get_z_a_m_from_name(name):
     return Z, A, isometric_state
 
 
-def get_name_from_z_a_m(z, a, m):
-    z, a, m = map(int, [z, a, m])
-    if z == 0:
-        symbol = "Nn"
-    else:
-        symbol = ATOMIC_SYMBOL[z]
-    symbol += str(a)
-    if m != 0:
-        symbol += "_m{0}".format(m)
-    return symbol
-
-
 def __nuclide_cut__(a_z_hl_cut: str, is_stable_only, nuclide: Nuclide):
     makes_cut = True
 
@@ -267,6 +255,9 @@ def __nuclide_cut__(a_z_hl_cut: str, is_stable_only, nuclide: Nuclide):
 class Nuclide:
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
+        assert '__internal__' in kwargs, '\nTo generate a Nuclide instance, use the following syntax:\n\t' \
+                                         'Nuclide.from_symbol(<symbol>)'
+
         orig_name = name
         if '-' in name:
             name = name.replace('-', '')
@@ -337,10 +328,11 @@ class Nuclide:
         if _m not in NUCLIDE_INSTANCES:
             if not pickle_file.exists():
                 if symbol in additional_nuclide_data:
-                    instance = Nuclide(symbol, **additional_nuclide_data[symbol])
+                    instance = Nuclide(symbol, __internal__=True, **additional_nuclide_data[symbol])
                 else:
-                    warn("Cannot find data for Nuclide {0}. Data for this nuclide empty".format(symbol))
-                    instance = Nuclide(symbol, half_life=ufloat(np.nan, np.nan))
+                    warn("Cannot find data for Nuclide `{0}`. Data for this nuclide is set to defaults: None, nan, ect."
+                         .format(symbol))
+                    instance = Nuclide(symbol,  __internal__=True, half_life=ufloat(np.nan, np.nan))
             else:
                 with open(pickle_file, "rb") as pickle_file:
                     instance = CustomUnpickler(pickle_file).load()
@@ -468,50 +460,50 @@ class Nuclide:
                     nuclides.append(nuclide)
         return nuclides
 
-
-def pickle_decay_data(directory):
-    directory = Path(directory)  # Path to downloaded ENDF decay data
-    assert directory.exists()
-    for file_path in directory.iterdir():
-        file_name = file_path.name
-        _m = re.match(r"dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf", file_name)
-        if _m:
-            a = int(_m.group("A"))
-            _s = _m.group("S")  # nuclide symbol, e.g. Cl, Xe, Ar
-            m = _m.group("M")
-            if m is not None:
-                m = int(m)
-
-            parent_nuclide_name = "{0}{1}{2}".format(_s, a, "" if m is None else "_m{0}".format(m))
-        else:
-            continue
-
-        if parent_nuclide_name in NUCLIDE_INSTANCES:
-            parent_nuclide = NUCLIDE_INSTANCES[parent_nuclide_name]
-        else:
-            parent_nuclide = Nuclide(parent_nuclide_name)
-            NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
-
-        openmc_decay = Decay(Evaluation(file_path))
-        daughter_names = [mode.daughter for mode in openmc_decay.modes]
-        for daughter_nuclide_name in daughter_names:
-            if daughter_nuclide_name in NUCLIDE_INSTANCES:
-                daughter_nuclide = NUCLIDE_INSTANCES[daughter_nuclide_name]
-            else:
-                daughter_nuclide = Nuclide(daughter_nuclide_name)
-                NUCLIDE_INSTANCES[daughter_nuclide_name] = daughter_nuclide
-
-            if daughter_nuclide_name != parent_nuclide_name:
-                daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
-                parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
-
-        parent_nuclide.__set_data_from_open_mc__(openmc_decay)
-        print("Preparing data for {0}".format(parent_nuclide_name))
-
-    for nuclide_name in NUCLIDE_INSTANCES.keys():
-        with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
-            print("Writing data for {0}".format(nuclide_name))
-            pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
+#
+# def pickle_decay_data(directory):
+#     directory = Path(directory)  # Path to downloaded ENDF decay data
+#     assert directory.exists()
+#     for file_path in directory.iterdir():
+#         file_name = file_path.name
+#         _m = re.match(r"dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf", file_name)
+#         if _m:
+#             a = int(_m.group("A"))
+#             _s = _m.group("S")  # nuclide symbol, e.g. Cl, Xe, Ar
+#             m = _m.group("M")
+#             if m is not None:
+#                 m = int(m)
+#
+#             parent_nuclide_name = "{0}{1}{2}".format(_s, a, "" if m is None else "_m{0}".format(m))
+#         else:
+#             continue
+#
+#         if parent_nuclide_name in NUCLIDE_INSTANCES:
+#             parent_nuclide = NUCLIDE_INSTANCES[parent_nuclide_name]
+#         else:
+#             parent_nuclide = Nuclide(parent_nuclide_name)
+#             NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
+#
+#         openmc_decay = Decay(Evaluation(file_path))
+#         daughter_names = [mode.daughter for mode in openmc_decay.modes]
+#         for daughter_nuclide_name in daughter_names:
+#             if daughter_nuclide_name in NUCLIDE_INSTANCES:
+#                 daughter_nuclide = NUCLIDE_INSTANCES[daughter_nuclide_name]
+#             else:
+#                 daughter_nuclide = Nuclide(daughter_nuclide_name)
+#                 NUCLIDE_INSTANCES[daughter_nuclide_name] = daughter_nuclide
+#
+#             if daughter_nuclide_name != parent_nuclide_name:
+#                 daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
+#                 parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
+#
+#         parent_nuclide.__set_data_from_open_mc__(openmc_decay)
+#         print("Preparing data for {0}".format(parent_nuclide_name))
+#
+#     for nuclide_name in NUCLIDE_INSTANCES.keys():
+#         with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
+#             print("Writing data for {0}".format(nuclide_name))
+#             pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
 
 
 class InducedDaughter(Nuclide):
@@ -519,7 +511,7 @@ class InducedDaughter(Nuclide):
         assert isinstance(daughter_nuclide, Nuclide)
         assert isinstance(parent_nuclide, Nuclide)
         kwargs = {k: v for k, v in daughter_nuclide.__dict__.items() if k != "name"}
-        super().__init__(daughter_nuclide.name, **kwargs)
+        super().__init__(daughter_nuclide.name, __internal__=True, **kwargs)
         self.xs: CrossSection1D = None
         self.parent: Nuclide = parent_nuclide
         self.inducing_particle = inducing_particle
@@ -534,7 +526,7 @@ class InducedParent(Nuclide):
         assert isinstance(daughter_nuclide, Nuclide)
         assert isinstance(parent_nuclide, Nuclide)
         kwargs = {k: v for k, v in parent_nuclide.__dict__.items() if k != "name"}
-        super().__init__(parent_nuclide.name, **kwargs)
+        super().__init__(parent_nuclide.name, __internal__=True, **kwargs)
         self.xs: CrossSection1D = None
         self.daughter: Nuclide = daughter_nuclide
         self.inducing_particle = inducing_particle
@@ -544,83 +536,55 @@ class InducedParent(Nuclide):
         return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
 
-# modularize the patch work of reading PADF and ENDF-B-VIII.0_protons data.
-class ProtonENDFFile:
-    def __init__(self, padf_directory, endf_b_directory):
-        self.nuclide_name_and_file_path = {}
-
-        for path in Path(padf_directory).iterdir():
-            f_name = path.name
-            _m = re.match("([0-9]{4,6})(?:M([0-9]))?", f_name)
-            if _m:
-                zaid = int(_m.groups()[0])
-                if _m.groups()[1] is not None:
-                    isometric_state = int(_m.groups()[1])
-                else:
-                    isometric_state = 0
-                z = zaid // 1000
-                a = zaid % 1000
-                nuclide_name = get_name_from_z_a_m(z, a, isometric_state)
-                self.nuclide_name_and_file_path[nuclide_name] = path
-
-        for path in Path(endf_b_directory).iterdir():
-            f_name = path.name
-            _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
-            if _m:
-                z = _m.groups()[0]
-                a = _m.groups()[2]
-                nuclide_name = get_name_from_z_a_m(z, a, 0)
-                self.nuclide_name_and_file_path[nuclide_name] = path
-
-
+# used for storing proton-induced data in pickle file. Imported in endf_to_pickle.py, and used in this module
+# for unpickling
 class _Reaction:
     def __init__(self, name):
         self.name = name
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
 
-
-def pickle_proton_data():
-    assert PROTON_PICKLE_DIR.exists()
-    i = 0
-    all_reactions = {}
-    files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
-
-    for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
-        if nuclide_name in all_reactions:
-            reaction = all_reactions[nuclide_name]
-        else:
-            reaction = _Reaction(nuclide_name)
-            all_reactions[nuclide_name] = reaction
-
-        e = Evaluation(f_path)
-        for heavy_product in Reaction.from_endf(e, 5).products:
-            heavy_product_name = heavy_product.particle
-            if heavy_product_name == "photon":
-                continue
-            if heavy_product_name == "neutron":
-                heavy_product_name = "Nn1"
-            xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
-            xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
-            reaction.product_nuclide_names_xss[heavy_product_name] = xs
-            if heavy_product_name in all_reactions:
-                daughter_reaction = all_reactions[heavy_product_name]
-            else:
-                daughter_reaction = _Reaction(heavy_product_name)
-                all_reactions[heavy_product_name] = daughter_reaction
-            daughter_reaction.parent_nuclide_names.append(nuclide_name)
-        i += 1
-
-    for nuclide_name, reaction in all_reactions.items():
-        pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
-        with open(pickle_file_name, "bw") as f:
-            pickle.dump(reaction, f)
+#
+# def pickle_proton_data():
+#     assert PROTON_PICKLE_DIR.exists()
+#     i = 0
+#     all_reactions = {}
+#     files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
+#
+#     for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
+#         if nuclide_name in all_reactions:
+#             reaction = all_reactions[nuclide_name]
+#         else:
+#             reaction = _Reaction(nuclide_name)
+#             all_reactions[nuclide_name] = reaction
+#
+#         e = Evaluation(f_path)
+#         for heavy_product in Reaction.from_endf(e, 5).products:
+#             heavy_product_name = heavy_product.particle
+#             if heavy_product_name == "photon":
+#                 continue
+#             if heavy_product_name == "neutron":
+#                 heavy_product_name = "Nn1"
+#             xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
+#             xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
+#             reaction.product_nuclide_names_xss[heavy_product_name] = xs
+#             if heavy_product_name in all_reactions:
+#                 daughter_reaction = all_reactions[heavy_product_name]
+#             else:
+#                 daughter_reaction = _Reaction(heavy_product_name)
+#                 all_reactions[heavy_product_name] = daughter_reaction
+#             daughter_reaction.parent_nuclide_names.append(nuclide_name)
+#         i += 1
+#
+#     for nuclide_name, reaction in all_reactions.items():
+#         pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
+#         with open(pickle_file_name, "bw") as f:
+#             pickle.dump(reaction, f)
 
 
 #  Download PADF proton induced reaction files from https://www-nds.iaea.org/padf/
 #  Download decay data from https://www.nndc.bnl.gov/endf/b8.0/download.html
-proton_padf_data_dir = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/PADF_2007/Files"
-proton_enfd_b_data_dir = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_protons"
+
 decay_data_dir = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay"
 dir_old = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay/"
 dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
