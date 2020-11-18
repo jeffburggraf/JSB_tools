@@ -14,6 +14,7 @@ from uncertainties.umath import isinf, isnan
 import uncertainties
 from functools import cached_property
 from openmc.data.data import NATURAL_ABUNDANCE
+import zipfile
 
 pwd = Path(__file__).parent
 
@@ -34,6 +35,11 @@ __all__ = ['Nuclide']
 #     Then, read results into <additional_nuclide_data> variable.
 #   * Uncertainty in xs values for CrossSection1D.plot? xs values are ufloats
 #   * Find a way to include data files in the pip package
+
+# p = '/Users/jeffreyburggraf/PycharmProjects/miscellaneous/data.zip'
+#
+# with ZipFile(p, 'r') as zip_ref:
+#     zip_ref.ext
 
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
