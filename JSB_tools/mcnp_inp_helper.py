@@ -6,6 +6,10 @@ import os
 import stat
 from atexit import register
 
+# todo: Make direct calls to InputDeck throw amn error telling one to use factory methods.
+# todo: Improve and simplify file management.
+
+
 class Cell:
     def __init__(self, cell_num):
         self.cell_num = cell_num
@@ -79,8 +83,6 @@ CLEAN_MATCHES = [re.compile(p) for p in
 
 
 class InputFile:
-    __directories_for_messeges__ = set()
-    directories_created = []
 
     def __init__(self, **kwargs):
         assert "inp_file_path" in kwargs, "Must supply 'inp_file_path' keyword argument."
@@ -99,8 +101,15 @@ class InputFile:
         self.gen_run_script = kwargs.get("gen_run_script", True)
         assert isinstance(self.gen_run_script, bool)
 
-        self.new_name = None
-        self.new_directory = None
+        new_file_dir = kwargs.get('new_file_dir')
+        if new_file_dir is None:
+            new_file_dir = self.inp_file_path.parent
+            print('Root directopry: ', new_file_dir)
+        else:
+            new_file_dir = Path(new_file_dir)
+            assert new_file_dir.exists() and new_file_dir.is_dir(), '`new_file_dir` must be a directory that exists.'
+        self.inp_root_directory = new_file_dir
+        self.directories_created = []
 
         self.__files_written_so_far__ = []
 
@@ -125,7 +134,7 @@ class InputFile:
                     break
             else:
                 self.MCNP_EOF = len(self.inp_lines)
-        register(InputFile.__del)
+        register(self.__del)
 
     def __split_new_lines__(self):
         new_inp_lines = self.__new_inp_lines__[:]
@@ -214,37 +223,29 @@ class InputFile:
 
         return new_line, exception_msg
 
-    def __set_directory_etc__(self,  new_file_name, new_file_dir):
+    def __create_directory_if_needed__(self, new_file_name):
         if new_file_name is None:
-            new_name = self.inp_file_path.name
-            _m = re.match("(.+)\..+", new_name)
+            new_file_name = self.inp_file_path.name
+            _m = re.match("(.+)\..+", new_file_name)
             if _m:
-                new_name = _m.groups()[0]
+                new_file_name = _m.groups()[0]
 
-            self.new_name = "{0}_{1}".format(self.__num_writes__, new_name)
-        else:
-            self.new_name = new_file_name
+            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
+        new_inp_directory = self.inp_root_directory / new_file_name
+        self.directories_created.append(new_inp_directory)
 
-        if new_file_dir is None:
-            self.new_directory = self.inp_file_path.parent/self.new_name
-        else:
-            self.new_directory = Path(new_file_dir)/self.new_name
-        InputFile.__directories_for_messeges__.add(self.new_directory.parent)
+        if not new_inp_directory.exists():
+            print("Creating new directory: {0}".format(new_inp_directory))
+        new_inp_directory.mkdir(exist_ok=True)
 
-        if not self.new_directory.exists():
-            print("Creating new directory: {0}".format(self.new_directory))
-        self.new_directory.mkdir(exist_ok=True)
+        assert new_inp_directory.exists(), "Directory '{0}' doesn't exist.".format(new_inp_directory)
+        return new_inp_directory
 
-        assert self.new_directory.exists(), "Directory '{0}' doesn't exist.".format(self.new_directory)
-
-    @property
-    def new_file_full_path(self):
-        return self.new_directory / self.new_name
-
-    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, new_file_dir=None, script_name="cmd",
+    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
                            **mcnp_or_phits_kwargs):
         assert len(self.__new_inp_lines__) == 0
-        self.__set_directory_etc__(new_file_name, new_file_dir)
+        new_inp_directory = self.__create_directory_if_needed__(new_file_name)
+        new_file_full_path = new_inp_directory / new_file_name
 
         exception_msgs = ""
         if self.is_mcnp:
@@ -263,49 +264,48 @@ class InputFile:
 
         if self.is_mcnp:
             self.__split_new_lines__()
-        if self.is_mcnp:
             self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
         if self.gen_run_script is True:
-            self.__gen_run_script__(script_name, mcnp_or_phits_kwargs)
-        self.__write_file__()
+            self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs)
+        self.__write_file__(new_file_full_path)
 
         self.__new_inp_lines__ = []
 
-    def __write_file__(self):
+    def __write_file__(self, new_file_full_path):
         assert len(self.__new_inp_lines__) > 0, "Must call 'write_inp_in_scope' before '__write_file__'"
-
+        # new_inp_directory = new_file_full_path.parent
+        # new_inp_name = new_file_full_path.name
         if self.cycle_rnd_seed is not False:
             if self.is_mcnp:
                 self.cycle_random_number_mcnp()
             else:
                 raise NotImplementedError
 
-        with open(self.new_directory / self.new_name, "w") as f:
+        with open(new_file_full_path, "w") as f:
             for line in self.__new_inp_lines__:
                 f.write(line)
 
-        InputFile.directories_created.append(self.new_directory)
-
         self.__num_writes__ += 1
-        self.__files_written_so_far__.append(self.new_directory / self.new_name)
+        self.__files_written_so_far__.append(new_file_full_path)
 
-    def __gen_run_script__(self, script_name, mcnp_or_phits_kwargs):
-        f_path = self.new_directory.parent / script_name
+    def __append_cmd_to_run_script__(self, script_name, new_file_full_path, mcnp_or_phits_kwargs):
+        f_path = self.inp_root_directory / script_name
         if mcnp_or_phits_kwargs is None:
             script_kwargs = ""
         else:
             assert isinstance(mcnp_or_phits_kwargs, dict)
             script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in mcnp_or_phits_kwargs.items()])
-
-        cd_cmd = "cd {0}".format(self.new_directory)
-        run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, self.new_name, script_kwargs) if self.is_mcnp else \
-            "{0};phits.sh {1} {2}".format(cd_cmd, self.new_name, script_kwargs)
+        new_file_name = new_file_full_path.name
+        cd_cmd = "cd {0}".format(self.inp_root_directory)
+        run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, new_file_name, script_kwargs) if self.is_mcnp else \
+            "{0};phits.sh {1} {2}".format(cd_cmd, new_file_name, script_kwargs)
 
         if self.platform == "Darwin":
             new_cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0} 2>&1 | tee -i log_{1}.txt;exit\"\nend " \
-                      "tell'\n".format(run_cmd, self.new_name)
+                      "tell'\n".format(run_cmd, new_file_full_path)
         elif self.platform == "Linux":
-            new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd, self.new_name)
+            new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd,
+                                                                                             new_file_full_path)
         elif self.platform == "Windows":
             warnings.warn("Currently no implementation of the creation of a .bat file to automatically run the "
                           "simulations on Windows. ")
@@ -321,38 +321,41 @@ class InputFile:
             if self.platform in ["Linux", "Darwin"]:
                 st = os.stat(f_path)
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
-    @staticmethod
-    def __del():
+
+    def __del(self):
         print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
-        for path in InputFile.__directories_for_messeges__:
-
-            print('cd {0}\n./cmd\n'.format(path))
+        print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
         python_strings = ['from pathlib import Path']
+        for sim_path in self.directories_created:
+            print('here, ', sim_path)
 
-        for path in InputFile.directories_created:
-            for path in Path(path).iterdir():
+            for path in Path(sim_path).iterdir():
                 f_name = path.name
                 if any([r.match(f_name) for r in CLEAN_MATCHES]):
                     cmd = "Path('{}').unlink()".format(path)
                     python_strings.append(cmd)
         py_cmds = '\n'.join(python_strings)
-        if len(InputFile.__directories_for_messeges__) == 1:
 
-            for d in InputFile.__directories_for_messeges__:
-                break
-
-            with open(Path(d)/'Clean.py', 'w') as clean_file:
-                clean_file.write(py_cmds)
-                print('here')
+        with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
+            clean_file.write(py_cmds)
+                # print('here')
+        # if len(InputFile.__directories_for_messeges__) == 1:
+        #
+        #     for d in InputFile.__directories_for_messeges__:
+        #         break
+        #
+        #     with open(Path(d)/'Clean.py', 'w') as clean_file:
+        #         clean_file.write(py_cmds)
+        #         print('here')
 
     @classmethod
-    def mcnp_input_deck(cls, inp_file_path, cycle_rnd_seed=False, gen_run_script=True):
-        return InputFile(inp_file_path=inp_file_path,cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
+    def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
+        return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=True)
 
     @classmethod
-    def phits_input_deck(cls, inp_file_path, cycle_rnd_seed=False, gen_run_script=True):
-        return InputFile(inp_file_path=inp_file_path, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
+    def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
+        return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=False)
 
 if __name__ == "__main__":
