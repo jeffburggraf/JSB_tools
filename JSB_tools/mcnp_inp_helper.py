@@ -172,29 +172,6 @@ class MCNPSICard:
         pass
 
 
-# import numpy as np
-#
-# def half_angle(erg):
-#     return 27.84293 + 0.0914449 * erg - 0.006505* erg ** 2
-#
-# def f(x):return x
-#
-# ergs = np.arange(5, 70, 10)
-#
-#
-# s = MCNPSICard.from_function(f, ergs)
-#
-# sis = [(MCNPSICard.from_function(lambda x: 1, [0, 2*half_angle(erg)]), erg) for erg in ergs]
-# # print(sis[0].card)
-# dsi = 'DS{0} Q {1}'.format(MCNPSICard.get_next_si_number(), '  '.join(['{0} {1}'.format(erg, si.si_card_number)
-#                                                                       for si,erg in sis ]))
-# print(s.card)
-# for s in sis:
-#     print(s[0].card)
-# print(dsi)
-# print(s.card)
-# print(s1.card)
-
 CLEAN_MATCHES = [re.compile(p) for p in
                  [r"ptra[a-z]+$", r"runtpe[0-9]+", r"runtp[a-z]", r"mcta[a-z]", r"out[a-z]$", r"outp[0-9]+$",
                   r"comou[a-z]", r"meshta[a-z]", r"mdat[a-z]"]]
