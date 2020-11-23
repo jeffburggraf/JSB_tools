@@ -5,9 +5,12 @@ import platform
 import os
 import stat
 from atexit import register
+from uncertainties import UFloat
+from numbers import Number
+from JSB_tools.TH1 import TH1F
 
-# todo: Make direct calls to InputDeck throw amn error telling one to use factory methods.
-# todo: Improve and simplify file management.
+
+# todo: Make Clean.py do a regex search natively
 
 
 class Cell:
@@ -15,7 +18,7 @@ class Cell:
         self.cell_num = cell_num
 
 
-class Cuboid(Cell):  # Todo:
+class Cuboid(Cell):  # Todo: or not?
     def __init__(self, cell_num, xmin, xmax, ymin, ymax, zmin, zmax):
         super(Cuboid, self).__init__(cell_num)
         self.xmin = xmin
@@ -77,14 +80,131 @@ def _split_line(line):
     return fixed
 
 
+class MCNPSICard:
+    used_numbers = set()
+
+    @staticmethod
+    def reset_si_numbers():
+        MCNPSICard.used_numbers = set()
+
+    @staticmethod
+    def get_next_si_number():
+        si_card_number = 1
+        while si_card_number in MCNPSICard.used_numbers:
+            si_card_number += 1
+        MCNPSICard.used_numbers.add(si_card_number)
+
+        return si_card_number
+
+    @staticmethod
+    def __check_arrays__(array, var_name):
+        assert hasattr(array, '__iter__'), '`{}` must be an iterator'.format(var_name)
+        if isinstance(array[0], UFloat):
+            array = [f.n for f in array]
+        assert all([isinstance(x, Number) for x in array]), 'All `{0}` mut be a number, not {1}'.format(var_name,
+                                                                                                        [x for x in array]) #type(array[0]))
+
+        return array
+
+    def __init__(self, variable_values, variable_probs, si_card_number=None, discrete=False, cell_vol_dist=False):
+        self.variable_values = MCNPSICard.__check_arrays__(variable_values, 'variable_values')
+        self.variable_probs = MCNPSICard.__check_arrays__(variable_probs, 'variable_probs')
+
+        assert len(self.variable_values) == len(self.variable_probs), 'Length of `variable_probs` and ' \
+                                                                      '`variable_values` must be equal'
+        assert isinstance(discrete, bool), '`discrete` arg must be True or False.'
+
+        if si_card_number is None:
+            si_card_number = MCNPSICard.get_next_si_number()
+        else:
+            assert isinstance(si_card_number, int), '`si_card_number` must be an integer.'
+        self.si_card_number = si_card_number
+
+        if discrete:
+            self.si_option = 'L'
+            # assert variable_probs[0] == 0, 'When using a discrete distribution, variable_probs[0] must be zero.'
+        else:
+            self.si_option = 'A'
+
+        assert isinstance(cell_vol_dist, bool), '`cell_vol_dist` must be True of False'
+        if cell_vol_dist is True:
+            self.sp_option = 'V'
+        else:
+            self.sp_option = ''
+
+        self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option, ' '.join(map(str, self.variable_values)))
+        self.card += 'SP{0} {1} {2}\n'.format(self.si_card_number, self.sp_option, ' '.join(map(str, self.variable_probs)))
+
+    @classmethod
+    def from_function(cls, function, variable_values, si_card_number=None, discrete=False, *func_args, **func_kwargs):
+        assert callable(function), '`function` must be a callable.'
+        variable_probs = MCNPSICard.__check_arrays__([function(x, *func_args, **func_kwargs) for x in variable_values],
+                                                     'Values returned from function')
+
+        return cls(variable_values, variable_probs, si_card_number=si_card_number, discrete=discrete)
+
+    @classmethod
+    def from_TH1F(cls, hist: TH1F, si_card_number=None):
+        assert isinstance(hist, TH1F), '`hist` must be TH1F instance.'
+        variable_values = hist.__bin_left_edges__
+        variable_probs = [0] + [x.n for x in hist.bin_values]
+        return cls(variable_values, variable_probs, si_card_number=si_card_number, discrete=False)
+
+    @classmethod
+    def function_of_si(cls, si_independent, function, si_card_number=None, discrete=False):
+        assert isinstance(si_independent, MCNPSICard), '`si_independent` must be MCNPSICard instance'
+        assert callable(function), '`function` must be a callable'
+        variable_values = [function(x) for x in si_independent.variable_values[1:]]
+
+        if discrete:
+            option = ' L '
+        else:
+            option = ' '
+
+        jis = MCNPSICard.__check_arrays__(variable_values, 'variable_values')
+        out = cls([0], [0], si_card_number)
+        card = 'DS{0}{1}{2}'.format(out.si_card_number, option, ' '.join(map(str, jis)))
+        out.card = card
+        return out
+
+    @classmethod
+    def si_k_for_each_value_in_si_0(cls, si_0, si_ks):
+        pass
+
+
+# import numpy as np
+#
+# def half_angle(erg):
+#     return 27.84293 + 0.0914449 * erg - 0.006505* erg ** 2
+#
+# def f(x):return x
+#
+# ergs = np.arange(5, 70, 10)
+#
+#
+# s = MCNPSICard.from_function(f, ergs)
+#
+# sis = [(MCNPSICard.from_function(lambda x: 1, [0, 2*half_angle(erg)]), erg) for erg in ergs]
+# # print(sis[0].card)
+# dsi = 'DS{0} Q {1}'.format(MCNPSICard.get_next_si_number(), '  '.join(['{0} {1}'.format(erg, si.si_card_number)
+#                                                                       for si,erg in sis ]))
+# print(s.card)
+# for s in sis:
+#     print(s[0].card)
+# print(dsi)
+# print(s.card)
+# print(s1.card)
+
 CLEAN_MATCHES = [re.compile(p) for p in
                  [r"ptra[a-z]+$", r"runtpe[0-9]+", r"runtp[a-z]", r"mcta[a-z]", r"out[a-z]$", r"outp[0-9]+$",
                   r"comou[a-z]", r"meshta[a-z]", r"mdat[a-z]"]]
 
 
 class InputFile:
-
     def __init__(self, **kwargs):
+        assert '__internal__' in kwargs, '\nTo create an input file, use one of the two factory methods:\n' \
+                                         '\tInputFile.mcnp_input_deck(*args, **kwargs)\n' \
+                                         '\tInputFile.phits_input_deck(*args, **kwargs)'
         assert "inp_file_path" in kwargs, "Must supply 'inp_file_path' keyword argument."
         self.inp_file_path = Path(kwargs["inp_file_path"])
         assert self.inp_file_path.exists(), "Cannot find input deck:\n{0}".format(self.inp_file_path)
@@ -104,7 +224,6 @@ class InputFile:
         new_file_dir = kwargs.get('new_file_dir')
         if new_file_dir is None:
             new_file_dir = self.inp_file_path.parent
-            print('Root directopry: ', new_file_dir)
         else:
             new_file_dir = Path(new_file_dir)
             assert new_file_dir.exists() and new_file_dir.is_dir(), '`new_file_dir` must be a directory that exists.'
@@ -224,13 +343,6 @@ class InputFile:
         return new_line, exception_msg
 
     def __create_directory_if_needed__(self, new_file_name):
-        if new_file_name is None:
-            new_file_name = self.inp_file_path.name
-            _m = re.match("(.+)\..+", new_file_name)
-            if _m:
-                new_file_name = _m.groups()[0]
-
-            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
         new_inp_directory = self.inp_root_directory / new_file_name
         self.directories_created.append(new_inp_directory)
 
@@ -244,6 +356,15 @@ class InputFile:
     def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
                            **mcnp_or_phits_kwargs):
         assert len(self.__new_inp_lines__) == 0
+
+        if new_file_name is None:
+            new_file_name = self.inp_file_path.name
+            _m = re.match(r"(.+)\..+", new_file_name)
+            if _m:
+                new_file_name = _m.groups()[0]
+
+            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
+
         new_inp_directory = self.__create_directory_if_needed__(new_file_name)
         new_file_full_path = new_inp_directory / new_file_name
 
@@ -296,7 +417,7 @@ class InputFile:
             assert isinstance(mcnp_or_phits_kwargs, dict)
             script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in mcnp_or_phits_kwargs.items()])
         new_file_name = new_file_full_path.name
-        cd_cmd = "cd {0}".format(self.inp_root_directory)
+        cd_cmd = "cd {0}".format(new_file_full_path.parent)
         run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, new_file_name, script_kwargs) if self.is_mcnp else \
             "{0};phits.sh {1} {2}".format(cd_cmd, new_file_name, script_kwargs)
 
@@ -323,48 +444,29 @@ class InputFile:
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
 
     def __del(self):
-        print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
+        print('Run the following commands in terminal to automatically run the simulation(s) just prepared:')
         print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
         python_strings = ['from pathlib import Path']
         for sim_path in self.directories_created:
-            print('here, ', sim_path)
-
             for path in Path(sim_path).iterdir():
                 f_name = path.name
                 if any([r.match(f_name) for r in CLEAN_MATCHES]):
-                    cmd = "Path('{}').unlink()".format(path)
+                    cmd = "try:\n\tPath('{}').unlink()\nexcept FileNotFoundError:\n\tpass".format(path)
                     python_strings.append(cmd)
         py_cmds = '\n'.join(python_strings)
 
         with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
             clean_file.write(py_cmds)
-                # print('here')
-        # if len(InputFile.__directories_for_messeges__) == 1:
-        #
-        #     for d in InputFile.__directories_for_messeges__:
-        #         break
-        #
-        #     with open(Path(d)/'Clean.py', 'w') as clean_file:
-        #         clean_file.write(py_cmds)
-        #         print('here')
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
         return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=True)
+                         is_mcnp=True, __internal__=True)
 
     @classmethod
     def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
         return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=False)
-
-if __name__ == "__main__":
-    p = Path(__file__).parent/"test.inp"
-    i = InputFile.mcnp_input_deck(p, cycle_rnd_seed=True)
-    from FFandProtonSims.GlobalValues import *
-    imp = "dokdkof"
-    gas_density = 100
-    i.write_inp_in_scope(globals())
-    i.write_inp_in_scope(globals())
+                         is_mcnp=False, __internal__=True)
 
 
+if __name__ == "__main__":pass

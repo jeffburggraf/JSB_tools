@@ -87,6 +87,7 @@ class ProtonENDFFile:
                 a = _m.groups()[2]
                 nuclide_name = self.get_name_from_z_a_m(z, a, 0)
                 self.nuclide_name_and_file_path[nuclide_name] = path
+
     @staticmethod
     def get_name_from_z_a_m(z, a, m):
         z, a, m = map(int, [z, a, m])
@@ -145,5 +146,5 @@ def pickle_all_nuke_data():
 
 
 if __name__ == '__main__':
-    # pickle_all_nuke_data()
-    print(list(Nuclide.from_symbol('C10').get_incident_proton_parents().values())[0].xs)
+    pickle_all_nuke_data()
+    # print(list(Nuclide.from_symbol('C10').get_incident_proton_parents().values())[0].xs)
