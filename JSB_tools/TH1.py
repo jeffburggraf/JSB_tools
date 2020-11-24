@@ -206,13 +206,17 @@ class TH1F:
                                params=model_params)
         return fit_result
 
-    def plot(self, ax=None, leg_label=None, line_color=None):
+    def plot(self, logy=False, logx=False, ax=None, leg_label=None, line_color=None):
         if ax is None:
             fig, ax = plt.subplots()
         else:
             fig = None
-        ax.bar(self.bin_centers, unp.nominal_values(self.bin_values), width=self.bin_widths,
-               yerr=unp.std_devs(self.bin_values), align="center", fill=False, label=leg_label, edgecolor=line_color)
+        if logy:
+            ax.set_yscale(value='log')
+        if logx:
+            ax.set_xscale(value='log')
+        ax.errorbar(self.bin_centers, unp.nominal_values(self.bin_values),
+                    yerr=unp.std_devs(self.bin_values), ds="steps-mid", label=leg_label, edgecolor=line_color)
         return fig, ax
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
@@ -256,14 +260,20 @@ class TH1F:
         tree.Project(_hist.__ROOT_hist__.GetName(), '0.5', cut)
         return _hist.bin_values[0]
 
-    def Project(self, tree, _str_, cut="", max_events=None, options="", weight=None, start=None):
-        assert isinstance(_str_, str)
+    def Project(self, tree, drw_exp, cut=None, max_events=None, options="", weight=None, start=None):
+        assert isinstance(drw_exp, str), '`drw_exp` must be a string'
         assert isinstance(tree, ROOT.TTree), '"tree" must be a TTree instance.'
 
         ROOT_hist = self.__ROOT_hist__
 
         if isinstance(weight, str) and len(weight) != 0:
-            cut = "({weight})*({cut})".format(weight=weight, cut=cut)
+            if cut is None:
+                cut = "({weight})".format(weight=weight)
+            else:
+                cut = "({weight})*({cut})".format(weight=weight, cut=cut)
+        else:
+            if cut is None:
+                cut = ''
 
         for b in tree.GetListOfBranches():
             if 'nps' in b.GetName():
@@ -274,10 +284,10 @@ class TH1F:
                 break
 
         if max_events is not None:
-            result = tree.Project(ROOT_hist.GetName(), _str_, cut, options, int(max_events),
+            result = tree.Project(ROOT_hist.GetName(), drw_exp, cut, options, int(max_events),
                                   0 if start is None else start)
         else:
-            result = tree.Project(ROOT_hist.GetName(), _str_, cut, options)
+            result = tree.Project(ROOT_hist.GetName(), drw_exp, cut, options)
         if isinstance(weight, (Number, AffineScalarFunc, Variable)):
             self *= weight
 

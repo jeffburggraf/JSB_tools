@@ -122,7 +122,6 @@ class MCNPSICard:
 
         if discrete:
             self.si_option = 'L'
-            # assert variable_probs[0] == 0, 'When using a discrete distribution, variable_probs[0] must be zero.'
         else:
             self.si_option = 'A'
 
@@ -446,4 +445,5 @@ class InputFile:
                          is_mcnp=False, __internal__=True)
 
 
-if __name__ == "__main__":pass
+if __name__ == "__main__":
+    pass

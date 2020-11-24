@@ -11,10 +11,68 @@ from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_D
 
 cwd = Path(__file__).parent
 
-decay_data_dir = cwd/'endf_files'/'decay'
-proton_padf_data_dir = cwd/'endf_files'/'PADF_2007'/'Files'
-proton_enfd_b_data_dir = cwd/'endf_files'/'ENDF-B-VIII.0_protons'
+parent_data_dir = cwd / 'endf_files'
+decay_data_dir = parent_data_dir / 'decay'
+proton_padf_data_dir = parent_data_dir / 'PADF_2007' / 'Files'
+proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
 
+proton_fission_xs = {}
+neutron_fission_xs = {}
+photon_fission_xs = {}
+
+dict_get = {'proton': proton_fission_xs, 'neutron': neutron_fission_xs, 'photon': photon_fission_xs}
+
+lines = []
+read_flag = False
+
+nuclide_name = None
+particle = None
+particle_convert = {'P': 'proton'}  # add more as needed
+
+with open(parent_data_dir/'FissionXS'/'data') as fiss_xs_data_file:
+    for line_num, line in enumerate(fiss_xs_data_file):
+        _m = re.match('#REACTION +(.+),SIG', line)
+        if '#END' in line:
+            dict_get[particle][nuclide_name] = CrossSection1D(ergs, xss, reaction, particle)
+            nuclide_name = None
+            particle = None
+            read_flag = False
+        if _m:
+            reaction = _m.groups()[0]
+            _m = re.match(r'([A-Z][a-z]{0,2})-([0-9]{1,3})\(([a-zA-Z]),F\)', reaction)
+            nuclide_name = _m.groups()[0] + _m.groups()[1]
+            particle = _m.groups()[2]
+            assert particle in particle_convert
+            particle = particle_convert[particle]
+
+        _m = re.match('#.+Sig,.+I', line)
+        if _m:
+            read_flag = True
+            ergs = []
+            xss = []
+            continue
+        if read_flag:
+            assert None not in [particle, nuclide_name], 'Problem in fission data file {0} at line {1}:\n{2}'\
+                .format(fiss_xs_data_file.name, line_num+1, line)
+            erg, xs, _ = line.split()
+            erg = float(erg)/1E6
+            xs = float(xs)
+            ergs.append(erg)
+            xss.append(xs)
+
+if len(proton_fission_xs):
+    for n_name, data in proton_fission_xs.items():
+        with open(PROTON_PICKLE_DIR/'fission_xs'/'{}.pickle'.format(n_name), 'wb') as f:
+            pickle.dump(data, f)
+
+# todo: below
+# if len(neutron_fission_xs):
+#     with open(NEUTRON_PICKLE_DIR/'fission.pickle', 'wb') as f:
+#         pickle.dump(neutron_fission_xs, f)
+
+# if len(photon_fission_xs):
+#     with open(PHOTON_PICKLE_DIR/'fission.pickle', 'wb') as f:
+#         pickle.dump(photon_fission_xs, f)
 
 def pickle_decay_data():
     directory = decay_data_dir  # Path to downloaded ENDF decay data
@@ -51,8 +109,8 @@ def pickle_decay_data():
                 daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
                 parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
 
-        parent_nuclide.__set_data_from_open_mc__(openmc_decay)
         print("Preparing data for {0}".format(parent_nuclide_name))
+        parent_nuclide.__set_data_from_open_mc__(openmc_decay)
 
     for nuclide_name in NUCLIDE_INSTANCES.keys():
         with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
@@ -142,7 +200,8 @@ def pickle_proton_data():
 
 def pickle_all_nuke_data():
     # pickle_decay_data()
-    pickle_proton_data()
+    # pickle_proton_data()
+    pass
 
 
 if __name__ == '__main__':

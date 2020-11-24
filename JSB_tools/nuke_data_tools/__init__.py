@@ -13,12 +13,16 @@ from uncertainties import ufloat
 from uncertainties.umath import isinf, isnan
 import uncertainties
 from functools import cached_property
-from openmc.data.data import NATURAL_ABUNDANCE
+from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
+from scipy.stats import norm
 import zipfile
-
 pwd = Path(__file__).parent
 
+
 __all__ = ['Nuclide']
+
+avogadros_number = AVOGADRO
+
 
 #  Note to myself: Pickled nuclear data is on personal SSD
 #  Todo:
@@ -43,6 +47,8 @@ __all__ = ['Nuclide']
 
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
+PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
+
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
@@ -285,6 +291,37 @@ class Nuclide:
         self.__decay_mode_for_print__ = None
 
     @property
+    def proton_induced_xs(self) -> CrossSection1D:
+        global PROTON_INDUCED_FISSION_XS1D
+        simple_nuclide_name = self.atomic_symbol + str(self.A)
+        if simple_nuclide_name not in PROTON_INDUCED_FISSION_XS1D:
+            try:
+                with open(PROTON_PICKLE_DIR/'fission_xs'/'{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                    PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
+            except FileNotFoundError:
+                assert False, 'No proton induced fission data for {0}. Download it and integrate it if it is ' \
+                              'available. The conversion to pickle is done in `endf_to_pickle.py`. See "{1}" for' \
+                              ' instructions.'.format(self, pwd/'endf_files'/'FissionXS'/'readme')
+
+        return PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
+
+    @property
+    def atomic_mass(self):
+        try:
+            return atomic_mass(self.name)
+        except KeyError:
+            warn('Atomic mass for {} not found'.format(self))
+            return None
+
+    @property
+    def grams_per_mole(self):
+        try:
+            return atomic_weight(self.name)
+        except KeyError:
+            warn('Atomic weight for {} not found'.format(self))
+            return None
+
+    @property
     def isotopic_abundance(self):
         _m = re.match('([A-Za-z]{1,2}[0-9]+)(?:m_[0-9]+)?', self.name)
         if _m:
@@ -338,7 +375,7 @@ class Nuclide:
                     instance = CustomUnpickler(pickle_file).load()
         else:
             instance = NUCLIDE_INSTANCES[symbol]
-        assert isinstance(instance, Nuclide)
+        # assert isinstance(instance, type(cls)), type(instance)
         return instance
 
     def __repr__(self):
@@ -459,6 +496,14 @@ class Nuclide:
                 if __nuclide_cut__(a_z_hl_cut, is_stable_only, nuclide):
                     nuclides.append(nuclide)
         return nuclides
+
+    def search_spectrum_for_nuclide(self, spectrum_energies, spectrum_counts, erg_width=2):
+        pass
+        # vector_nuclide = [g.intensity for g in self.decay_gamma_lines]
+        # decay_energies = [g.erg for g in self.decay_gamma_lines]
+        # indices = [np.searchsorted(e, spectrum_energies) for e in decay_energies]  # Spectrum indices for decay ergs
+        # kernel =
+
 
 #
 # def pickle_decay_data(directory):
@@ -591,10 +636,18 @@ dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
 
 
 if __name__ == "__main__":
-    assert Path(decay_data_dir).exists, "Cannot find decay data files. " \
-                                         "Download decay files from https://www.nndc.bnl.gov/endf/b7.1/download.html" \
-                                         " and set the <decay_data_dir> " \
-                                         "variable to the location of the unzipped directory"
+    import time
+    t0 = time.time()
+    Nuclide.from_symbol('C10')
+    # for n in Nuclide.get_all_nuclides():
+    #     n.decay_gamma_lines
+    # print(time.time() - t0)
+
+
+    # assert Path(decay_data_dir).exists, "Cannot find decay data files. " \
+    #                                      "Download decay files from https://www.nndc.bnl.gov/endf/b7.1/download.html" \
+    #                                      " and set the <decay_data_dir> " \
+    #                                      "variable to the location of the unzipped directory"
      # from openmc.data.decay import FissionProductYields
 
     #  How to get SF yields:
@@ -605,9 +658,9 @@ if __name__ == "__main__":
     # pickle_decay_data(decay_data_dir)
 
 
-    assert Path(proton_padf_data_dir).exists, "Cannot find proton data files. " \
-                                         "Download proton files from https://www-nds.iaea.org/padf/ and set the " \
-                                         "<proton_dir> variable to the location of the unzipped directory"
+    # assert Path(proton_padf_data_dir).exists, "Cannot find proton data files. " \
+    #                                      "Download proton files from https://www-nds.iaea.org/padf/ and set the " \
+    #                                      "<proton_dir> variable to the location of the unzipped directory"
     #  Uncomment code below to pickle incident proton data
     # pickle_proton_data()
 
