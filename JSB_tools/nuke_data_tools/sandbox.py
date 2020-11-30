@@ -14,7 +14,7 @@ from scipy.signal import find_peaks
 
 n = Nuclide.from_symbol('W184')
 # n = Nuclide.from_symbol('U238')
-n.proton_induced_xs.plot()
+n.proton_induced_fiss_xs.plot()
 plt.show()
 
 

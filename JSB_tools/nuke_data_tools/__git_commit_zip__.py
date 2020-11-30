@@ -11,12 +11,12 @@ nuke_data_dir = pwd/'data'
 
 latest_nuke_data_zip_size_path = pwd / '__nuke_zip_size__.txt'
 
-def check_for_change_in_zipped_file():
-    if
-    #  .stat().st_size
+# def check_for_change_in_zipped_file():
+#     if
+#      .stat().st_size
 
 
-zip_data()
+# zip_data()
 
 
 

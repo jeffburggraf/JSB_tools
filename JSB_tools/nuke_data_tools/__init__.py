@@ -48,9 +48,11 @@ avogadros_number = AVOGADRO
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
 PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
+PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
 
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
+PHOTON_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
 # global variable for the bin-width of xs interpolation
@@ -71,7 +73,7 @@ class CustomUnpickler(pickle.Unpickler):
         elif name == 'DecayMode':
             return DecayMode
         elif name == '_Reaction':
-            return _Reaction
+            return ActivationReactionContainer
         elif name == 'CrossSection1D':
             return CrossSection1D
 
@@ -291,12 +293,12 @@ class Nuclide:
         self.__decay_mode_for_print__ = None
 
     @property
-    def proton_induced_xs(self) -> CrossSection1D:
+    def proton_induced_fiss_xs(self) -> CrossSection1D:
         global PROTON_INDUCED_FISSION_XS1D
         simple_nuclide_name = self.atomic_symbol + str(self.A)
         if simple_nuclide_name not in PROTON_INDUCED_FISSION_XS1D:
             try:
-                with open(PROTON_PICKLE_DIR/'fission_xs'/'{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                with open(PROTON_PICKLE_DIR/'fission'/'{}.pickle'.format(simple_nuclide_name), 'rb') as f:
                     PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
             except FileNotFoundError:
                 assert False, 'No proton induced fission data for {0}. Download it and integrate it if it is ' \
@@ -304,6 +306,19 @@ class Nuclide:
                               ' instructions.'.format(self, pwd/'endf_files'/'FissionXS'/'readme')
 
         return PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
+
+    @property
+    def photon_induced_fiss_xs(self) -> CrossSection1D:
+        # global PHOTON_PICKLE_DIR
+        simple_nuclide_name = self.atomic_symbol + str(self.A)
+        if simple_nuclide_name not in PHOTON_INDUCED_FISSION_XS1D:
+            try:
+                with open(PHOTON_PICKLE_DIR / 'fission' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                    PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
+            except FileNotFoundError:
+                assert False, 'No photon induced fission data for {0}.'
+
+        return PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
 
     @property
     def atomic_mass(self):
@@ -411,7 +426,7 @@ class Nuclide:
         with open(pickle_path, "rb") as f:
             daughter_reaction = CustomUnpickler(f).load()
 
-        assert isinstance(daughter_reaction, _Reaction)
+        assert isinstance(daughter_reaction, ActivationReactionContainer)
         out = {}
         parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
         daughter_nuclide = self
@@ -419,7 +434,7 @@ class Nuclide:
             parent_pickle_path = PROTON_PICKLE_DIR/(parent_nuclide.name + ".pickle")
             with open(parent_pickle_path, "rb") as f:
                 parent_reaction = CustomUnpickler(f).load()
-                assert isinstance(parent_reaction, _Reaction)
+                assert isinstance(parent_reaction, ActivationReactionContainer)
             parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle="proton")
             if __nuclide_cut__(a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only, nuclide=parent):
                 parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
@@ -436,7 +451,7 @@ class Nuclide:
         with open(pickle_path, "rb") as f:
             reaction = CustomUnpickler(f).load()
 
-        assert isinstance(reaction, _Reaction)
+        assert isinstance(reaction, ActivationReactionContainer)
         out: Dict[str, InducedDaughter] = {}
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
@@ -446,6 +461,57 @@ class Nuclide:
                 out[daughter_name] = daughter
 
             # todo: Is using a dict of name and Nuclides necessary? Maybe just return a list instead.
+        return out
+
+    def get_incident_photon_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+        pickle_path = PHOTON_PICKLE_DIR/(self.name + ".pickle")
+        return self.__get_daughters__(pickle_path, 'photon', a_z_hl_cut, is_stable_only)
+
+    def get_incident_photon_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+        pickle_path = PHOTON_PICKLE_DIR/(self.name + ".pickle")
+        return self.__get_parents__(pickle_path, 'photon', a_z_hl_cut, is_stable_only)
+
+    def __get_daughters__(self, data_path, incident_particle, a_z_hl_cut='', is_stable_only=False):
+        if not data_path.exists():
+            warn("No {}-induced data for {}".format(incident_particle, self.name))
+            return None
+
+        with open(data_path, "rb") as f:
+            reaction = CustomUnpickler(f).load()
+
+        assert isinstance(reaction, ActivationReactionContainer)
+        out: Dict[str, InducedDaughter] = {}
+        for daughter_name, xs in reaction.product_nuclide_names_xss.items():
+            daughter_nuclide = Nuclide.from_symbol(daughter_name)
+            if __nuclide_cut__(a_z_hl_cut, is_stable_only, daughter_nuclide):
+                daughter = InducedDaughter(daughter_nuclide, self, incident_particle)
+                daughter.xs = xs
+                out[daughter_name] = daughter
+
+        return out
+
+    def __get_parents__(self, data_path, incident_particle, a_z_hl_cut='', is_stable_only=False):
+        if not data_path.exists():
+            warn("No {}-induced data for any parents of {}".format(incident_particle, self.name))
+            return {}
+
+        with open(data_path, "rb") as f:
+            daughter_reaction = CustomUnpickler(f).load()
+
+        assert isinstance(daughter_reaction, ActivationReactionContainer)
+        out = {}
+        parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
+        daughter_nuclide = self
+        for parent_nuclide in parent_nuclides:
+            parent_pickle_path = data_path.parent / (parent_nuclide.name + ".pickle")
+            with open(parent_pickle_path, "rb") as f:
+                parent_reaction = CustomUnpickler(f).load()
+                assert isinstance(parent_reaction, ActivationReactionContainer)
+            parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle=incident_particle)
+            if __nuclide_cut__(a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only, nuclide=parent):
+                parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
+                out[parent.name] = parent
+
         return out
 
     def __set_data_from_open_mc__(self, open_mc_decay):
@@ -581,13 +647,63 @@ class InducedParent(Nuclide):
         return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
 
-# used for storing proton-induced data in pickle file. Imported in endf_to_pickle.py, and used in this module
+# used for storing particle-induced data in pickle file. Imported in endf_to_pickle.py, and used in this module
 # for unpickling
-class _Reaction:
+class ActivationReactionContainer:
     def __init__(self, name):
         self.name = name
+        #  Dict with daughter nuclide names as keys as xs objects as values
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
+
+    @staticmethod
+    def set(init_data_dict, nuclide_name, endf_file_path, incident_particle):
+        if nuclide_name in init_data_dict:
+            reaction = init_data_dict[nuclide_name]
+        else:
+            reaction = ActivationReactionContainer(nuclide_name)
+            init_data_dict[nuclide_name] = reaction
+
+        e = Evaluation(endf_file_path)
+        for activation_product in Reaction.from_endf(e, 5).products:
+            activation_product_name = activation_product.particle
+            if activation_product_name == "photon":
+                continue
+            if activation_product_name == "neutron":
+                activation_product_name = "Nn1"
+            try:
+                par_id = {'proton': 'p', 'neutron': 'n', 'photon': 'G'}[incident_particle]
+            except KeyError:
+                assert False, 'Invalid incident particle: "{}"'.format(incident_particle)
+            xs_fig_label = "{0}({1},X){2}".format(nuclide_name, par_id, activation_product_name)
+            try:
+                xs = CrossSection1D(activation_product.yield_.x / 1E6, activation_product.yield_.y, xs_fig_label,
+                                    incident_particle)
+            except AttributeError as e:
+                continue
+            reaction.product_nuclide_names_xss[activation_product_name] = xs
+            if activation_product_name in init_data_dict:
+                daughter_reaction = init_data_dict[activation_product_name]
+            else:
+                daughter_reaction = ActivationReactionContainer(activation_product_name)
+                init_data_dict[activation_product_name] = daughter_reaction
+            daughter_reaction.parent_nuclide_names.append(nuclide_name)
+
+    def __len__(self):
+        return len(self.parent_nuclide_names) + len(self.product_nuclide_names_xss)
+
+    def __repr__(self):
+        return 'self: {0}, parents: {1}, daughters: {2}'.format(self.name, self.parent_nuclide_names,
+                                                                self.product_nuclide_names_xss.keys())
+
+
+class FissionReaction:
+    def __init__(self, parent_name, is_spontaneous):
+        self.is_spontaneous = is_spontaneous
+        self.name = parent_name
+        self.product_yield: Dict[str, float] = {}  # product yield if available
+        self.xs: CrossSection1D
+        self.fission_rate: ufloat
 
 #
 # def pickle_proton_data():
