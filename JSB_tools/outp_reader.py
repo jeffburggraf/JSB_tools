@@ -204,7 +204,16 @@ class OutP:
         return F4Tally(tally_number, self)
 
     def read_stopping_powers(self, particle, material_id=None, cell_num_4_density=None):
+        particle = particle.lower()
         s = StoppingPowerData()
+        if re.match('[0-9]+', particle):
+            particle_type = 'heavy_ion'
+        elif particle == 'electron' or particle == 'proton':
+            particle_type = particle
+        else:
+            particle_type = None
+            warn('Reading stopping powers from {} type of particle might not behave normally. Verify.'.format(particle))
+
         if cell_num_4_density is not None:
             assert isinstance(cell_num_4_density, (int, str))
             cell_num_4_density = int(cell_num_4_density)
@@ -220,28 +229,46 @@ class OutP:
                 material_id = self.cells[cell_num_4_density].mat
             s.cell_density = self.cells[cell_num_4_density].density
 
+
         else:
             assert material_id is not None, "At least one of `material_id` or `cell_num` must be given."
             material_id = str(material_id)
 
-        c = re.compile("1.*{0}.+{1}.+print table 85".format(particle, material_id))
+        if particle == 'electron':
+            electron_flag = True  # just for speed
+            c = re.compile('1range +table .+material +{} .+ print table 85'.format(material_id))
+        else:
+            electron_flag = False
+            c = re.compile("1.*{0}.+{1}.+print table 85".format(particle, material_id))
 
+        looking_for_beginning = False
         for index, line in enumerate(self.__outp_lines__):
-            if c.match(line):
-                index += 8  # beginning of dEdx data begins 8 lines after the start of print table 85
-                break
+            if c.match(line) and not looking_for_beginning:
+                if electron_flag:
+                    assert 'electron' in self.__outp_lines__[index+2]
+                    looking_for_beginning = True
+                else:
+                    index += 8  # beginning of dEdx data begins 8 lines after the start of print table 85
+                    break
+            elif looking_for_beginning:
+                if re.match(' +[0-9]+ +([0-9.E+-]+ *){11}', line):
+                    break
         else:
             assert False, "Could not find dEdx table for '{0}' and material '{1}'".format(particle, material_id)
-        length = int(self.__outp_lines__[index].split()[0])  # This is the number of data entries kin the table.
+        length = int(self.__outp_lines__[index].split()[0])  # This is the number of data entries in the table.
         ergs = []
         dedxs = []
         ranges = []
 
+        # add to these upon further insights if needed
+        total_dedx_index = {'ion': 6, 'proton': 6, 'electron': 4}.get(particle_type, -6)
+        range_index = {'ion': -3, 'proton': -3, 'electron': 5}.get(particle_type, -3)
+
         for index in range(index, index + length):
             values = list(map(float, (self.__outp_lines__[index].split())))
             ergs.append(values[1])
-            dedxs.append(values[6])
-            ranges.append(values[-3])
+            dedxs.append(values[total_dedx_index])
+            ranges.append(values[range_index])
 
         s.ranges = np.array(ranges)
         s.energies = np.array(ergs)

@@ -138,7 +138,7 @@ class CrossSection1D:
         xs = prod.yield_.y
         return CrossSection1D(erg, xs)
 
-    def interp(self, new_energies):
+    def interp(self, new_energies) -> np.ndarray:
         return np.interp(new_energies, self.ergs, self.xss)
 
     def plot(self, ax=None, fig_title=None, units="b"):

@@ -171,11 +171,6 @@ class MCNPSICard:
         pass
 
 
-CLEAN_MATCHES = [re.compile(p) for p in
-                 [r"ptra[a-z]+$", r"runtpe[0-9]+", r"runtp[a-z]", r"mcta[a-z]", r"out[a-z]$", r"outp[0-9]+$",
-                  r"comou[a-z]", r"meshta[a-z]", r"mdat[a-z]"]]
-
-
 class InputFile:
     def __init__(self, **kwargs):
         assert '__internal__' in kwargs, '\nTo create an input file, use one of the two factory methods:\n' \
@@ -185,6 +180,7 @@ class InputFile:
         self.inp_file_path = Path(kwargs["inp_file_path"])
         assert self.inp_file_path.exists(), "Cannot find input deck:\n{0}".format(self.inp_file_path)
 
+        self.warn_msg_in_cleanpy = kwargs.get('warn_msg_in_cleanpy', True)
         self.is_mcnp = kwargs.get("is_mcnp", True)
 
         self.__num_writes__ = 0
@@ -399,10 +395,10 @@ class InputFile:
 
         if self.platform == "Darwin":
             new_cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0} 2>&1 | tee -i log_{1}.txt;exit\"\nend " \
-                      "tell'\n".format(run_cmd, new_file_full_path)
+                      "tell'\n".format(run_cmd, new_file_full_path.name)
         elif self.platform == "Linux":
             new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd,
-                                                                                             new_file_full_path)
+                                                                                             new_file_full_path.name)
         elif self.platform == "Windows":
             warnings.warn("Currently no implementation of the creation of a .bat file to automatically run the "
                           "simulations on Windows. ")
@@ -420,29 +416,48 @@ class InputFile:
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
 
     def __del(self):
+        with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
+            import inspect
+            cmds = inspect.getsource(__clean__)
+            cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))
+            cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
+            clean_file.write(cmds)
+
         print('Run the following commands in terminal to automatically run the simulation(s) just prepared:')
         print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
-        python_strings = ['from pathlib import Path']
-        for sim_path in self.directories_created:
-            for path in Path(sim_path).iterdir():
-                f_name = path.name
-                if any([r.match(f_name) for r in CLEAN_MATCHES]):
-                    cmd = "try:\n\tPath('{}').unlink()\nexcept FileNotFoundError:\n\tpass".format(path)
-                    python_strings.append(cmd)
-        py_cmds = '\n'.join(python_strings)
-
-        with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
-            clean_file.write(py_cmds)
+        print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
 
     @classmethod
-    def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
+    def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
+                        warn_msg_in_cleanpy=True):
         return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=True, __internal__=True)
+                         is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy)
 
     @classmethod
     def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
         return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=False, __internal__=True)
+
+
+def __clean__(paths, warn_message):
+    import re
+    from pathlib import Path
+    from tkinter import messagebox, Tk
+    root = Tk()
+    root.withdraw()
+    parent_dirs = set(str(Path(p).parent) for p in paths)
+    if warn_message:
+        yes_or_no = messagebox.askquestion('Deleting files!', 'Are you sure you want to clean files (outp, ptrac, runtpe, etc.) from '
+                                           'simulations performed in:\n "{}" ?'.format(parent_dirs))
+
+        yes_or_no = (yes_or_no == "yes")
+    else:
+        yes_or_no = True
+    m = re.compile("(ptra[c-z]$)|(runtp[e-z]$)|(mcta[l-z]$)|(out[p-z]$)|(comou[a-z]$)|(meshta[l-z]$)|(mdat[a-z]$)")
+    for p in paths:
+        for f_path in Path(p).iterdir():
+            if m.match(f_path.name) and yes_or_no:
+                Path(f_path).unlink()
 
 
 if __name__ == "__main__":
