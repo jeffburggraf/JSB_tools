@@ -106,35 +106,34 @@ class ProtonENDFFile:
 
 def pickle_proton_activation_data():
     assert PROTON_PICKLE_DIR.exists()
-    i = 0
     all_reactions = {}
     files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
 
     for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
-        print('Reading data from {}'.format(nuclide_name))
-        if nuclide_name in all_reactions:
-            reaction = all_reactions[nuclide_name]
-        else:
-            reaction = ActivationReactionContainer(nuclide_name)
-            all_reactions[nuclide_name] = reaction
-
-        e = Evaluation(f_path)
-        for heavy_product in Reaction.from_endf(e, 5).products:
-            heavy_product_name = heavy_product.particle
-            if heavy_product_name == "photon":
-                continue
-            if heavy_product_name == "neutron":
-                heavy_product_name = "Nn1"
-            xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
-            xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
-            reaction.product_nuclide_names_xss[heavy_product_name] = xs
-            if heavy_product_name in all_reactions:
-                daughter_reaction = all_reactions[heavy_product_name]
-            else:
-                daughter_reaction = ActivationReactionContainer(heavy_product_name)
-                all_reactions[heavy_product_name] = daughter_reaction
-            daughter_reaction.parent_nuclide_names.append(nuclide_name)
-        i += 1
+        ActivationReactionContainer.set(all_reactions, nuclide_name, f_path, 'proton')
+        # print('Reading data from {}'.format(nuclide_name))
+        # if nuclide_name in all_reactions:
+        #     reaction = all_reactions[nuclide_name]
+        # else:
+        #     reaction = ActivationReactionContainer(nuclide_name)
+        #     all_reactions[nuclide_name] = reaction
+        #
+        # e = Evaluation(f_path)
+        # for heavy_product in Reaction.from_endf(e, 5).products:
+        #     heavy_product_name = heavy_product.particle
+        #     if heavy_product_name == "photon":
+        #         continue
+        #     if heavy_product_name == "neutron":
+        #         heavy_product_name = "Nn1"
+        #     xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
+        #     xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
+        #     reaction.product_nuclide_names_xss[heavy_product_name] = xs
+        #     if heavy_product_name in all_reactions:
+        #         daughter_reaction = all_reactions[heavy_product_name]
+        #     else:
+        #         daughter_reaction = ActivationReactionContainer(heavy_product_name)
+        #         all_reactions[heavy_product_name] = daughter_reaction
+        #     daughter_reaction.parent_nuclide_names.append(nuclide_name)
 
     for nuclide_name, reaction in all_reactions.items():
         pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
@@ -243,9 +242,9 @@ def pickle_all_nuke_data():
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    pickle_all_nuke_data()
-    n = Nuclide.from_symbol('N14')
-    n.get_incident_photon_daughters()['C10'].xs.plot()
-    Nuclide.from_symbol('C10').get_incident_photon_parents()['N14'].xs.plot()
+    import numpy as np
+    # pickle_all_nuke_data()
+    # Nuclide.from_symbol('N14').get_incident_proton_daughters()['C10'].xs.plot()
+    # Nuclide.from_symbol('N14').get_incident_proton_daughters()['O14'].xs.plot()
+    # print(Nuclide.from_symbol('N14').get_incident_proton_daughters())
     plt.show()
-    # print(list(Nuclide.from_symbol('C10').get_incident_proton_parents().values())[0].xs)
