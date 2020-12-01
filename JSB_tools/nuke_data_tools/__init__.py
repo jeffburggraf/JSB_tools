@@ -141,7 +141,7 @@ class CrossSection1D:
     def interp(self, new_energies) -> np.ndarray:
         return np.interp(new_energies, self.ergs, self.xss)
 
-    def plot(self, ax=None, fig_title=None, units="b"):
+    def plot(self, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None):
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
         try:
             unit_factor = unit_convert[units]
@@ -154,10 +154,20 @@ class CrossSection1D:
             else:
                 if self.__fig_label__ is not None:
                     ax.set_title(self.__fig_label__)
-
-        ax.plot(self.__ergs__, self.__xss__ * unit_factor, label=self.__fig_label__)
-        ax.set_ylabel("Cross-section [{}]".format(units))
-        ax.set_xlabel("Incident {} energy [MeV]".format(self.__incident_particle__))
+        if erg_max is None:
+            erg_max = self.__ergs__[-1]
+        if erg_min is None:
+            erg_min = self.__ergs__[0]
+        selector = np.where((self.__ergs__ <= erg_max) & (self.__ergs__ >= erg_min))
+        ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=self.__fig_label__)
+        y_label = "Cross-section [{}]".format(units)
+        x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
+        if ax is plt:
+            ax.ylabel(y_label)
+            ax.xlabel(x_label)
+        else:
+            ax.set_ylabel()
+            ax.set_xlabel()
 
         return ax
 
