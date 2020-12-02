@@ -10,7 +10,7 @@ from uncertainties.core import Variable, AffineScalarFunc, wrap
 from numbers import Number
 from warnings import warn
 from lmfit.models import GaussianModel, ConstantModel, LinearModel
-from lmfit import Model
+from lmfit import Model, fit_report
 from scipy.signal import find_peaks
 from pathlib import Path
 from matplotlib import pyplot as plt
@@ -112,67 +112,15 @@ class TH1F:
         _new_hist.__set_bin_values__(new_bin_values)
         return _new_hist
 
-    def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None,amplitude_fix=None, c_fix=None,
-                  center_guess=None):
+    def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None, amplitude_fix=None, c_fix=None,
+                 divide_by_bin_width=False, full_range=None):
         if isinstance(background, str):
             background = background.lower()
-        peaks_ix, peak_infos = find_peaks(unp.nominal_values(self.bin_values),
-                                          prominence=unp.std_devs(self.bin_values),
-                                          width=0, height=0)
-        prominences = peak_infos["prominences"]
-
-        widths = peak_infos["widths"]
-
-        if peak_center is None:
-            assert len(prominences) != 0, "No peaks found to fit"
-            peak_info_ix = np.argmax(prominences)
-        else:
-            peak_info_ix = np.abs(self.bin_centers[peaks_ix] - peak_center).argmin()
-        best_peak_ix = peaks_ix[peak_info_ix]
-        peak_center = self.bin_centers[best_peak_ix]
-        peak_width_ix = int(round(widths[peak_info_ix]))
-        peak_width = widths[peak_info_ix]*self.bin_widths[best_peak_ix]
-        peak_height = prominences[peak_info_ix]
-
-        valleys_ix, _ = find_peaks(-unp.nominal_values(self.bin_values) + max(unp.nominal_values(self.bin_values)),
-                                prominence=np.abs(peak_height*0.2-2*unp.std_devs(self.bin_values)),
-                                          width=0, height=0)
-        if len(np.where(valleys_ix < best_peak_ix)[0]):
-            min_x_ix = valleys_ix[np.where(valleys_ix < best_peak_ix)[0][-1]]
-            if min_x_ix > best_peak_ix - peak_width_ix:
-                min_x_ix = best_peak_ix - peak_width_ix
-
-        else:
-            min_x_ix = best_peak_ix - peak_width_ix
-
-        if len(np.where(valleys_ix > best_peak_ix)[0]):
-            max_x_ix = valleys_ix[np.where(valleys_ix > best_peak_ix)[0][0]]
-            if max_x_ix < best_peak_ix + peak_width_ix:
-                max_x_ix = best_peak_ix + peak_width_ix
-        else:
-            max_x_ix = best_peak_ix + peak_width_ix
-        diff_ix = max_x_ix - min_x_ix
-
-        if diff_ix < 7:
-            max_x_ix += diff_ix//2
-            min_x_ix -= diff_ix//2
-            max_x_ix += diff_ix%2
-
-        max_x_ix = min([len(self) - 1, max_x_ix])
-        min_x_ix = max([0, min_x_ix])
-        min_x = self.bin_centers[min_x_ix]
-        max_x = self.bin_centers[max_x_ix]
-
-        plt.plot([peak_center-peak_width/2., peak_center+peak_width/2.], [0, 0], marker="p", label="Peak width")
-        fit_selector = np.where((self.bin_centers >= min_x) &
-                                (self.bin_centers <= max_x))
-
-        _x = self.bin_centers[fit_selector]
-        _y = unp.nominal_values(self.bin_values[fit_selector])
-        _y_err = unp.std_devs(self.bin_values[fit_selector])
+        if divide_by_bin_width:
+            self /= self.bin_widths
 
         def lin_func(x, slope, intercept):
-            return intercept + slope*(x-peak_center)
+            return intercept + slope * (x - peak_center)
 
         if background is None:
             model = GaussianModel()
@@ -184,39 +132,122 @@ class TH1F:
         else:
             assert False, "Invalid background. Must be None, 'linear', or 'constant'. "
 
-        model_params = model.make_params()
-        sigma_guess = peak_width/2.
-        amplitude_guess = peak_height/0.3989423/sigma_guess
-        c0_guess = unp.nominal_values(self.bin_values)[peaks_ix[peak_info_ix]] - peak_height
-        model_params["amplitude"].set(value=amplitude_guess)
-        model_params["sigma"].set(value=sigma_guess)
-        if background == "constant":
-            model_params["intercept"].set(value=c0_guess)
-            model_params["slope"].set(value=0, vary=False)
-        if background == "linear":
-            dx = self.bin_centers[fit_selector][-1] - self.bin_centers[fit_selector][0]
-            dy = unp.nominal_values(self.bin_values[fit_selector[0][-1]]) - \
-                 unp.nominal_values(self.bin_values[fit_selector[0][0]])
-            model_params["intercept"].set(value=c0_guess)
-            model_params["slope"].set(value=dy/dx)
+        if full_range is False:
+            peaks_ix, peak_infos = find_peaks(unp.nominal_values(self.bin_values),
+                                              prominence=unp.std_devs(self.bin_values),
+                                              width=0, height=0)
+            prominences = peak_infos["prominences"]
 
-        model_params["center"].set(value=peak_center)
+            widths = peak_infos["widths"]
+
+            if peak_center is None:
+                assert len(prominences) != 0, "No peaks found to fit"
+                peak_info_ix = np.argmax(prominences)
+            else:
+                peak_info_ix = np.abs(self.bin_centers[peaks_ix] - peak_center).argmin()
+            best_peak_ix = peaks_ix[peak_info_ix]
+            peak_center = self.bin_centers[best_peak_ix]
+            peak_width_ix = int(round(widths[peak_info_ix]))
+            peak_width = widths[peak_info_ix]*self.bin_widths[best_peak_ix]
+            peak_height = prominences[peak_info_ix]
+
+            valleys_ix, _ = find_peaks(-unp.nominal_values(self.bin_values) + max(unp.nominal_values(self.bin_values)),
+                                    prominence=np.abs(peak_height*0.2-2*unp.std_devs(self.bin_values)),
+                                              width=0, height=0)
+            if len(np.where(valleys_ix < best_peak_ix)[0]):
+                min_x_ix = valleys_ix[np.where(valleys_ix < best_peak_ix)[0][-1]]
+                if min_x_ix > best_peak_ix - peak_width_ix:
+                    min_x_ix = best_peak_ix - peak_width_ix
+
+            else:
+                min_x_ix = best_peak_ix - peak_width_ix
+
+            if len(np.where(valleys_ix > best_peak_ix)[0]):
+                max_x_ix = valleys_ix[np.where(valleys_ix > best_peak_ix)[0][0]]
+                if max_x_ix < best_peak_ix + peak_width_ix:
+                    max_x_ix = best_peak_ix + peak_width_ix
+            else:
+                max_x_ix = best_peak_ix + peak_width_ix
+            diff_ix = max_x_ix - min_x_ix
+
+            if diff_ix < 7:
+                max_x_ix += diff_ix//2
+                min_x_ix -= diff_ix//2
+                max_x_ix += diff_ix%2
+
+            max_x_ix = min([len(self) - 1, max_x_ix])
+            min_x_ix = max([0, min_x_ix])
+            min_x = self.bin_centers[min_x_ix]
+            max_x = self.bin_centers[max_x_ix]
+
+            fit_selector = np.where((self.bin_centers >= min_x) &
+                                    (self.bin_centers <= max_x))
+
+            _x = self.bin_centers[fit_selector]
+            _y = unp.nominal_values(self.bin_values[fit_selector])
+            _y_err = unp.std_devs(self.bin_values[fit_selector])
+
+            model_params = model.make_params()
+            sigma_guess = peak_width / 2.
+            amplitude_guess = peak_height / 0.3989423 / sigma_guess
+            c0_guess = unp.nominal_values(self.bin_values)[peaks_ix[peak_info_ix]] - peak_height
+            model_params["amplitude"].set(value=amplitude_guess)
+            model_params["sigma"].set(value=sigma_guess, min=1)
+            if background == "constant":
+                model_params["intercept"].set(value=c0_guess)
+                model_params["slope"].set(value=0, vary=False)
+            if background == "linear":
+                dx = self.bin_centers[fit_selector][-1] - self.bin_centers[fit_selector][0]
+                dy = unp.nominal_values(self.bin_values[fit_selector[0][-1]]) - \
+                     unp.nominal_values(self.bin_values[fit_selector[0][0]])
+                model_params["intercept"].set(value=c0_guess)
+                model_params["slope"].set(value=dy / dx)
+            model_params["center"].set(value=peak_center)
+        else:
+            model_params = model.make_params()
+            sigma_guess = 2
+            amplitude_guess = np.max(self.nominal_bin_values)
+            c0_guess = 0
+            model_params["amplitude"].set(value=amplitude_guess)
+            model_params["sigma"].set(value=sigma_guess, min=1)
+            if background == "constant":
+                model_params["intercept"].set(value=c0_guess)
+                model_params["slope"].set(value=0, vary=False)
+            if background == "linear":
+
+                model_params["intercept"].set(value=c0_guess)
+                model_params["slope"].set(value=0)
+            model_params["center"].set(value=peak_center, min=peak_center - 3.5, max=peak_center + 3.5)
+            _x = self.bin_centers
+            _y = unp.nominal_values(self.bin_values)
+            _y_err = unp.std_devs(self.bin_values)
+
         weights = 1.0/np.where(abs(_y_err)>0, abs(_y_err),  1)
         fit_result = model.fit(_y, x=_x, weights=weights,
                                params=model_params)
-        return fit_result
+        eval_fit = lambda xs: model.eval(fit_result.params, x=xs)
+        if divide_by_bin_width:
+            self *= self.bin_widths
 
-    def plot(self, logy=False, logx=False, ax=None, leg_label=None, line_color=None):
+        return fit_result, eval_fit
+
+    def plot(self, ax=None, logy=False, logx=False, leg_label=None, line_color=None, **kwargs):
         if ax is None:
             fig, ax = plt.subplots()
         else:
             fig = None
-        if logy:
-            ax.set_yscale(value='log')
-        if logx:
-            ax.set_xscale(value='log')
+        if ax is plt:
+            if logy:
+                ax.yscale(value='log')
+            if logx:
+                ax.xscale(value='log')
+        else:
+            if logy:
+                ax.set_yscale(value='log')
+            if logx:
+                ax.set_xscale(value='log')
         ax.errorbar(self.bin_centers, unp.nominal_values(self.bin_values),
-                    yerr=unp.std_devs(self.bin_values), ds="steps-mid", label=leg_label, edgecolor=line_color)
+                    yerr=unp.std_devs(self.bin_values), ds="steps-mid", label=leg_label, edgecolor=line_color, **kwargs)
         return fig, ax
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
@@ -249,6 +280,7 @@ class TH1F:
                     new_bin_left_edges.append(self.__bin_left_edges__[index + 1])
         new_bin_left_edges = np.array(new_bin_left_edges)
         return HistoBinMerger(np.array(bin_start_stops), new_bin_left_edges, self)
+
     @staticmethod
     def get_n_events_with_cut(tree, cut, weight: str = None):
         assert isinstance(cut, str)

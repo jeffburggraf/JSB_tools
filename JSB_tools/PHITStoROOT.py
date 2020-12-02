@@ -407,7 +407,8 @@ class PrevParameters:
             return de/dx
 
 
-def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_histories=None, tree_name="tree", overwrite=True):
+def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_histories=None, tree_name="tree",
+                  overwrite=True) -> ROOT.TTree:
 
     container = Container(input_file_path, output_file_name, output_directory, max_histories, tree_name, overwrite)
     file_size = Path(input_file_path).stat().st_size

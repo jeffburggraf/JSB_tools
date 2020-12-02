@@ -166,8 +166,8 @@ class CrossSection1D:
             ax.ylabel(y_label)
             ax.xlabel(x_label)
         else:
-            ax.set_ylabel()
-            ax.set_xlabel()
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
 
         return ax
 

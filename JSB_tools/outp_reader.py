@@ -33,7 +33,6 @@ class F4Tally:
 
         self.tally_modifiers = set()
         match_1 = re.compile(r'^([fcemt]+)([0-9]*4): *. +([0-9]+) *\$.*name: *([^\s\\]+)')
-        print(match_1,'match_1' )
         for card in outp.input_deck:
             if self.tally_number is not None:
                 _m = re.match("^([fcemt]+){}.+".format(self.tally_number), card)
@@ -44,7 +43,6 @@ class F4Tally:
                 _m = match_1.match(card)
                 if _m and _m.groups()[-1] == self.tally_name:
                     self.tally_number = _m.groups()[1]
-                    print('Found tally {}'.format(self.tally_number))
         if self.tally_number is None:
             if self.tally_name is not None:
                 assert False, '\nCould not find tally with name "{0}"Ex\nExample of using a name tag to access tally:'\
@@ -101,11 +99,11 @@ class F4Tally:
                 index += 1
             self.underflow = None
             self.energies = np.array([])
-            self.fluxes = np.array([])
+            self.__fluxes__ = np.array([])
             flux_out_put = outp.__outp_lines__[index+2].split()
             _flux = float(flux_out_put[0])
             _flux_error = _flux*float(flux_out_put[1])
-            self.flux = ufloat(_flux, _flux_error)
+            self.__flux__ = ufloat(_flux, _flux_error)
 
         elif (self.tally_modifiers - {'fm'}) == {"e"}:  # modified with e
             # loop until 'energy' appears on line, indicating beginning of energy bin data
@@ -357,8 +355,7 @@ class StoppingPowerData:
 
     @cached_property
     def __dx_des__(self):
-        assert self.cell_density is not None
-        return 1.0/(self.dedxs*self.cell_density)
+        return 1.0/self.dedxs
 
     @property
     def energies(self):
@@ -370,15 +367,20 @@ class StoppingPowerData:
         self.__energies__ = value
         self.erg_bin_widths = np.array([b2 - b1 for b1, b2 in zip(value[:-1], value[1:])])
 
-    def eval_de_dx_at_erg(self, erg):
-        return np.interp(erg, self.energies, self.dedxs)
+    def eval_de_dx_at_erg(self, erg, density=None):
+        if density is None:
+            density = self.cell_density
+        return np.interp(erg, self.energies, self.dedxs*density)
 
-    def eval_dx_de_at_erg(self, erg):
-        return np.interp(erg, self.energies, self.__dx_des__)
+    def eval_dx_de_at_erg(self, erg, density=None):
+        if density is None:
+            density = self.cell_density
+        return np.interp(erg, self.energies, self.__dx_des__/density)
 
     def get_range_at_erg(self, erg, density=None):
         if density is None:
-            assert self.cell_density is not None, 'Must either provide a cell number or manually supply a density'
+            assert self.cell_density is not None, 'Must either provide a cell number or manually supply a density.\n' \
+                                                  'Set density to 1 to get range ion units of cm2/g'
             density = self.cell_density
         return np.interp(erg, self.energies, self.ranges/density)
 
@@ -443,7 +445,7 @@ class StoppingPowerData:
         else:
             if use_best_units:
                 y /= 100
-                mean_range_in_meters = np.mean(y)
+                mean_range_in_meters = np.max(y)
                 unit_converts = [(10**-3, 'km'), (10**1, 'm'), (10**2, 'cm'), (10**3, 'mm'), (10**6, 'μm'), (10**9, 'nm')]
                 conversion, units = \
                     unit_converts[int(np.argmin([abs(mean_range_in_meters*c-1) for c, unit in unit_converts]))]
@@ -506,21 +508,30 @@ class StoppingPowerData:
             z = ATOMIC_NUMBER[e_symbol]
             return z * 1000 + a
 
+        try:  # check for zaid specification as int
+            particle = int(particle)
+        except ValueError:
+            pass
+        if element_match.match(particle): # check for zaid specification as str
+            particle = get_zaid(particle)
+
         if isinstance(particle, str):
             if particle in mode_dict:
                 mode = mode_dict[particle]
-                particle = mode_dict[particle]
+                sdef_par = mode
+                outp_par = particle
             elif particle in mode_dict.values():
-                mode = particle
-            elif element_match.match(particle):
-                particle = get_zaid(particle)
+                mode = sdef_par = particle
+                outp_par = {v: k for k, v in mode_dict}[particle]
             else:
-                try:
-                    particle = int(particle)
-                except ValueError:
-                    assert False, invalid_par_des_msg
-        if isinstance(particle, int):
+                assert False, invalid_par_des_msg
+
+        elif isinstance(particle, int):
             mode = '#'
+            outp_par = particle
+            sdef_par = particle
+        else:
+            assert False, invalid_par_des_msg
 
         def make_iter(a):
             if a is None:
@@ -605,10 +616,11 @@ class StoppingPowerData:
             runtpe_path.unlink()
 
         os.system(cmd)
-        runtpe_path.unlink()
+        if runtpe_path.exists():
+            runtpe_path.unlink()
         outp = OutP(outp_path)
         # outp_path.unlink()
-        return outp.read_stopping_powers(str(particle), 1000, 10)
+        return outp.read_stopping_powers(str(outp_par), 1000, 10)
 
 
 if __name__ == "__main__":
