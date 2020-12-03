@@ -112,6 +112,11 @@ class TH1F:
         _new_hist.__set_bin_values__(new_bin_values)
         return _new_hist
 
+    def set_min_bin_value(self, y=0):
+        bin_values_n = np.where(self.bin_values >= y, unp.nominal_values(self.bin_values), y)
+        new_bin_values = unp.uarray(bin_values_n, self.bin_std_devs)
+        self.__set_bin_values__(new_bin_values)
+
     def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None, amplitude_fix=None, c_fix=None,
                  divide_by_bin_width=False, full_range=None):
         if isinstance(background, str):
@@ -613,11 +618,12 @@ class TH1F:
         self.draw_expression = draw_expression
         self.cut = cut
         if weight != 1:
-            assert len(cut) >= 1
             self.draw_weight = str(weight)
 
+    n_multi_fill_calls = 0
+
     @staticmethod
-    def multi_fill(tree, histos, max_entries=None):
+    def multi_fill(tree, histos, max_entries=None, delete_c_files=True):
         """
         Generates and runs a C file that efficiently fills multiple histograms in a single loop through a TTree.
         The cuts and the expressions/weights that will be passed to TH1F->Fill are set by calling
@@ -640,10 +646,13 @@ class TH1F:
             max_entries = tree.GetEntries()
         d = os.getcwd()
         os.chdir(Path(__file__).parent)
-        tree.MakeClass('__temp__')
+        __temp__name__ = '__temp__{}'.format(TH1F.n_multi_fill_calls)
+        tree.MakeClass(__temp__name__)
         os.chdir(d)
 
-        with open(Path(__file__).parent/'__temp__.h') as header_file:
+        header_file_path = Path(__file__).parent/'{}.h'.format(__temp__name__)
+
+        with open(header_file_path) as header_file:
             header_lines = header_file.readlines()
         new_header_lines = []
         histo_args = ['TH1F *h{0}'.format(i) for i in range(len(histos))]
@@ -657,12 +666,13 @@ class TH1F:
             else:
                 new_header_lines.append(line)
 
-        with open(Path(__file__).parent/'__temp__.h', 'w') as header_file:
+        with open(header_file_path, 'w') as header_file:
             for line in new_header_lines:
                 header_file.write(line)
-            print(header_file.name)
 
-        with open(Path(__file__).parent/'__temp__.C') as c_file:
+        c_file_path = Path(__file__).parent/'{}.C'.format(__temp__name__)
+
+        with open(c_file_path) as c_file:
             c_lines = c_file.readlines()
         new_c_lines = []
 
@@ -682,19 +692,27 @@ class TH1F:
                 new_c_lines.append('\n'.join(analysis_lines))
                 new_c_lines.append('\t  if (jentry > max_entries){break;}\n')
 
-            elif re.match('void __temp__::Loop\(\)', line):
-                new_c_lines.append('void __temp__::Loop({})\n'.format(histo_args))
+            elif re.match('void {}::Loop\(\)'.format(__temp__name__), line):
+                new_c_lines.append('void {0}::Loop({1})\n'.format(__temp__name__, histo_args))
             else:
                 new_c_lines.append(line)
 
-        with open(Path(__file__).parent/'__temp__.C', 'w') as c_file:
+        with open(c_file_path, 'w') as c_file:
             for line in new_c_lines:
                 c_file.write(line)
-
-        print(ROOT.gROOT.LoadMacro(str(Path(__file__).parent/'__temp__.C')))
-        ROOT.gROOT.ProcessLine('cls = __temp__()')
+        root_macro_path = str(Path(__file__).parent/'{}.C'.format(__temp__name__))
+        ROOT.gROOT.LoadMacro(root_macro_path)
+        process_line = 'cls{0} = {1}()'.format(TH1F.n_multi_fill_calls, __temp__name__)
+        ROOT.gROOT.ProcessLine(process_line)
         _histos_for_ROOT = [h.__ROOT_hist__ for h in histos]
-        cls = ROOT.cls.Loop(*_histos_for_ROOT, max_entries)
+        getattr(ROOT, 'cls{}'.format(TH1F.n_multi_fill_calls)).Loop(*_histos_for_ROOT, max_entries)
+        # ROOT.gROOT.Reset()
+        TH1F.n_multi_fill_calls += 1
+        if delete_c_files:
+            header_file_path.unlink()
+            c_file_path.unlink()
+
+
 
 
 def ttree_cut_range(min_max_tuplee, expression, greater_then_or_equal=True, weight=None):

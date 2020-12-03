@@ -236,29 +236,28 @@ def get_z_a_m_from_name(name):
         else:
             warn("invalid name: {0}".format(name))
             Z = None
-    A = _m.groups()[1]
+    A = int(_m.groups()[1])
     isometric_state = _m.groups()[2]
     if isometric_state is None:
         isometric_state = 0
     isometric_state = isometric_state
-    return Z, A, isometric_state
+    return {'Z': Z, "A": A, "M": isometric_state}
 
 
-def __nuclide_cut__(a_z_hl_cut: str, is_stable_only, nuclide: Nuclide):
+def __nuclide_cut__(a_z_hl_cut: str, a, z, hl, is_stable_only):
     makes_cut = True
 
     assert isinstance(is_stable_only, bool)
-    if is_stable_only is True:
-        if not nuclide.is_stable:
-            return False
+    if is_stable_only and not np.isinf(hl):
+        return False
 
     if len(a_z_hl_cut) > 0:
         a_z_hl_cut = a_z_hl_cut.lower()
-        if 'hl' in a_z_hl_cut and nuclide.half_life is None:
+        if 'hl' in a_z_hl_cut and hl is None:
             makes_cut = False
         else:
             try:
-                makes_cut = eval(a_z_hl_cut, {"hl": nuclide.half_life, 'a': nuclide.A, 'z': nuclide.Z})
+                makes_cut = eval(a_z_hl_cut, {"hl":hl, 'a': a, 'z': z})
                 assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
             except NameError as e:
                 invalid_name = str(e).split("'")[1]
@@ -275,7 +274,7 @@ class Nuclide:
         assert isinstance(name, str)
         assert '__internal__' in kwargs, '\nTo generate a Nuclide instance, use the following syntax:\n\t' \
                                          'Nuclide.from_symbol(<symbol>)'
-
+        self.is_valid = True
         orig_name = name
         if '-' in name:
             name = name.replace('-', '')
@@ -288,7 +287,7 @@ class Nuclide:
             warn(msg)
         self.name = name
 
-        self.Z, self.A, self.isometric_state = get_z_a_m_from_name(name)
+        self.__Z_A_iso_state__ = get_z_a_m_from_name(name)
 
         self.half_life = kwargs.get("half_life", None)
         self.spin = kwargs.get("spin", None)
@@ -301,6 +300,25 @@ class Nuclide:
         self.__decay_parents_str__: List[str] = kwargs.get("__decay_parents__", [])  # self.decay_parents -> List[Nuclide]
 
         self.__decay_mode_for_print__ = None
+
+
+    @property
+    def Z(self):
+        if not hasattr(self, '__Z_A_iso_state__'):
+            self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
+        return self.__Z_A_iso_state__['Z']
+
+    @property
+    def isometric_state(self):
+        if not hasattr(self, '__Z_A_iso_state__'):
+            self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
+        return self.__Z_A_iso_state__['M']
+
+    @property
+    def A(self):
+        if not hasattr(self, '__Z_A_iso_state__'):
+            self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
+        return self.__Z_A_iso_state__['A']
 
     @property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
@@ -390,15 +408,19 @@ class Nuclide:
             if not pickle_file.exists():
                 if symbol in additional_nuclide_data:
                     instance = Nuclide(symbol, __internal__=True, **additional_nuclide_data[symbol])
+                    instance.is_valid = True
                 else:
                     warn("Cannot find data for Nuclide `{0}`. Data for this nuclide is set to defaults: None, nan, ect."
                          .format(symbol))
                     instance = Nuclide(symbol,  __internal__=True, half_life=ufloat(np.nan, np.nan))
+                    instance.is_valid = False
             else:
                 with open(pickle_file, "rb") as pickle_file:
                     instance = CustomUnpickler(pickle_file).load()
+                    instance.is_valid = True
         else:
             instance = NUCLIDE_INSTANCES[symbol]
+            instance.is_valid = True
         # assert isinstance(instance, type(cls)), type(instance)
         return instance
 
@@ -493,7 +515,8 @@ class Nuclide:
         out: Dict[str, InducedDaughter] = {}
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
-            if __nuclide_cut__(a_z_hl_cut, is_stable_only, daughter_nuclide):
+            a, z, hl = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life
+            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
                 daughter = InducedDaughter(daughter_nuclide, self, incident_particle)
                 daughter.xs = xs
                 out[daughter_name] = daughter
@@ -518,7 +541,8 @@ class Nuclide:
                 parent_reaction = CustomUnpickler(f).load()
                 assert isinstance(parent_reaction, ActivationReactionContainer)
             parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle=incident_particle)
-            if __nuclide_cut__(a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only, nuclide=parent):
+            a, z, hl = parent.A, parent.Z, parent.half_life
+            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
                 parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
                 out[parent.name] = parent
 
@@ -564,13 +588,22 @@ class Nuclide:
     def get_all_nuclides(cls, a_z_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
         assert isinstance(a_z_hl_cut, str), 'All cuts must be a string instance.'
         nuclides = []
-        for f_path in DECAY_PICKLE_DIR.iterdir():
-            f_name = f_path.name.replace(".pickle", '')
-            _m = NUCLIDE_NAME_MATCH.match(f_name)
-            if _m:
-                nuclide = cls.from_symbol(f_name)
-                if __nuclide_cut__(a_z_hl_cut, is_stable_only, nuclide):
-                    nuclides.append(nuclide)
+        with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'rb') as f:
+            nuclides_dict = pickle.load(f)
+        for (a, z, hl), nuclide_name in nuclides_dict.items():
+        # for f_path in DECAY_PICKLE_DIR.iterdir():
+            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
+                nuclides.append(Nuclide.from_symbol(nuclide_name))
+            #     nuclides.append(nuclide)
+            # f_name = f_path.name.replace(".pickle", '')
+            # _m = NUCLIDE_NAME_MATCH.match(f_name)
+
+            # if _m:
+            #     nuclide = cls.from_symbol(f_name)
+            #     if nuclide.is_stable:
+            #         assert np.isinf(nuclide.half_life.n), nuclide.half_life
+            #     if __nuclide_cut__(a_z_hl_cut, is_stable_only, nuclide):
+            #         nuclides.append(nuclide)
         return nuclides
 
     def search_spectrum_for_nuclide(self, spectrum_energies, spectrum_counts, erg_width=2):

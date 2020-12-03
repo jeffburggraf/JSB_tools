@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////
 // This class has been automatically generated on
-// Tue Dec  1 19:35:08 2020 by ROOT version 6.20/04
+// Wed Dec  2 20:16:04 2020 by ROOT version 6.20/04
 // from TChain tree/
 //////////////////////////////////////////////////////////
 
@@ -44,7 +44,7 @@ public :
    virtual Int_t    GetEntry(Long64_t entry);
    virtual Long64_t LoadTree(Long64_t entry);
    virtual void     Init(TTree *tree);
-   virtual void     Loop(TH1F *h0, TH1F *h1, int max_entries);
+   virtual void     Loop(TH1F *h0, int max_entries);
    virtual Bool_t   Notify();
    virtual void     Show(Long64_t entry = -1);
 };
@@ -61,9 +61,9 @@ __temp__::__temp__(TTree *tree) : fChain(0)
 #ifdef SINGLE_TREE
       // The following code should be used if you want this class to access
       // a single tree instead of a chain
-      TFile *f = (TFile*)gROOT->GetListOfFiles()->FindObject("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot28.root");
+      TFile *f = (TFile*)gROOT->GetListOfFiles()->FindObject("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot42.root");
       if (!f || !f->IsOpen()) {
-         f = new TFile("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot28.root");
+         f = new TFile("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot42.root");
       }
       f->GetObject("tree",tree);
 
@@ -72,24 +72,17 @@ __temp__::__temp__(TTree *tree) : fChain(0)
       // The following code should be used if you want this class to access a chain
       // of trees.
       TChain * chain = new TChain("tree","");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot5.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot6.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot8.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot9.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot10.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot11.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot12.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot13.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot14.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot18.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot19.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot20.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot21.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot22.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot23.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot24.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot27.root/tree");
-      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot28.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot42.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot43.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot44.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot45.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot46.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot47.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot48.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot49.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot50.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot51.root/tree");
+      chain->Add("/Users/jeffreyburggraf/PycharmProjects/PHELIX/Shot_data_analysis/ROOTTTrees2/_shot52.root/tree");
       tree = chain;
 #endif // SINGLE_TREE
 

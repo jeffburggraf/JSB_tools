@@ -62,6 +62,13 @@ def pickle_decay_data():
             print("Writing data for {0}".format(nuclide_name))
             pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
 
+    with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'wb') as f:
+        data = {}
+        for name, nuclide in NUCLIDE_INSTANCES.items():
+            key = nuclide.A, nuclide.Z, nuclide.half_life
+            data[key] = name
+        pickle.dump(data, f)
+
 
 # modularize the patch work of reading PADF and ENDF-B-VIII.0_protons data.
 class ProtonENDFFile:
@@ -230,9 +237,8 @@ def pickle_photon_activation_data():
             pickle.dump(reaction, f)
 
 
-
 def pickle_all_nuke_data():
-    # pickle_decay_data()
+    pickle_decay_data()
     # pickle_proton_activation_data()
     # pickle_proton_fission_data()  # pickle proton fission data in a special way due to compatibility issues with EDNF6
     # pickle_photon_fission_data()
@@ -243,7 +249,7 @@ def pickle_all_nuke_data():
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import numpy as np
-    # pickle_all_nuke_data()
+    pickle_all_nuke_data()
     # Nuclide.from_symbol('N14').get_incident_proton_daughters()['C10'].xs.plot()
     # Nuclide.from_symbol('N14').get_incident_proton_daughters()['O14'].xs.plot()
     # print(Nuclide.from_symbol('N14').get_incident_proton_daughters())

@@ -4,7 +4,7 @@
 #include <TStyle.h>
 #include <TCanvas.h>
 
-void __temp__::Loop(TH1F *h0, TH1F *h1, int max_entries)
+void __temp__::Loop(TH1F *h0, int max_entries)
 {
 //   In a ROOT session, you can do:
 //      root> .L __temp__.C
@@ -40,9 +40,6 @@ void __temp__::Loop(TH1F *h0, TH1F *h1, int max_entries)
       nb = fChain->GetEntry(jentry);   nbytes += nb;
 
 
-	  if (((2306.351823116429 <= (erg) && (erg) <= 2311.834176918176)) && (((0 <= (t_rnd) && (t_rnd) <= 353.03)))){h0->Fill(t_rnd, (1/eff));}
-
-	  if ((((2311.834176918176 <= (erg) && (erg) <= 2314.5753538190493)) || ((2303.610646215556 <= (erg) && (erg) <= 2306.351823116429))) && (((0 <= (t_rnd) && (t_rnd) <= 353.03)))){h1->Fill(t_rnd, (1/eff));}
-	  if (jentry > max_entries){break;}
+h0->Fill(eff);	  if (jentry > max_entries){break;}
    }
 }
