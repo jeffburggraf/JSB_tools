@@ -236,7 +236,7 @@ class TH1F:
 
         return fit_result, eval_fit
 
-    def plot(self, ax=None, logy=False, logx=False, leg_label=None, line_color=None, **kwargs):
+    def plot(self, ax=None, logy=False, logx=False, leg_label=None, **kwargs):
         if ax is None:
             fig, ax = plt.subplots()
         else:
@@ -252,7 +252,7 @@ class TH1F:
             if logx:
                 ax.set_xscale(value='log')
         ax.errorbar(self.bin_centers, unp.nominal_values(self.bin_values),
-                    yerr=unp.std_devs(self.bin_values), ds="steps-mid", label=leg_label, edgecolor=line_color, **kwargs)
+                    yerr=unp.std_devs(self.bin_values), ds="steps-mid", label=leg_label, **kwargs)
         return fig, ax
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
@@ -395,7 +395,8 @@ class TH1F:
         self.__Cycle_line_styles__(len(TH1F.__histo_pad_dict__[ROOT.gPad.GetName()]) - 1)
         self.__update_pads__()
 
-    def find_bin_index(self, x):
+    def find_bin_index(self, x:float) -> int:
+        """Return bin index for the bin containing the value x"""
         assert self.__bin_left_edges__[0] <= x <= self.__bin_left_edges__[-1], \
             "x of {0} out of range, between {1} and {2}!".format(x, self.__bin_left_edges__[0],
                                                                  self.__bin_left_edges__[1])

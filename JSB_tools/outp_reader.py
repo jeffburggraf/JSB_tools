@@ -11,6 +11,7 @@ from numbers import Number
 from openmc import Material
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 import platform
+import subprocess
 from functools import cached_property
 #  Todo:
 #   Add function to access num particles entering cells
@@ -353,6 +354,11 @@ class StoppingPowerData:
         self.erg_bin_widths = None
         self.__dx_de__ = 0
 
+    @property
+    def ranges_cm(self):
+        assert self.cell_density is not None
+        return self.ranges/self.cell_density
+
     @cached_property
     def __dx_des__(self):
         return 1.0/self.dedxs
@@ -512,7 +518,10 @@ class StoppingPowerData:
             particle = int(particle)
         except ValueError:
             pass
-        if element_match.match(particle): # check for zaid specification as str
+        if isinstance(particle, str):
+            particle = particle.replace('-', '')
+
+        if element_match.match(str(particle)): # check for zaid specification as str
             particle = get_zaid(particle)
 
         if isinstance(particle, str):
@@ -615,10 +624,17 @@ class StoppingPowerData:
         if runtpe_path.exists():
             runtpe_path.unlink()
 
-        os.system(cmd)
+        # print(os.system(cmd), 'ppps')
+        # proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
+        out = p.stdout.read()
+        # (out, err) = proc.communicate()
+        print("program output:", out)
         if runtpe_path.exists():
             runtpe_path.unlink()
+        # todo: find a way top make sure mcnp6 command can be found.
         outp = OutP(outp_path)
+
         # outp_path.unlink()
         return outp.read_stopping_powers(str(outp_par), 1000, 10)
 
