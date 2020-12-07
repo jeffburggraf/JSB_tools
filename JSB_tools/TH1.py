@@ -236,7 +236,7 @@ class TH1F:
 
         return fit_result, eval_fit
 
-    def plot(self, ax=None, logy=False, logx=False, leg_label=None, **kwargs):
+    def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, **kwargs):
         if ax is None:
             fig, ax = plt.subplots()
         else:
@@ -251,8 +251,14 @@ class TH1F:
                 ax.set_yscale(value='log')
             if logx:
                 ax.set_xscale(value='log')
-        ax.errorbar(self.bin_centers, unp.nominal_values(self.bin_values),
-                    yerr=unp.std_devs(self.bin_values), ds="steps-mid", label=leg_label, **kwargs)
+        if xmin is None:
+            xmin = self.__bin_left_edges__[0]
+        if xmax is None:
+            xmax = self.__bin_left_edges__[-1]
+        s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_values))
+
+        ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
+                    yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
         return fig, ax
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):

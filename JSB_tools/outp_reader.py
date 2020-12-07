@@ -61,7 +61,7 @@ class F4Tally:
                 found_n_tallies += 1
                 tally_begin_index = index
         if found_n_tallies == 0:
-            assert False, "Cannot find tally {}".format(self.tally_number)
+            assert False, "Cannot find tally {} in {}".format(self.tally_number, outp.__f_path__)
         elif found_n_tallies > 1:
             warn('\nSeveral dumps of tally {0} found. Using last entry.'.format(self.tally_number))
         index = tally_begin_index
@@ -126,11 +126,14 @@ class F4Tally:
                 _m = re.match(r" +[0-9\.E+-]+", line)
 
                 if _m:
+
                     try:
                         erg_bin, flux, rel_error = tuple(map(float, line.split()))
                     except ValueError as e:
                         assert False, 'Error parsing tally {0}. Outp line:\n{1}\n{2}'.format(self.tally_number,
                                                                                              line, e)
+                    if int(self.tally_number) == 74:
+                        print(line, flux)
                     fluxes.append(flux)
                     flux_errors.append(flux*rel_error)
                     self.__energy_bins__.append(erg_bin)
@@ -233,6 +236,7 @@ class Cell:
 
 class OutP:
     def __init__(self, file_path):
+        self.__f_path__ = file_path
         self.__outp_lines__ = open(file_path).readlines()
 
         self.input_deck = []
