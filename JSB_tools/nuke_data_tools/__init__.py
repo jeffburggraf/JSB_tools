@@ -22,6 +22,8 @@ pwd = Path(__file__).parent
 __all__ = ['Nuclide']
 
 avogadros_number = AVOGADRO
+__u_to_kg__ = 1.6605390666E-27  # atomic mass units to kg
+__speed_of_light__ = 299792458   # c in m/s
 
 
 #  Note to myself: Pickled nuclear data is on personal SSD
@@ -53,6 +55,7 @@ PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lod
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
 PHOTON_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
+SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
 # global variable for the bin-width of xs interpolation
@@ -347,6 +350,34 @@ class Nuclide:
 
         return PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
 
+    def rest_energy(self, units='MeV'):  # in J or MeV
+        units = units.lower()
+        ev = 1.0/1.602176634E-19
+        unit_dict = {'j': 1, 'mev': ev*1E-6, 'ev': ev}
+        assert units in unit_dict.keys(), 'Invalid units, "{}".\nUse one of the following: {}'\
+            .format(units, unit_dict.keys())
+        j = self.atomic_mass*__u_to_kg__*__speed_of_light__**2
+        return j*unit_dict[units]
+
+    @staticmethod
+    def get_mass_in_mev_per_c2(n: (Nuclide, str) = None, z=None, a=None):
+        c = 931.494102
+        if n is not None:
+            if isinstance(n, Nuclide):
+                return n.mass_in_mev_per_c2()
+            else:
+                assert isinstance(n, str)
+                if '_' in n:
+                    n = n[:n.index('_')]
+                return atomic_mass(n)*c
+        else:
+            assert z is not None and a is not None
+            return atomic_mass(ATOMIC_SYMBOL[z] + str(a))*c
+
+    @property
+    def mass_in_mev_per_c2(self):
+        return self.rest_energy('MeV')
+
     @property
     def atomic_mass(self):
         try:
@@ -382,8 +413,20 @@ class Nuclide:
         else:
             return None
 
+    def add_proton(self) -> Nuclide:
+        return self.from_Z_A_M(self.Z+1, self.A, self.isometric_state)
+
+    def remove_proton(self) -> Nuclide:
+        return self.from_Z_A_M(self.Z-1, self.A, self.isometric_state)
+
+    def remove_neutron(self) -> Nuclide:
+        return self.from_Z_A_M(self.Z, self.A-1, self.isometric_state)
+
+    def add_neutron(self) -> Nuclide:
+        return self.from_Z_A_M(self.Z, self.A+1, self.isometric_state)
+
     @classmethod
-    def from_Z_A_M(cls, z, a, m=0):
+    def from_Z_A_M(cls, z, a, m=0) -> Nuclide:
         try:
             symbol = ATOMIC_SYMBOL[z]
         except KeyError:
@@ -448,52 +491,37 @@ class Nuclide:
 
         return out
 
+    def __get_sf_yield__(self, yielded_nuclide, independent_bool):
+        sub_dir = ('independent' if independent_bool else 'cumulative')
+        f_path = SF_YIELD_PICKLE_DIR/sub_dir/'{}.pickle'.format(self.name)
+        assert f_path.exists(), 'No SF fission yield data for {}'.format(self.name)
+        with open(f_path, 'rb') as f:
+            yield_ = pickle.load(f)
+        if yielded_nuclide == 'all':
+            return yield_
+        else:
+            assert NUCLIDE_NAME_MATCH.match(yielded_nuclide), 'Invalid nuclide name for yield, "{}"'\
+                .format(yielded_nuclide)
+            try:
+                return yield_[yielded_nuclide]
+            except KeyError:
+                warn('{} yield of {} from the SF of {} not found in data. Returning zero.'
+                     .format(sub_dir, yielded_nuclide, self.name))
+                return 0
+
+    def independent_sf_fission_yield(self, yielded_nuclide='all'):
+        return self.__get_sf_yield__(yielded_nuclide, True)
+
+    def cumulative_sf_fission_yield(self, yielded_nuclide='all'):
+        return self.__get_sf_yield__(yielded_nuclide, False)
+
     def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         pickle_path = PROTON_PICKLE_DIR / (self.name + ".pickle")
         return self.__get_parents__(pickle_path, 'proton', a_z_hl_cut, is_stable_only)
-        # if not pickle_path.exists():
-        #     warn("No proton-induced data for any parents of {}".format(self.name))
-        #     return {}
-        #
-        # with open(pickle_path, "rb") as f:
-        #     daughter_reaction = CustomUnpickler(f).load()
-        #
-        # assert isinstance(daughter_reaction, ActivationReactionContainer)
-        # out = {}
-        # parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
-        # daughter_nuclide = self
-        # for parent_nuclide in parent_nuclides:
-        #     parent_pickle_path = PROTON_PICKLE_DIR/(parent_nuclide.name + ".pickle")
-        #     with open(parent_pickle_path, "rb") as f:
-        #         parent_reaction = CustomUnpickler(f).load()
-        #         assert isinstance(parent_reaction, ActivationReactionContainer)
-        #     parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle="proton")
-        #     if __nuclide_cut__(a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only, nuclide=parent):
-        #         parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
-        #         out[parent.name] = parent
-        #
-        # return out
 
     def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
         pickle_path = PROTON_PICKLE_DIR/(self.name + ".pickle")
         return self.__get_daughters__(pickle_path, 'proton', a_z_hl_cut, is_stable_only)
-        # if not pickle_path.exists():
-        #     warn("No proton-induced data for {}".format(self.name))
-        #     return None
-        #
-        # with open(pickle_path, "rb") as f:
-        #     reaction = CustomUnpickler(f).load()
-        #
-        # assert isinstance(reaction, ActivationReactionContainer)
-        # out: Dict[str, InducedDaughter] = {}
-        # for daughter_name, xs in reaction.product_nuclide_names_xss.items():
-        #     daughter_nuclide = Nuclide.from_symbol(daughter_name)
-        #     if __nuclide_cut__(a_z_hl_cut, is_stable_only, daughter_nuclide):
-        #         daughter = InducedDaughter(daughter_nuclide, self, "proton")
-        #         daughter.xs = xs
-        #         out[daughter_name] = daughter
-        #
-        # return out
 
     def get_incident_photon_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
         pickle_path = PHOTON_PICKLE_DIR/(self.name + ".pickle")
@@ -591,73 +619,10 @@ class Nuclide:
         with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'rb') as f:
             nuclides_dict = pickle.load(f)
         for (a, z, hl), nuclide_name in nuclides_dict.items():
-        # for f_path in DECAY_PICKLE_DIR.iterdir():
             if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
                 nuclides.append(Nuclide.from_symbol(nuclide_name))
-            #     nuclides.append(nuclide)
-            # f_name = f_path.name.replace(".pickle", '')
-            # _m = NUCLIDE_NAME_MATCH.match(f_name)
 
-            # if _m:
-            #     nuclide = cls.from_symbol(f_name)
-            #     if nuclide.is_stable:
-            #         assert np.isinf(nuclide.half_life.n), nuclide.half_life
-            #     if __nuclide_cut__(a_z_hl_cut, is_stable_only, nuclide):
-            #         nuclides.append(nuclide)
         return nuclides
-
-    def search_spectrum_for_nuclide(self, spectrum_energies, spectrum_counts, erg_width=2):
-        pass
-        # vector_nuclide = [g.intensity for g in self.decay_gamma_lines]
-        # decay_energies = [g.erg for g in self.decay_gamma_lines]
-        # indices = [np.searchsorted(e, spectrum_energies) for e in decay_energies]  # Spectrum indices for decay ergs
-        # kernel =
-
-
-#
-# def pickle_decay_data(directory):
-#     directory = Path(directory)  # Path to downloaded ENDF decay data
-#     assert directory.exists()
-#     for file_path in directory.iterdir():
-#         file_name = file_path.name
-#         _m = re.match(r"dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf", file_name)
-#         if _m:
-#             a = int(_m.group("A"))
-#             _s = _m.group("S")  # nuclide symbol, e.g. Cl, Xe, Ar
-#             m = _m.group("M")
-#             if m is not None:
-#                 m = int(m)
-#
-#             parent_nuclide_name = "{0}{1}{2}".format(_s, a, "" if m is None else "_m{0}".format(m))
-#         else:
-#             continue
-#
-#         if parent_nuclide_name in NUCLIDE_INSTANCES:
-#             parent_nuclide = NUCLIDE_INSTANCES[parent_nuclide_name]
-#         else:
-#             parent_nuclide = Nuclide(parent_nuclide_name)
-#             NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
-#
-#         openmc_decay = Decay(Evaluation(file_path))
-#         daughter_names = [mode.daughter for mode in openmc_decay.modes]
-#         for daughter_nuclide_name in daughter_names:
-#             if daughter_nuclide_name in NUCLIDE_INSTANCES:
-#                 daughter_nuclide = NUCLIDE_INSTANCES[daughter_nuclide_name]
-#             else:
-#                 daughter_nuclide = Nuclide(daughter_nuclide_name)
-#                 NUCLIDE_INSTANCES[daughter_nuclide_name] = daughter_nuclide
-#
-#             if daughter_nuclide_name != parent_nuclide_name:
-#                 daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
-#                 parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
-#
-#         parent_nuclide.__set_data_from_open_mc__(openmc_decay)
-#         print("Preparing data for {0}".format(parent_nuclide_name))
-#
-#     for nuclide_name in NUCLIDE_INSTANCES.keys():
-#         with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
-#             print("Writing data for {0}".format(nuclide_name))
-#             pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
 
 
 class InducedDaughter(Nuclide):
@@ -799,31 +764,10 @@ dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
 if __name__ == "__main__":
     import time
     t0 = time.time()
-    Nuclide.from_symbol('C10')
-    # for n in Nuclide.get_all_nuclides():
-    #     n.decay_gamma_lines
-    # print(time.time() - t0)
-
-
-    # assert Path(decay_data_dir).exists, "Cannot find decay data files. " \
-    #                                      "Download decay files from https://www.nndc.bnl.gov/endf/b7.1/download.html" \
-    #                                      " and set the <decay_data_dir> " \
-    #                                      "variable to the location of the unzipped directory"
-     # from openmc.data.decay import FissionProductYields
-
-    #  How to get SF yields:
-    #  Download from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
-    # y = FissionProductYields("/Users/jeffreyburggraf/Downloads/gefy81_s/GEFY_92_238_s.dat")
-
-    #  Uncomment code below to pickle Nuclide data
-    # pickle_decay_data(decay_data_dir)
-
-
-    # assert Path(proton_padf_data_dir).exists, "Cannot find proton data files. " \
-    #                                      "Download proton files from https://www-nds.iaea.org/padf/ and set the " \
-    #                                      "<proton_dir> variable to the location of the unzipped directory"
-    #  Uncomment code below to pickle incident proton data
-    # pickle_proton_data()
+    n = Nuclide.from_symbol('U238').add_proton()
+    print(n.cumulative_sf_fission_yield('Xe139'))
+    print(n.rest_energy())
+    print(n.mass_in_mev_per_c())
 
 
 

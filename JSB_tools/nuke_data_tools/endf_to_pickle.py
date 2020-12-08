@@ -1,14 +1,14 @@
 from __future__ import annotations
 import pickle
 from openmc.data.endf import Evaluation
-from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
+from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER, FissionProductYields
 from openmc.data import Reaction, Decay
 from pathlib import Path
 import re
 from typing import Dict, List
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR,\
-    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer, FissionReaction
-
+    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer, SF_YIELD_PICKLE_DIR
+from warnings import warn
 cwd = Path(__file__).parent
 
 
@@ -17,6 +17,9 @@ decay_data_dir = parent_data_dir / 'decay'
 proton_padf_data_dir = parent_data_dir / 'PADF_2007' / 'Files'
 proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
 photon_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
+#  Download SF yields from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
+sf_yield_data_dir = parent_data_dir / 'gefy81_s'
+neutron_fission_yield_data_dir = parent_data_dir / 'gefy81_n'
 
 
 def pickle_decay_data():
@@ -237,8 +240,68 @@ def pickle_photon_activation_data():
             pickle.dump(reaction, f)
 
 
+def pickle_sf_yields():
+    for f_path in sf_yield_data_dir.iterdir():
+        _m = re.match('GEFY_([0-9]+)_([0-9]+)_s.dat', f_path.name)
+        if _m:
+            z = int(_m.groups()[0])
+            a = int(_m.groups()[1])
+            e_symbol = ATOMIC_SYMBOL[z]
+            try:
+                print('Pickling SF data for {}, z={}, a={} from file {}'.format(e_symbol, z, a, f_path))
+                y = FissionProductYields(str(f_path))
+            except KeyError:
+                warn('Failed to load SF data from "{}" in "{}"'.format(e_symbol, f_path.name))
+                continue
+
+            nuclide_name = y.nuclide['name']
+
+            with open(SF_YIELD_PICKLE_DIR/'cumulative'/'{}.pickle'.format(nuclide_name), 'wb') as f:
+                pickle.dump(y.cumulative[0], f)
+            with open(SF_YIELD_PICKLE_DIR/'independent'/'{}.pickle'.format(nuclide_name), 'wb') as f:
+                pickle.dump(y.independent[0], f)
+
+
+proton_mass = 938.272
+neutron_mass = 939.565
+
+
+def get_proton_equiv_fission_erg(n: Nuclide, proton_erg):
+    print(Nuclide.from_Z_A_M(n.Z + 1, n.A - 1).name)
+    'eproton - rm[0, 1] + rm[1, 1] + rm[Z, A] - rm[1 + Z, -1 + A] + \
+ rm[1 + Z, A] - rm[1 + Z, 1 + A]'
+    _m = re.match('([A-zA-Z]+)([0-9]+).*', n.name)
+    assert _m
+    z, a = map(int, (ATOMIC_NUMBER[_m.groups()[0]], _m.groups()[1]))
+    return proton_erg - neutron_mass + proton_mass \
+           + Nuclide.get_mass_in_mev_per_c2(z=z, a=a) \
+           - Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a - 1) \
+           + Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a) \
+           - Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a + 1)
+
+
+def pickle_neutron_yields():
+    for f_path in neutron_fission_yield_data_dir.iterdir():
+        _m = re.match('GEFY_([0-9]+)_([0-9]+)_n.dat', f_path.name)
+        if _m:
+            z = int(_m.groups()[0])
+            a = int(_m.groups()[1])
+            e_symbol = ATOMIC_SYMBOL[z]
+            try:
+                print('Pickling n-induced fission data for {}, z={}, a={} from file {}'.format(e_symbol, z, a, f_path))
+                y = FissionProductYields(str(f_path))
+            except KeyError:
+                warn('Failed to load n_induced fission data from "{}" in "{}"'.format(e_symbol, f_path.name))
+                continue
+            for e in y.energies:
+                print(e)
+            break
+
+
 def pickle_all_nuke_data():
-    pickle_decay_data()
+    pickle_neutron_yields()
+    # pickle_sf_yields()
+    # pickle_decay_data()
     # pickle_proton_activation_data()
     # pickle_proton_fission_data()  # pickle proton fission data in a special way due to compatibility issues with EDNF6
     # pickle_photon_fission_data()
@@ -250,7 +313,4 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import numpy as np
     pickle_all_nuke_data()
-    # Nuclide.from_symbol('N14').get_incident_proton_daughters()['C10'].xs.plot()
-    # Nuclide.from_symbol('N14').get_incident_proton_daughters()['O14'].xs.plot()
-    # print(Nuclide.from_symbol('N14').get_incident_proton_daughters())
-    plt.show()
+
