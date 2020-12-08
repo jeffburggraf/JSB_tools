@@ -255,7 +255,7 @@ class TH1F:
             xmin = self.__bin_left_edges__[0]
         if xmax is None:
             xmax = self.__bin_left_edges__[-1]
-        s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_values))
+        s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_centers))
 
         ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
                     yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
@@ -267,6 +267,8 @@ class TH1F:
             assert len(merge_range_x) == 2
 
         def get_rel_error(_value):
+            if _value.n == 0:
+                return 0
             return abs(_value.std_dev / _value.n)
 
         start = None
@@ -441,7 +443,7 @@ class TH1F:
 
     @property
     def rel_errors(self):
-        return np.array([abs(e.std_dev / e.n) for e in self.bin_values])
+        return np.array([abs(e.std_dev / e.n) if e.n != 0 else 0 for e in self.bin_values ])
 
     @property
     def skewness(self):
