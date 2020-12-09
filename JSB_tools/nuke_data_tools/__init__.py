@@ -56,6 +56,8 @@ DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
 PHOTON_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
 SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
+NEUTRON_F_YIELD_PICKLE_DIR = pwd/'data'/'n_fiss_yields'
+
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
 # global variable for the bin-width of xs interpolation

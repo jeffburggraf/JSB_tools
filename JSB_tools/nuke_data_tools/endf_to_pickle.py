@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from typing import Dict, List
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR,\
-    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer, SF_YIELD_PICKLE_DIR
+    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer, SF_YIELD_PICKLE_DIR, NEUTRON_F_YIELD_PICKLE_DIR
 from warnings import warn
 cwd = Path(__file__).parent
 
@@ -293,8 +293,54 @@ def pickle_neutron_yields():
             except KeyError:
                 warn('Failed to load n_induced fission data from "{}" in "{}"'.format(e_symbol, f_path.name))
                 continue
-            for e in y.energies:
-                print(e)
+            # nuclide_dir_independent = NEUTRON_F_YIELD_PICKLE_DIR/'independent'/y.nuclide['name']
+            # nuclide_dir_cumulative = NEUTRON_F_YIELD_PICKLE_DIR/'cumulative'/y.nuclide['name']
+            data = {'independent': {}, 'cumulative': {}}
+            # if not nuclide_dir_independent.exists():
+            #     Path.mkdir(nuclide_dir_independent)
+            # if not nuclide_dir_cumulative.exists():
+            #     Path.mkdir(nuclide_dir_cumulative)
+
+            for yield_type in ['independent', 'cumulative']:
+                for i, erg in enumerate(y.energies):
+                    for product, yield_ in y.independent[i].items():
+                        # if yield_ == 0:
+                        #     continue
+                        try:
+                            data[yield_type][product]['ergs'].append(erg)
+                            data[yield_type][product]['yield'].append(yield_)
+                        except KeyError:
+                            data[yield_type][product] = {'ergs': [erg], 'yield':[yield_]}
+
+            ergs = None
+            for yield_type, _v in data.items():
+                parent_directory = NEUTRON_F_YIELD_PICKLE_DIR / yield_type / y.nuclide['name']
+                if not parent_directory.exists():
+                    parent_directory.mkdir()
+                print(parent_directory)
+                for product, erg_yield_dict in _v.items():
+                    daughter_f_path = parent_directory/(product + '.pickle')
+
+                    if ergs is None:
+                        ergs = erg_yield_dict['ergs']
+                        with open(NEUTRON_F_YIELD_PICKLE_DIR/'yield_ergs.pickle', 'wb') as f:
+                            pickle.dump(ergs, f)
+                    else:
+                        assert all([e1==e2 for e1, e2 in zip(ergs, erg_yield_dict['ergs'])])
+
+                    with open(daughter_f_path, 'wb') as f:
+                        pickle.dump(erg_yield_dict['yield'], f)
+
+
+
+
+            # print(data.keys())
+            # for k0, v0 in data.items():
+            #     for k1, v1 in v0.items():
+            #         print(len(v1['yield']), k0, k1, v1)
+
+            # for e in y.energies:
+            #     print(e)
             break
 
 
