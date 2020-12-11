@@ -132,8 +132,7 @@ class F4Tally:
                     except ValueError as e:
                         assert False, 'Error parsing tally {0}. Outp line:\n{1}\n{2}'.format(self.tally_number,
                                                                                              line, e)
-                    if int(self.tally_number) == 74:
-                        print(line, flux)
+
                     fluxes.append(flux)
                     flux_errors.append(flux*rel_error)
                     self.__energy_bins__.append(erg_bin)
@@ -496,7 +495,8 @@ class StoppingPowerData:
 
     @classmethod
     def get_stopping_power(cls, particle, material_element_symbols, grams_per_cm3, material_atom_percents=None,
-                           material_mass_percents=None, gas=False, emax=200, temperature=None, mcnp_command='mcnp6'):
+                           material_mass_percents=None, gas=False, emax=200, temperature=None, mcnp_command='mcnp6',
+                           verbose=False):
         assert platform.system() != 'Windows', '`get_stopping_power` is not compatible with windows systems!'
         assert isinstance(gas, bool), '`gas` argument must be either True or False'
         assert isinstance(grams_per_cm3, Number), '`grams_per_cm3` argument must be a number'
@@ -616,8 +616,10 @@ class StoppingPowerData:
 
         with open(cwd/'__temp__.inp', 'w') as f:
             for line in lines:
-                # f.write(line.format(mode=mode, mat_card=mat_card, particle=particle, grams_per_cm3=grams_per_cm3))
-                f.write(line.format(**locals()))
+                new_line = line.format(**locals())
+                f.write(new_line)
+                if verbose:
+                    print(new_line)
 
         cmd = 'cd {};'.format(cwd)
         cmd += '{} i=__temp__.inp '.format(mcnp_command)
@@ -633,7 +635,6 @@ class StoppingPowerData:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
         out = p.stdout.read()
         # (out, err) = proc.communicate()
-        print("program output:", out)
         if runtpe_path.exists():
             runtpe_path.unlink()
         # todo: find a way top make sure mcnp6 command can be found.

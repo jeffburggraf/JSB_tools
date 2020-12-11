@@ -9,9 +9,11 @@ from matplotlib import pyplot as plt
 import re
 from pathlib import Path
 from warnings import warn
-from uncertainties import ufloat
+from uncertainties import ufloat, UFloat
+from uncertainties import unumpy as unp
 from uncertainties.umath import isinf, isnan
 import uncertainties
+import marshal
 from functools import cached_property
 from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
 from scipy.stats import norm
@@ -51,12 +53,15 @@ __speed_of_light__ = 299792458   # c in m/s
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
 PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
 PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
+# All neutron yield data loaded - to avoid loading large files twice.
+NEUTRON_YIELD_DATA = {'independent': {}, 'cumulative': {}}
 
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
 PHOTON_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
 SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
-NEUTRON_F_YIELD_PICKLE_DIR = pwd/'data'/'n_fiss_yields'
+NEUTRON_F_YIELD_PICKLE_DIR_GEF = pwd / 'data' / 'neutron_fiss_yields'/'gef'
+NEUTRON_F_YIELD_PICKLE_DIR_ENDF = pwd / 'data' / 'neutron_fiss_yields'/'endf'
 
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
@@ -274,6 +279,30 @@ def __nuclide_cut__(a_z_hl_cut: str, a, z, hl, is_stable_only):
     return makes_cut
 
 
+proton_mass = 938.272
+neutron_mass = 939.565
+
+
+def get_proton_to_neutron_equiv_fission_erg(n: Nuclide, proton_erg):
+    'eproton - rm[0, 1] + rm[1, 1] + rm[Z, A] - rm[1 + Z, -1 + A] + \
+    rm[1 + Z, A] - rm[1 + Z, 1 + A]'
+    z, a = n.Z, n.A
+    if hasattr(proton_erg, '__iter__'):
+        proton_erg = np.array(proton_erg)
+    return proton_erg - neutron_mass + proton_mass \
+           + Nuclide.get_mass_in_mev_per_c2(z=z, a=a) \
+           - Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a - 1) \
+           + Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a) \
+           - Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a + 1)
+
+
+def __set_neutron_fiss_yield_ergs__():
+    if 'ergs' not in NEUTRON_YIELD_DATA:
+        with open(NEUTRON_F_YIELD_PICKLE_DIR_GEF / 'yield_ergs.pickle', 'rb') as f:
+            NEUTRON_YIELD_DATA['ergs'] = pickle.load(f)
+    return NEUTRON_YIELD_DATA['ergs']
+
+
 class Nuclide:
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
@@ -416,10 +445,10 @@ class Nuclide:
             return None
 
     def add_proton(self) -> Nuclide:
-        return self.from_Z_A_M(self.Z+1, self.A, self.isometric_state)
+        return self.from_Z_A_M(self.Z+1, self.A+1, self.isometric_state)
 
     def remove_proton(self) -> Nuclide:
-        return self.from_Z_A_M(self.Z-1, self.A, self.isometric_state)
+        return self.from_Z_A_M(self.Z-1, self.A-1, self.isometric_state)
 
     def remove_neutron(self) -> Nuclide:
         return self.from_Z_A_M(self.Z, self.A-1, self.isometric_state)
@@ -511,11 +540,125 @@ class Nuclide:
                      .format(sub_dir, yielded_nuclide, self.name))
                 return 0
 
-    def independent_sf_fission_yield(self, yielded_nuclide='all'):
-        return self.__get_sf_yield__(yielded_nuclide, True)
+    def __get_neutron_fiss_yield_gef__(self, yielded_nuclide: str, independent_bool, eval_ergs):
+        if isinstance(yielded_nuclide, Nuclide):
+            yielded_nuclide = yielded_nuclide.name
+        assert isinstance(yielded_nuclide, str)
+        yielded_nuclide = yielded_nuclide.replace('-', '')
+        sub_dir = ('independent' if independent_bool else 'cumulative')
+        fission_nuclide_path = NEUTRON_F_YIELD_PICKLE_DIR_GEF / sub_dir / '{}.marshal'.format(self.name)
+        print(fission_nuclide_path)
+        __set_neutron_fiss_yield_ergs__()
+        data_ergs = NEUTRON_YIELD_DATA['ergs']
+        if eval_ergs is None:
+            new_ergs = data_ergs
+        else:
+            new_ergs = eval_ergs
 
-    def cumulative_sf_fission_yield(self, yielded_nuclide='all'):
-        return self.__get_sf_yield__(yielded_nuclide, False)
+        if self.name not in NEUTRON_YIELD_DATA[sub_dir]:
+            assert fission_nuclide_path.exists(), 'No neutron fission yield data for {}'.format(self.name)
+            with open(fission_nuclide_path, 'rb') as f:
+                yield_data = marshal.load(f)
+                NEUTRON_YIELD_DATA[sub_dir][self.name] = yield_data
+        else:
+            yield_data = NEUTRON_YIELD_DATA[sub_dir][self.name]
+
+        def interp(yield_data_):
+            nominal_values = yield_data_['yield']
+            std_devs = yield_data_['yield_err']
+            result = unp.uarray(np.interp(new_ergs, data_ergs, nominal_values),
+                                np.interp(new_ergs, data_ergs, std_devs))
+            return result
+
+        if yielded_nuclide == 'all':
+            out = {k: interp(v) for k, v in yield_data.items()}
+            if eval_ergs is None:
+                return new_ergs, out
+            else:
+                return out
+
+        elif yielded_nuclide not in yield_data:
+            warn('Gef fission yield data for fission fragment {} from fissioning nucleus {} not present. Assuming zero.'
+                 .format(yielded_nuclide, self.name))
+            _ = np.zeros_like(new_ergs)
+            out = unp.uarray(_, _)
+            if eval_ergs is None:
+                return new_ergs, out
+            else:
+                return out
+        else:
+            y = yield_data[yielded_nuclide]
+            if eval_ergs is None:
+                return new_ergs, interp(y)
+            else:
+                return interp(y)
+
+    def independent_neutron_fission_yield_gef(self, product_nuclide='all', ergs=None):
+        return self.__get_neutron_fiss_yield_gef__(product_nuclide, True, ergs)
+
+    def cumulative_neutron_fission_yield_gef(self, product_nuclide='all', ergs=None):
+        return self.__get_neutron_fiss_yield_gef__(product_nuclide, False, ergs)
+
+    def independent_proton_fission_yield_gef(self, product_nuclide='all', ergs=None):
+        non_flag = ergs is None
+        if ergs is None:
+            ergs = __set_neutron_fiss_yield_ergs__()
+        ergs = get_proton_to_neutron_equiv_fission_erg(self, ergs)
+        out = self.__get_neutron_fiss_yield_gef__(product_nuclide, True, ergs)
+        if non_flag:
+            return ergs, out
+        else:
+            return out
+
+    def cumulative_proton_fission_yield_gef(self, product_nuclide='all', ergs=None):
+        non_flag = ergs is None
+        if ergs is None:
+            ergs = __set_neutron_fiss_yield_ergs__()
+        ergs = get_proton_to_neutron_equiv_fission_erg(self, ergs)
+        out = self.__get_neutron_fiss_yield_gef__(product_nuclide, False, ergs)
+        if non_flag:
+            return ergs, out
+        else:
+            return out
+
+    def __get_neutron_fiss_yield_endf__(self, yield_type, product_nuclide='all', ):
+        assert yield_type in ['cumulative', 'independent']
+        f_path = NEUTRON_F_YIELD_PICKLE_DIR_ENDF/yield_type/(self.name + '.marshal')
+        assert f_path.exists(), 'No ENDF neutron fission yield data for {}'.format(self.name)
+        with open(f_path, 'rb') as f:
+            yield_data = marshal.load(f)
+        ergs = np.array(yield_data['ergs'])
+        del yield_data['ergs']
+        if product_nuclide == 'all':
+            return ergs, yield_data
+        else:
+            assert isinstance(product_nuclide, (str, Nuclide))
+            if isinstance(product_nuclide, str):
+                assert NUCLIDE_NAME_MATCH.match(product_nuclide), 'Invalide nuclide name, {}'.format(product_nuclide)
+            elif isinstance(product_nuclide, Nuclide):
+                product_nuclide = product_nuclide.name
+            else:
+                assert False, '`product_nuclide` must be a string or a Nuclide instance.'
+
+            if product_nuclide not in yield_data:
+                warn('ENDF fission yield data for fission fragment {} from fissioning nucleus {} not present. '
+                     'Assuming zero.'.format(product_nuclide, self.name))
+                _ = np.zeros(len(ergs))
+                return ergs, unp.uarray(_, _)
+
+            return ergs, unp.uarray(yield_data[product_nuclide]['yield'], yield_data[product_nuclide]['yield_err'])
+
+    def cumulative_neutron_fission_yield_endf(self, product_nuclide='all'):
+        return self.__get_neutron_fiss_yield_endf__('cumulative', product_nuclide)
+
+    def independent_neutron_fission_yield_endf(self, product_nuclide='all'):
+        return self.__get_neutron_fiss_yield_endf__('independent', product_nuclide)
+
+    def independent_sf_fission_yield(self, product_nuclide='all'):
+        return self.__get_sf_yield__(product_nuclide, True)
+
+    def cumulative_sf_fission_yield(self, product_nuclide='all'):
+        return self.__get_sf_yield__(product_nuclide, False)
 
     def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         pickle_path = PROTON_PICKLE_DIR / (self.name + ".pickle")
@@ -709,55 +852,6 @@ class ActivationReactionContainer:
                                                                 self.product_nuclide_names_xss.keys())
 
 
-class FissionReaction:
-    def __init__(self, parent_name, is_spontaneous):
-        self.is_spontaneous = is_spontaneous
-        self.name = parent_name
-        self.product_yield: Dict[str, float] = {}  # product yield if available
-        self.xs: CrossSection1D
-        self.fission_rate: ufloat
-
-#
-# def pickle_proton_data():
-#     assert PROTON_PICKLE_DIR.exists()
-#     i = 0
-#     all_reactions = {}
-#     files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
-#
-#     for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
-#         if nuclide_name in all_reactions:
-#             reaction = all_reactions[nuclide_name]
-#         else:
-#             reaction = _Reaction(nuclide_name)
-#             all_reactions[nuclide_name] = reaction
-#
-#         e = Evaluation(f_path)
-#         for heavy_product in Reaction.from_endf(e, 5).products:
-#             heavy_product_name = heavy_product.particle
-#             if heavy_product_name == "photon":
-#                 continue
-#             if heavy_product_name == "neutron":
-#                 heavy_product_name = "Nn1"
-#             xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
-#             xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
-#             reaction.product_nuclide_names_xss[heavy_product_name] = xs
-#             if heavy_product_name in all_reactions:
-#                 daughter_reaction = all_reactions[heavy_product_name]
-#             else:
-#                 daughter_reaction = _Reaction(heavy_product_name)
-#                 all_reactions[heavy_product_name] = daughter_reaction
-#             daughter_reaction.parent_nuclide_names.append(nuclide_name)
-#         i += 1
-#
-#     for nuclide_name, reaction in all_reactions.items():
-#         pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
-#         with open(pickle_file_name, "bw") as f:
-#             pickle.dump(reaction, f)
-
-
-#  Download PADF proton induced reaction files from https://www-nds.iaea.org/padf/
-#  Download decay data from https://www.nndc.bnl.gov/endf/b8.0/download.html
-
 decay_data_dir = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay"
 dir_old = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay/"
 dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
@@ -766,10 +860,10 @@ dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
 if __name__ == "__main__":
     import time
     t0 = time.time()
-    n = Nuclide.from_symbol('U238').add_proton()
-    print(n.cumulative_sf_fission_yield('Xe139'))
-    print(n.rest_energy())
-    print(n.mass_in_mev_per_c())
+    n = Nuclide.from_symbol('Np238')
+    ergs, yield_ = n.independent_neutron_fission_yield_endf('Xe139')
+
+
 
 
 
