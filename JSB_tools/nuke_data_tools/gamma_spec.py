@@ -15,23 +15,24 @@ from matplotlib import pyplot as plt
 from PHELIXDataTTree import get_global_energy_bins
 from numbers import Number
 from scipy.signal import find_peaks
-Nuclide.from_symbol('').proton_induced_fiss_xs
+from typing import Union
+
 
 def __get_hl_signature__(tree, discrete_ergs, min_time):
-    # if max_time is None:
-    #     max_time = ROOT.get_max_time()
     hist = TH1F(bin_left_edges=discrete_ergs)
     hist.Project(tree, 'erg', 't>{0}'.format(min_time))
-    peaks, peak_info =
-    # hist.plot()
+    # peaks, peak_info = 0, 0
 
 
 class Spectrum:
-
     def __init__(self, **kwargs):
+        """
+        Only meant to be used internally. Use factory methods to create Spectrum instance.
+        Args:
+            **kwargs:
+        """
         assert '__internal__' in kwargs, 'Use one of the following factory methods to create a Spectrum instance:\n' \
                                          'Spectrum.load,Spectrum.from_tree'
-
         try:
             self.tree = kwargs['tree']
             self.half_life_signature = kwargs['half_life_signature']
@@ -41,13 +42,15 @@ class Spectrum:
             assert False, ('\nMissing keyword argument `{}` in call to Spectrum.__init__(**kwargs)'.format(e.args[0]))
 
     @classmethod
-    def from_tree(cls, tree, discrete_ergs, min_t_for_hl_calc, b_width_for_hl_calc=0.1):
+    def from_tree(cls, tree: ROOT.TTree, discrete_ergs: List[Number], min_t_for_hl_calc: Number):
         """
-        :tree  ROOT TTree instance
-        :discrete_ergs iterable of all possible energies
-        :b_width_for_hl_calc Bin width for half life calulations
-        :min_t_for_hl_calc Starting time for half life calculations
-        :max_t_for_hl_calc Maximum time for half life calculations
+        Args
+            tree (TTree): ROOT TTree instance
+            discrete_ergs: Iterable of all possible energies
+            b_width_for_hl_calc: Bin width for half life calculations
+            min_t_for_hl_calc: Starting time for half life calculations
+
+        returns
         """
         assert isinstance(tree, ROOT.TTree), '"tree" must be a TTree instance.'
         ROOT.gROOT.LoadMacro(str(Path(__file__).parent / 'gamma_spec.c'))
@@ -72,13 +75,31 @@ class Spectrum:
 
         return out
 
-    def save(self, title, path_to_dir):
+    def save(self, title: str, path_to_dir: Union[str, Path]):
+        """
+        Save spectrum to disk for quick future use.
+        Args:
+            title: Unique title of spectrum
+            path_to_dir: Path to directory in which to save spectrum.
+
+        Returns:
+            None
+
+        """
         assert isinstance(title, str), '`title` argument must be a string.'
         assert isinstance(path_to_dir, (str, Path)) and Path(path_to_dir).exists(),\
             '`path_to_dir` must be a directory (str or Path instance) that exists'
         # todo
 
-    def get_erg_calibration(self, nuclides_in_spectrum: List[Nuclide]):
+    def get_erg_calibration(self, nuclides_in_spectrum: List[Nuclide]) -> List[float]:
+        """
+        Calculate calibration coefficients from a set of nuclides expected to be present in spectrum.
+        Args:
+            nuclides_in_spectrum: List of nuclides expected to be present in spectrum.
+
+        Returns:
+            Calibration coefficients
+        """
         _msg = '`nuclides_in_spectrum` arg must be an iterable of nuclides'
         assert isinstance(nuclides_in_spectrum, Iterable), _msg
         assert all(isinstance(n, Nuclide) for n in nuclides_in_spectrum), _msg
