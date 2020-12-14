@@ -194,7 +194,7 @@ def pickle_proton_fission_data():
                     erg, xs = line.split()
                     ergs.append(float(erg))
                     xss.append(float(xs))
-            xs_obj = CrossSection1D(ergs, xss,reaction_name, 'proton')
+            xs_obj = CrossSection1D(ergs, xss, reaction_name, 'proton')
             proton_fission_xs[nuclide_name] = xs_obj
 
     if len(proton_fission_xs):
@@ -215,7 +215,8 @@ def pickle_photon_fission_data():
             xs = Reaction.from_endf(ev, 18).xs
             if len(xs):
                 fission_xs = list(Reaction.from_endf(ev, 18).xs.values())[0]
-                xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, '{0}{1}(G,F)'.format(symbol, a), 'photon')
+                xs_fig_label = '{0}{1}(G,F)'.format(nuclide_name, a)
+                xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, xs_fig_label, 'photon')
                 photo_fission_data[nuclide_name] = xs
             else:
                 continue

@@ -159,6 +159,7 @@ class CrossSection1D:
             assert False, "Invalid unit '{0}'. Valid options are: {1}".format(units, unit_convert.keys())
         if ax is None:
             fig, ax = plt.subplots(1, 1)
+        if ax.get_title() == '':
             if fig_title is not None:
                 ax.set_title(fig_title)
             else:
@@ -858,16 +859,12 @@ dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
 
 
 if __name__ == "__main__":
-    import time
-    t0 = time.time()
-    n = Nuclide.from_symbol('Np238')
-    ergs, yield_ = n.independent_neutron_fission_yield_endf('Xe139')
-
-
-
-
-
-
-
+    # import time
+    # t0 = time.time()
+    # n = Nuclide.from_symbol('Np238')
+    # ergs, yield_ = n.independent_neutron_fission_yield_endf('Xe139')
+    xs = Nuclide.from_symbol('N14').get_incident_proton_daughters()['O14'].xs
+    xs.plot()
+    plt.show()
 
 
