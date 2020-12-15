@@ -8,7 +8,7 @@ from atexit import register
 from uncertainties import UFloat
 from numbers import Number
 from JSB_tools.TH1 import TH1F
-
+import sys
 
 # todo: Make Clean.py do a regex search natively
 
@@ -172,13 +172,15 @@ class MCNPSICard:
 
 
 class InputFile:
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         assert '__internal__' in kwargs, '\nTo create an input file, use one of the two factory methods:\n' \
                                          '\tInputFile.mcnp_input_deck(*args, **kwargs)\n' \
                                          '\tInputFile.phits_input_deck(*args, **kwargs)'
         assert "inp_file_path" in kwargs, "Must supply 'inp_file_path' keyword argument."
         self.inp_file_path = Path(kwargs["inp_file_path"])
         assert self.inp_file_path.exists(), "Cannot find input deck:\n{0}".format(self.inp_file_path)
+
+        self.__has_called_write_inp_in_scope__ = False  # Used to control warnings
 
         self.warn_msg_in_cleanpy = kwargs.get('warn_msg_in_cleanpy', True)
         self.is_mcnp = kwargs.get("is_mcnp", True)
@@ -327,6 +329,8 @@ class InputFile:
 
     def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
                            **mcnp_or_phits_kwargs):
+        self.__has_called_write_inp_in_scope__ = True
+
         assert len(self.__new_inp_lines__) == 0
 
         if new_file_name is None:
@@ -416,16 +420,20 @@ class InputFile:
                 os.chmod(f_path, st.st_mode | stat.S_IEXEC)
 
     def __del(self):
-        with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
-            import inspect
-            cmds = inspect.getsource(__clean__)
-            cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))
-            cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
-            clean_file.write(cmds)
+        if self.__has_called_write_inp_in_scope__:
+            with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
+                import inspect
+                cmds = inspect.getsource(__clean__)
+                cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))
+                cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
+                clean_file.write(cmds)
 
-        print('Run the following commands in terminal to automatically run the simulation(s) just prepared:')
-        print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
-        print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
+            print('Run the following commands in terminal to automatically run the simulation(s) just prepared:')
+            print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
+            print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
+        else:
+            warnings.warn('\nTo evaluate and write input file use\n\ti.write_inp_in_scope(globals(), [optional args])\n'
+                          'where `i` is an InputFile instance.')
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
@@ -453,7 +461,7 @@ def __clean__(paths, warn_message):
         yes_or_no = (yes_or_no == "yes")
     else:
         yes_or_no = True
-    m = re.compile("(ptra[c-z]$)|(runtp[e-z]$)|(mcta[l-z]$)|(out[p-z]$)|(comou[a-z]$)|(meshta[l-z]$)|(mdat[a-z]$)")
+    m = re.compile("(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)")
     for p in paths:
         for f_path in Path(p).iterdir():
             if m.match(f_path.name) and yes_or_no:

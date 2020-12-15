@@ -43,6 +43,8 @@ __speed_of_light__ = 299792458   # c in m/s
 #     Then, read results into <additional_nuclide_data> variable.
 #   * Uncertainty in xs values for CrossSection1D.plot? xs values are ufloats
 #   * Find a way to include data files in the pip package
+#   * Xe134 shows a half-life of 0, when in fact it is very large. The ENDF file has thee correct half-life.
+#     Whats going on here?
 
 # p = '/Users/jeffreyburggraf/PycharmProjects/miscellaneous/data.zip'
 #
@@ -297,6 +299,14 @@ def get_proton_to_neutron_equiv_fission_erg(n: Nuclide, proton_erg):
            - Nuclide.get_mass_in_mev_per_c2(z=z + 1, a=a + 1)
 
 
+def get_photon_to_neutron_equiv_fission_erg(n: Nuclide, photon_erg):
+    z, a = n.Z, n.A
+    if hasattr(photon_erg, '__iter__'):
+        photon_erg = np.array(photon_erg)
+    return photon_erg - neutron_mass - Nuclide.get_mass_in_mev_per_c2(z=z, a=a-1) + \
+           Nuclide.get_mass_in_mev_per_c2(z=z, a=a)
+
+
 def __set_neutron_fiss_yield_ergs__():
     if 'ergs' not in NEUTRON_YIELD_DATA:
         with open(NEUTRON_F_YIELD_PICKLE_DIR_GEF / 'yield_ergs.pickle', 'rb') as f:
@@ -354,6 +364,51 @@ class Nuclide:
         if not hasattr(self, '__Z_A_iso_state__'):
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['A']
+
+    def pretty_half_life(self, hl=None) -> str:
+        hl_in_sec = self.half_life.n if hl is None else hl
+
+        if isinstance(hl_in_sec, UFloat):
+            hl_in_sec = hl_in_sec.n
+
+        if hl_in_sec == np.inf or hl_in_sec == np.nan:
+            return str(hl_in_sec)
+
+        if hl_in_sec < 1:
+            return "{:.2e} seconds".format(hl_in_sec)
+
+        elif hl_in_sec < 60:
+            return "{:.2f} seconds".format(hl_in_sec)
+
+        seconds_in_a_minute = 60
+        seconds_in_a_hour = 60 * seconds_in_a_minute
+        seconds_in_a_day = seconds_in_a_hour * 24
+        seconds_in_a_month = seconds_in_a_day * 30
+        seconds_in_a_year = 12 * seconds_in_a_month
+
+        n_seconds = hl_in_sec % seconds_in_a_minute
+        n_minutes = (hl_in_sec % seconds_in_a_hour) / seconds_in_a_minute
+        n_hours = (hl_in_sec % seconds_in_a_day) / seconds_in_a_hour
+        n_days = (hl_in_sec % seconds_in_a_month) / seconds_in_a_day
+        n_months = (hl_in_sec % seconds_in_a_year) / seconds_in_a_month
+        n_years = (hl_in_sec / seconds_in_a_year)
+
+        out = None
+        for v, s in zip([n_seconds, n_minutes, n_hours, n_days, n_months, n_years],
+                        ['seconds', 'minutes', 'hours', 'days', 'months', 'years']):
+            if int(v) != 0:
+                if v <= 10:
+                    out = '{:.2f} {}'.format(v, s)
+                elif 10 < v < 1000:
+                    out = '{:.1f} {}'.format(v, s)
+                elif v >= 1000:
+                    out = '{:.2e} {}'.format(v, s)
+                # else:
+                #     out = '{:.2e} {}'.format(v, s)
+        if out is None:
+            assert False, 'Issue in "pretty_half_life'
+
+        return out
 
     @property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
@@ -457,6 +512,12 @@ class Nuclide:
     def add_neutron(self) -> Nuclide:
         return self.from_Z_A_M(self.Z, self.A+1, self.isometric_state)
 
+    def is_heavy_FF(self):
+        return 125 < self.A < 158
+
+    def is_light_FF(self):
+        return 78 < self.A < 112
+
     @classmethod
     def from_Z_A_M(cls, z, a, m=0) -> Nuclide:
         try:
@@ -541,11 +602,11 @@ class Nuclide:
                      .format(sub_dir, yielded_nuclide, self.name))
                 return 0
 
-    def __get_neutron_fiss_yield_gef__(self, yielded_nuclide: str, independent_bool, eval_ergs):
-        if isinstance(yielded_nuclide, Nuclide):
-            yielded_nuclide = yielded_nuclide.name
-        assert isinstance(yielded_nuclide, str)
-        yielded_nuclide = yielded_nuclide.replace('-', '')
+    def __get_neutron_fiss_yield_gef__(self, product_nuclide: str, independent_bool, eval_ergs):
+        if isinstance(product_nuclide, Nuclide):
+            product_nuclide = product_nuclide.name
+        assert isinstance(product_nuclide, str), product_nuclide
+        product_nuclide = product_nuclide.replace('-', '')
         sub_dir = ('independent' if independent_bool else 'cumulative')
         fission_nuclide_path = NEUTRON_F_YIELD_PICKLE_DIR_GEF / sub_dir / '{}.marshal'.format(self.name)
         print(fission_nuclide_path)
@@ -571,16 +632,16 @@ class Nuclide:
                                 np.interp(new_ergs, data_ergs, std_devs))
             return result
 
-        if yielded_nuclide == 'all':
+        if product_nuclide == 'all':
             out = {k: interp(v) for k, v in yield_data.items()}
             if eval_ergs is None:
                 return new_ergs, out
             else:
                 return out
 
-        elif yielded_nuclide not in yield_data:
+        elif product_nuclide not in yield_data:
             warn('Gef fission yield data for fission fragment {} from fissioning nucleus {} not present. Assuming zero.'
-                 .format(yielded_nuclide, self.name))
+                 .format(product_nuclide, self.name))
             _ = np.zeros_like(new_ergs)
             out = unp.uarray(_, _)
             if eval_ergs is None:
@@ -588,7 +649,7 @@ class Nuclide:
             else:
                 return out
         else:
-            y = yield_data[yielded_nuclide]
+            y = yield_data[product_nuclide]
             if eval_ergs is None:
                 return new_ergs, interp(y)
             else:
@@ -599,6 +660,28 @@ class Nuclide:
 
     def cumulative_neutron_fission_yield_gef(self, product_nuclide='all', ergs=None):
         return self.__get_neutron_fiss_yield_gef__(product_nuclide, False, ergs)
+
+    def independent_gamma_fission_yield_gef(self, product_nuclide='all', ergs=None):
+        non_flag = ergs is None
+        if ergs is None:
+            ergs = __set_neutron_fiss_yield_ergs__()
+        ergs = get_photon_to_neutron_equiv_fission_erg(self, ergs)
+        out = self.__get_neutron_fiss_yield_gef__(product_nuclide, True, ergs)
+        if non_flag:
+            return ergs, out
+        else:
+            return out
+
+    def cumulative_gamma_fission_yield_gef(self, product_nuclide='all', ergs=None):
+        non_flag = ergs is None
+        if ergs is None:
+            ergs = __set_neutron_fiss_yield_ergs__()
+        ergs = get_photon_to_neutron_equiv_fission_erg(self, ergs)
+        out = self.__get_neutron_fiss_yield_gef__(product_nuclide, False, ergs)
+        if non_flag:
+            return ergs, out
+        else:
+            return out
 
     def independent_proton_fission_yield_gef(self, product_nuclide='all', ergs=None):
         non_flag = ergs is None

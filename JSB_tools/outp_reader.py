@@ -33,63 +33,74 @@ class F4Tally:
         assert isinstance(outp, OutP)
 
         self.tally_modifiers = set()
-        match_1 = re.compile(r'^([fcemt]+)([0-9]*4): *. +([0-9]+) *\$.*name: *([^\s\\]+)')
-        for card in outp.input_deck:
-            if self.tally_number is not None:
-                _m = re.match("^([fcemt]+){}.+".format(self.tally_number), card)
-                if _m:
-                    if _m.group(1) != "f":
-                        self.tally_modifiers.add(_m.group(1))
-            else:
-                _m = match_1.match(card)
-                if _m and _m.groups()[-1] == self.tally_name:
-                    self.tally_number = _m.groups()[1]
+        # find tally number is not given
+        found_tally = False
         if self.tally_number is None:
-            if self.tally_name is not None:
-                assert False, '\nCould not find tally with name "{0}"Ex\nExample of using a name tag to access tally:'\
-                              '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text '\
-                              'after the string "name:" is the name tag (white spaces are stripped, chars are ' \
-                              'case-insensitive)'.format(self.tally_name)
+            tally_name_match = re.compile(
+                r' *f(?P<tally_num>[0-9]*4):(?P<particle>.) +(?P<cell>[0-9]+) *\$.*name: *(?P<name>[\w ]*\w) *$')
+            for card in outp.input_deck:
+                if _m := tally_name_match.match(card):
+                    if _m.group('name') == self.tally_name:
+                        self.tally_number = _m.group('tally_num')
+                        found_tally = True
+                        break
+            else:
+                assert False, '\nCould not find tally with name "{0}"\nExample of using a name tag to access tally:' \
+                              '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text ' \
+                              'after the string "name:" is the name tag (names are case insensitive)\n' \
+                    .format(self.tally_name)
+        tally_declaration_match = re.compile(r' *f{}:(?P<particle>.) +(?P<cell>[0-9]+) *'.format(self.tally_number))
+        print(tally_declaration_match, 'tally_declaration_match')
+
+        tally_modifier_match1 = re.compile('([etc]){}:'.format(self.tally_number))
+        tally_modifier_match2 = re.compile('(fm|em|tm|cm){}'.format(self.tally_number))
+
+        self.cell: Cell = None
+        self.particle: str = None
+        #  Todo: make fm, em, ect compatible. Do these multiplioers chjange the form of the outp?
+
+        for card in outp.input_deck:
+            if _m := tally_declaration_match.match(card):
+                cell_number = int(_m.group('cell'))
+                assert cell_number in outp.cells, 'Invalid cell number for tally {}. Card:\n\t{}' \
+                    .format(self.tally_number, card)
+                self.cell = outp.cells[cell_number]
+                self.particle = _m.group('particle')
+                found_tally = True
+            elif _m := tally_modifier_match1.match(card):
+                self.tally_modifiers.add(_m.groups()[0])
+            elif _m := tally_modifier_match2.match(card):
+                self.tally_modifiers.add(_m.groups()[0])
+
+        if not found_tally:
+            assert False, "Could not find tally {} in input deck!".format(self.tally_number)
 
         assert self.tally_number[-1] == "4", "Incorrect tally type!"
+        self.tally_number = int(self.tally_number)
 
         found_n_tallies = 0
+        f4tallies_found = set()
         tally_begin_index = None
         for index, line in enumerate(outp.__outp_lines__):
+            if any_f4_tally_m := re.match('1tally +([0-9]*4)', line):
+                f4tallies_found.add(any_f4_tally_m.groups()[0])
             _m = re.match(r"1tally +{}".format(self.tally_number), line)
             if _m:
                 found_n_tallies += 1
                 tally_begin_index = index
         if found_n_tallies == 0:
-            assert False, "Cannot find tally {} in {}".format(self.tally_number, outp.__f_path__)
+            msg = "Cannot find tally {} in {}".format(self.tally_number, outp.__f_path__)
+            if len(f4tallies_found):
+                msg += '\nF4 tallies found:\n{}'.format(f4tallies_found)
+            assert False, msg
         elif found_n_tallies > 1:
             warn('\nSeveral dumps of tally {0} found. Using last entry.'.format(self.tally_number))
         index = tally_begin_index
         # initialize
         if len((self.tally_modifiers - {'e', 'fm'})) == 0:
-            index += 2
-            _m = re.match(r" +particle\(s\): +([a-z]+)", outp.__outp_lines__[index])
-            if _m:
-                self.particle = _m.group(1)
-            else:
-                warn("Could not find particle for tally {}".format(self.tally_number))
-            index += 2
-
-            cell_number = None
-
+            index += 4
             if "volumes" in outp.__outp_lines__[index]:
                 index += 1
-                _m = re.match(" +cell: +([0-9]+)", outp.__outp_lines__[index])
-                if _m:
-                    cell_number = int(_m.group(1))
-
-                index += 1
-
-            self.cell: Cell = None
-            if cell_number is not None and cell_number in outp.cells:
-                self.cell = outp.cells[cell_number]
-            else:
-                warn("Could not find cell for tally {0}".format(self.tally_number))
 
             index += 1
         else:
@@ -153,37 +164,46 @@ class F4Tally:
             assert False, "Tally modifiers {} not supported yet! (from tally {})"\
                 .format(self.tally_modifiers, self.tally_number)
 
-    @ property
-    def flux(self):
+    def __assert_no_fm__(self):
         if 'fm' in self.tally_modifiers:
             assert False, 'Tally {} has the "FM" modifier. Tally is a reaction rate, not a flux.'\
                 .format(self.tally_number)
-        else:
-            return self.__flux__
 
-    @property
-    def rate(self):
-        if 'fm' in self.tally_modifiers:
-            return self.__flux__
-        else:
-            assert False, 'Tally {} does not have "FM" modifier. Tally is flux, not reaction rate.'\
+    def __assert_fm__(self):
+        if 'fm' not in self.tally_modifiers:
+            assert False, 'Tally {} does not have "FM" modifier. Tally is flux, not reaction rate.' \
                 .format(self.tally_number)
 
     @property
-    def rates(self):
-        if 'fm' in self.tally_modifiers:
-            return self.__fluxes__
-        else:
-            assert False, 'Tally {} does not have "FM" modifier. Tally is flux, not reaction rate.'\
-                .format(self.tally_number)
+    def nominal_fluxes(self):
+        self.__assert_no_fm__()
+        return unp.nominal_values(self.fluxes)
+
+    @property
+    def std_devs_of_fluxes(self):
+        self.__assert_no_fm__()
+        return unp.std_devs(self.fluxes)
+
+    @ property
+    def flux(self):
+        self.__assert_no_fm__()
+        print(self.tally_modifiers, self.tally_number)
+        return self.__flux__
 
     @property
     def fluxes(self):
-        if 'fm' in self.tally_modifiers:
-            assert False, 'Tally {} has the "FM" modifier. Tally is a reaction rate, not a flux.'\
-                .format(self.tally_number)
-        else:
-            return self.__fluxes__
+        self.__assert_no_fm__()
+        return self.__fluxes__
+
+    @property
+    def rate(self):
+        self.__assert_fm__()
+        return self.__flux__
+
+    @property
+    def rates(self):
+        self.__assert_fm__()
+        return self.__fluxes__
 
     @property
     def erg_bin_widths(self):
@@ -237,6 +257,8 @@ class OutP:
     def __init__(self, file_path):
         self.__f_path__ = file_path
         self.__outp_lines__ = open(file_path).readlines()
+        if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0]):
+            warn('\nThe file\n"{}"\ndoes not appear to be an MCNP output file!\n'.format(file_path))
 
         self.input_deck = []
         self.nps = None
