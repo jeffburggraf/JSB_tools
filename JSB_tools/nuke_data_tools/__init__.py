@@ -365,7 +365,7 @@ class Nuclide:
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['A']
 
-    def pretty_half_life(self, hl=None) -> str:
+    def human_friendly_half_life(self, hl=None) -> str:
         hl_in_sec = self.half_life.n if hl is None else hl
 
         if isinstance(hl_in_sec, UFloat):
