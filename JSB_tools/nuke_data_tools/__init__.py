@@ -453,6 +453,10 @@ class Nuclide:
 
     def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity:float=0.05, ax=None,
                                   log_scale=False, label=None):
+        if len(self.decay_gamma_lines) == 0:
+            warn('\nNo gamma lines for {}. No plot.'.format(self.name))
+            return None
+
         assert isinstance(label_first_n_lines, int)
         if ax is None:
             fig, ax = plt.subplots()
@@ -467,6 +471,7 @@ class Nuclide:
         y_err = []
         ax.set_xlabel('Gamma energy')
         ax.set_ylabel('Gammas per decay')
+
         for g in self.decay_gamma_lines:
             if g.intensity.n >= min_intensity:
                 x.append(g.erg.n)
@@ -475,26 +480,28 @@ class Nuclide:
                 y.append(g.intensity.n)
                 y_err.append(g.intensity.std_dev)
 
+
         label_first_n_lines += 1
         label_first_n_lines = min(len(x), label_first_n_lines)
-        used_xys = set()
-        ax.set_ylim(0, ax.get_ylim()[1]*1.5)
 
-        y_max = ax.get_ylim()[1]
+        y_max = max(y)
         _x_ = np.array(x[:label_first_n_lines])
         _y_ = np.array(y[:label_first_n_lines])
         sorter = np.argsort(_x_)
         for index, xy in enumerate(zip(_x_[sorter], _y_[sorter])):
             xy = np.array(xy)
             erg = xy[0]
-            print('Label: {:.2f}KeV'.format(erg))
 
-            text_xy = (xy[0], y_max*0.7)
+            text_xy = (xy[0], y_max*1.1)
             ax.annotate('{:.2f}KeV'.format(erg), xy=xy, xytext=text_xy,
                         arrowprops=dict(width=0.1, headwidth=4, facecolor='black', shrink=0.03), rotation=90)
 
-        ax.set_title('Gamma spectrum of {}, half-life = {}'.format(self.name, self.human_friendly_half_life()))
+        ax.set_title('Gamma spectrum of {}, half-life = {}'.format(self.name, self.human_friendly_half_life(False)))
         ax.errorbar(x, y, yerr=y_err, xerr=x_err, label=label, marker='p', ls='none')
+        if len(x) == 1:
+            ax.set_xlim(x[0] - 10, x[0] + 10)
+        ax.set_ylim(0, max(y+y_err)*1.5)
+
         return fig, ax
 
     @property
@@ -937,44 +944,6 @@ class Nuclide:
 
     def is_effectively_stable(self, threshold_in_years=100):
         return self.half_life.n >= (365*24*60**2)*threshold_in_years
-
-    def __set_data_from_open_mc__(self, open_mc_decay):
-        self.half_life = open_mc_decay.half_life
-        self.mean_energies = open_mc_decay.average_energies
-        self.spin = open_mc_decay.nuclide["spin"]
-
-        if isinf(self.half_life.n) or open_mc_decay.nuclide["stable"]:
-            self.is_stable = True
-            self.half_life = ufloat(np.inf, 0)
-        else:
-            self.is_stable = False
-
-        for mode in open_mc_decay.modes:
-            decay_mode = DecayMode(mode)
-            self.decay_modes.append(decay_mode)
-
-        try:
-            gamma_decay_info = open_mc_decay.spectra["gamma"]
-            discrete_normalization = gamma_decay_info["discrete_normalization"]
-            if gamma_decay_info["continuous_flag"] != "discrete":
-                return
-            for gamma_line_info in gamma_decay_info["discrete"]:
-                erg = gamma_line_info["energy"]
-                from_mode = gamma_line_info["from_mode"]
-                for mode in self.decay_modes:
-                    if mode.is_mode(from_mode[0]):
-                        break
-                else:
-                    assert False, "{0} {1}".format(self.decay_modes, gamma_line_info)
-                branching_ratio = mode.branching_ratio
-                intensity_thu_mode = discrete_normalization*gamma_line_info["intensity"]
-                intensity = intensity_thu_mode * branching_ratio
-                g = GammaLine(self, erg/1000, intensity, intensity_thu_mode, mode)
-                self.decay_gamma_lines.append(g)
-            self.decay_gamma_lines = list(sorted(self.decay_gamma_lines, key=lambda x: -x.intensity))
-        except KeyError:
-            pass
-        # Todo: Add decay channels other than "gamma"
 
     @ classmethod
     def get_all_nuclides(cls, a_z_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:

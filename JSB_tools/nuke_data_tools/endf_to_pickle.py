@@ -9,7 +9,7 @@ import marshal
 from typing import Dict, List
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR,\
     PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer, SF_YIELD_PICKLE_DIR, NEUTRON_F_YIELD_PICKLE_DIR_GEF,\
-    NEUTRON_F_YIELD_PICKLE_DIR_ENDF
+    NEUTRON_F_YIELD_PICKLE_DIR_ENDF, GammaLine, DecayMode
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
@@ -124,42 +124,116 @@ def decay_evaluation_score(decay1):
     try:
         return len(decay1.spectra['gamma']['discrete'])
     except KeyError:
-        return 0
+        return 0.5
+
+
+def __set_data_from_open_mc__(self, open_mc_decay: Decay):
+    self.half_life = open_mc_decay.half_life
+    self.mean_energies = open_mc_decay.average_energies
+    self.spin = open_mc_decay.nuclide["spin"]
+
+    if np.isinf(self.half_life.n) or open_mc_decay.nuclide["stable"]:
+        self.is_stable = True
+        self.half_life = ufloat(np.inf, 0)
+    else:
+        self.is_stable = False
+
+    for mode in open_mc_decay.modes:
+        decay_mode = DecayMode(mode)
+        self.decay_modes.append(decay_mode)
+
+    try:
+        gamma_decay_info = open_mc_decay.spectra["gamma"]
+        discrete_normalization = gamma_decay_info["discrete_normalization"]
+        if gamma_decay_info["continuous_flag"] != "discrete":
+            return
+        for gamma_line_info in gamma_decay_info["discrete"]:
+            erg = gamma_line_info["energy"]
+            from_mode = gamma_line_info["from_mode"]
+            for mode in self.decay_modes:
+                if mode.is_mode(from_mode[0]):
+                    break
+            else:
+                warn('Decay mode {} not found in {}'.format(from_mode, self.decay_modes))
+                # assert False, "{0} {1}".format(self.decay_modes, gamma_line_info)
+            branching_ratio = mode.branching_ratio
+            intensity_thu_mode = discrete_normalization*gamma_line_info["intensity"]
+            intensity = intensity_thu_mode * branching_ratio
+            g = GammaLine(self, erg/1000, intensity, intensity_thu_mode, mode)
+            self.decay_gamma_lines.append(g)
+        self.decay_gamma_lines = list(sorted(self.decay_gamma_lines, key=lambda x: -x.intensity))
+    except KeyError:
+        pass
+    # Todo: Add decay channels other than "gamma"
 
 
 def pickle_decay_data():
-    directory_1 = decay_data_dir  # Path to downloaded ENDF decay data
-    directory_2 = decay_data_dir/'decay_2020'  # Path to downloaded ENDF decay data
+    directory_endf = decay_data_dir/'decay_ENDF'  # Path to downloaded ENDF decay data
+    directory_jeff = decay_data_dir/'decay_JEFF'  # Path to downloaded ENDF decay data
 
-    assert directory_1.exists()
-    assert directory_2.exists()
-    for file_path in directory_1.iterdir():
-        file_name = file_path.name
-        _m = re.match(r"dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf", file_name)
-        if _m:
+    assert directory_endf.exists(), 'Create the following directory: {}'.format(directory_endf)
+    assert directory_jeff.exists(), 'Create the following directory: {}'.format(directory_jeff)
+    openmc_decays = {}
+
+    jeff_decay_file_match = re.compile('([A-Z][a-z]{0,2})([0-9]{1,3})([mnop]*)')
+    endf_decay_file_match = re.compile(r'dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf')
+
+    for endf_file_path in directory_endf.iterdir():
+        file_name = endf_file_path.name
+        print('Reading ENDSF decay data from {}'.format(endf_file_path.name))
+        if _m := endf_decay_file_match.match(file_name):
             a = int(_m.group("A"))
             _s = _m.group("S")  # nuclide symbol, e.g. Cl, Xe, Ar
             m = _m.group("M")
             if m is not None:
                 m = int(m)
-            parent_nuclide_name = "{0}{1}{2}".format(_s, a, "" if m is None else "_m{0}".format(m))
+            nuclide_name = "{0}{1}{2}".format(_s, a, "" if m is None else "_m{0}".format(m))
+            d = Decay(Evaluation(endf_file_path))
+            if d.nuclide["stable"]:
+                half_life = ufloat(np.inf, 0)
+            elif d.half_life.n == 0:
+                half_life = get_hl_from_ednf_file(endf_file_path)
+            else:
+                half_life = d.half_life
+            openmc_decays[nuclide_name] = {'endf': d, 'jeff': None, 'half_life': half_life}
         else:
             continue
+    #
+    for jeff_file_path in directory_jeff.iterdir():
+        print('Reading JEFF decay data from {}'.format(jeff_file_path.name))
+
+        file_name = jeff_file_path.name
+        if match := jeff_decay_file_match.match(file_name):
+            s = match.groups()[0]
+            a = int(match.groups()[1])
+            m = match.groups()[2]
+            m = {'': 0, 'm': 1, 'n': 2, 'o': 3}[m]
+            if m != 0:
+                nuclide_name = '{}{}_m{}'.format(s, a, m)
+            else:
+                nuclide_name = '{}{}'.format(s, a)
+            e = Evaluation(jeff_file_path)
+            d = Decay(e)
+            if nuclide_name in openmc_decays:
+                openmc_decays[nuclide_name]['jeff'] = d
+            else:
+                openmc_decays[nuclide_name] = {'endf': None, 'jeff': d, 'half_life': d.half_life}
+
+    for parent_nuclide_name, openmc_dict in openmc_decays.items():
+        jeff_score = decay_evaluation_score(openmc_dict['jeff'])
+        endf_score = decay_evaluation_score(openmc_dict['endf'])
+        if jeff_score > endf_score:
+            openmc_decay = openmc_dict['jeff']
+        else:
+            openmc_decay = openmc_dict['endf']
+
+        openmc_decay.half_life = openmc_dict['half_life']
 
         if parent_nuclide_name in NUCLIDE_INSTANCES:
             parent_nuclide = NUCLIDE_INSTANCES[parent_nuclide_name]
         else:
             parent_nuclide = Nuclide(parent_nuclide_name, __internal__=True)
             NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
-        openmc_decay = Decay(Evaluation(file_path))
-        if parent_nuclide.name == 'n1':
-            print('n1 n1 n1: ', file_path)
-
-        if openmc_decay.nuclide["stable"]:
-            openmc_decay.half_life = ufloat(np.inf, 0)
-        elif openmc_decay.half_life.n == 0:
-            openmc_decay.half_life = get_hl_from_ednf_file(file_path)
-            print('My half life: {}'.format(openmc_decay.half_life))
 
         daughter_names = [mode.daughter for mode in openmc_decay.modes]
         for daughter_nuclide_name in daughter_names:
@@ -173,8 +247,7 @@ def pickle_decay_data():
                 daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
                 parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
 
-        print("Preparing data for {0}".format(parent_nuclide_name))
-        parent_nuclide.__set_data_from_open_mc__(openmc_decay)
+        __set_data_from_open_mc__(parent_nuclide, openmc_decay)
 
     for nuclide_name in NUCLIDE_INSTANCES.keys():
         with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
@@ -482,113 +555,17 @@ def pickle_all_nuke_data():
 
     pass
 
-r = re.compile('([A-Z][a-z]{0,2})([0-9]{1,3})([mnop]*)')
-
-# all_ns = [n.name for n in Nuclide.get_all_nuclides()]
-openmc_decays = {}
-
-new_ns = list()
-openmc_decays = {}
-
-# print('# of paths: {}'.format(len(paths)))
-for path in (decay_data_dir/'decay_2020').iterdir():
-    if m := r.match(path.name):
-        s = m.groups()[0]
-        a = int(m.groups()[1])
-        m = m.groups()[2]
-        z = ATOMIC_NUMBER[s]
-        m = {'':0, 'm':1, 'n':2, 'o':3}[m]
-        e = Evaluation(path)
-        if m != 0:
-            name = '{}{}_m{}'.format(s, a, m)
-        else:
-            name = '{}{}'.format(s, a)
-        if name in openmc_decays:
-            openmc_decays[name][1] = Decay(e)
-        else:
-            openmc_decays[name] = [None, Decay(e)]
-
-for path in decay_data_dir.iterdir():
-    if m := re.match(r"dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf", path.name):
-        s = m.group('S')
-        a = int(m.group('A'))
-        m = m.group('M')
-        if m:
-            name = '{}{}_m{}'.format(s, a, m)
-        else:
-            name = "{}{}".format(s, a)
-        e = Evaluation(path)
-
-        if name in openmc_decays:
-            openmc_decays[name][0] = Decay(e)
-        else:
-            openmc_decays[name] = [Decay(e), None]
-
-for name, decays in openmc_decays.items():
-    score_old = decay_evaluation_score(decays[0])
-    score_new = decay_evaluation_score(decays[1])
-    msg = str([score_old, score_new])
-    if score_new > score_old:
-        msg += ' New'
-    elif score_new == score_old:
-        msg += 'Tie'
-    else:
-        msg += 'Old'
-    print(name, msg)
-#         d_new = Decay(e)
-#         old_path = '/Users/jeffreyburggraf/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/decay/'
-#         z = str(z)
-#         old_path += 'dec-{}_{}_{}.endf'.format(z if len(z) == 3 else '0' + z, s, a if len(a) == 3 else '0' + a)
-#         old_path = Path(old_path)
-#         if old_path.exists():
-#             e = Evaluation(old_path)
-#             d_old = Decay(e)
-#             # print()
-#             c = True
-#             if 'gamma' in d_old.spectra and d_old.spectra['gamma']['continuous_flag'] == 'discrete':
-#                 l_old = len(d_old.spectra['gamma']['discrete'])
-#                 # print('old: ',l_old,  d_old.spectra['gamma'])
-#
-#
-#                 if 'gamma' in d_new.spectra and d_new.spectra['gamma']['continuous_flag'] == 'discrete':
-#                     l_new = len(d_new.spectra['gamma']['discrete'])
-#                     # print('new: ',l_new,  d_new.spectra['gamma'])
-#                     if l_new != l_old:
-#                         print('new: ', l_new, d_new.spectra['gamma'])
-#                         print('old: ', l_old, d_old.spectra['gamma'])
-#
-#                     no_new = False
-#                 else:
-#                     print('Yes old no new: ', old_path)
-#                 # print('new: None')
-#                 pass
-#
-#
-#
-#                 # if no_new:
-#                 #     print ('########')
-#             # else:
-#             #     print('old: None')
-#             # print()
-#
-#
-#         new_ns.append(n.name)
-# print('Number of matches: ', len(new_ns))
-# # all_ns = list(sorted(all_ns))
-# # new_ns = list(sorted(new_ns))
-# # print(all_ns)
-# # print(new_ns)
-# # for n in all_ns:
-# #     if n not in new_ns:
-# #         print('omg?!?!?!?, ', n)
-
-
 
 if __name__ == '__main__':
     pass
     import matplotlib.pyplot as plt
     # pickle_all_nuke_data()
+    print(Nuclide.from_symbol('N14').get_incident_photon_daughters().values())
+    for n in Nuclide.from_symbol('N14').get_incident_proton_daughters().values():
+        if not n.is_stable:
+            n.plot_decay_gamma_spectrum(min_intensity=0)
 
+    plt.show()
     # e = Evaluation('/Users/jeffreyburggraf/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/decay/decay_2020/C010')
     # d =Decay.from_endf(e)
     # print(d.spectra)
