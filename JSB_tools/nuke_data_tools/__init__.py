@@ -76,6 +76,94 @@ additional_nuclide_data = {"In101_m1": {"half_life": ufloat(10, 5)},
                            "Rh114_m1": {"half_life": ufloat(1.85, 0.05), "__decay_daughters_str__": "Pd114"},
                            "Pr132_m1": {"half_life": ufloat(20, 5), "__decay_daughters_str__": "Ce132"}}
 
+def human_readable_half_life(hl, include_errors):
+    def get_error_print(e, sig_figs=None):
+        if sig_figs is None:
+            if 1 <= e <= 100:
+                sig_figs = 0
+            elif 0.1 <= e < 1:
+                sig_figs = 1
+            else:
+                sig_figs = 2
+
+        if sig_figs == 0:
+            return "+/-{}%".format(int(e))
+        elif sig_figs == 1:
+            return "+/-{:.1f}%".format(e)
+        else:
+            fmt = "+/-{{:.{}e}}%".format(sig_figs)
+            return fmt.format(e)
+
+    hl_in_sec = hl
+
+    if hl_in_sec.n == np.inf or hl_in_sec.n == np.nan:
+        return str(hl_in_sec.n)
+
+    if hl_in_sec < 1:
+        percent_error = 100 * hl_in_sec.std_dev / hl_in_sec.n
+        out = "{:.2e} seconds ".format(hl_in_sec.n)
+        if include_errors:
+            out += " ({}) ".format(get_error_print(percent_error))
+        return out
+
+    elif hl_in_sec < 60:
+        percent_error = 100 * hl_in_sec.std_dev / hl_in_sec.n
+        out = "{:.1f} seconds ".format(hl_in_sec.n)
+        if include_errors:
+            out += " ({}) ".format(get_error_print(percent_error))
+        return out
+
+    seconds_in_a_minute = 60
+    seconds_in_a_hour = 60 * seconds_in_a_minute
+    seconds_in_a_day = seconds_in_a_hour * 24
+    seconds_in_a_month = seconds_in_a_day * 30
+    seconds_in_a_year = 12 * seconds_in_a_month
+
+    n_seconds = hl_in_sec % seconds_in_a_minute
+    n_minutes = (hl_in_sec % seconds_in_a_hour) / seconds_in_a_minute
+    n_hours = (hl_in_sec % seconds_in_a_day) / seconds_in_a_hour
+    n_days = (hl_in_sec % seconds_in_a_month) / seconds_in_a_day
+    n_months = (hl_in_sec % seconds_in_a_year) / seconds_in_a_month
+    n_years = (hl_in_sec / seconds_in_a_year)
+
+    out = None
+
+    for value, unit in zip([n_seconds, n_minutes, n_hours, n_days, n_months, n_years],
+                           ['seconds', 'minutes', 'hours', 'days', 'months', 'years']):
+        error, value = value.std_dev, value.n
+        if int(value) != 0:
+            if np.isclose(error, value) and unit == 'years':
+                percent_error = 'lower bound'
+            else:
+                percent_error = 100 * error / value
+                if percent_error < 0.001:
+                    percent_error = get_error_print(percent_error, 4)
+                elif percent_error < 0.01:
+                    percent_error = get_error_print(percent_error, 3)
+                elif percent_error < 0.1:
+                    # percent_error = '+/-{:.2e}%'.format(percent_error)
+                    percent_error = get_error_print(percent_error, 2)
+                elif percent_error < 1:
+                    # percent_error = "+/-{:.1f}%".format(error)
+                    percent_error = get_error_print(percent_error, 1)
+                else:
+                    percent_error = get_error_print(percent_error, 0)
+
+            if value >= 100:
+                value_str = "{:.3e}".format(value)
+            else:
+                value_str = "{:.1f}".format(value)
+
+
+            out = "{} {}".format(value_str, unit)
+            if include_errors:
+                out += " ({})".format(percent_error)
+
+    if out is None:
+        assert False, 'Issue in "human_friendly_half_life'
+
+    return out
+
 
 # Needed because classes in this __init__ file will not be in scope of __main__ as required for unpickling
 class CustomUnpickler(pickle.Unpickler):
@@ -315,11 +403,28 @@ def __set_neutron_fiss_yield_ergs__():
 
 
 class Nuclide:
+    """A nuclide that can be used to access cross sections, decay children/parent nuclides, decay modes, and much more.
+
+        Parameters
+        ----------
+        ev_or_filename : str of openmc.data.endf.Evaluation
+            ENDF fission product yield evaluation to read from. If given as a
+            string, it is assumed to be the filename for the ENDF file.
+
+        Attributes
+        ----------
+        half life : UFloat
+        todo
+
+        Notes
+        -----
+        """
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
         assert '__internal__' in kwargs, '\nTo generate a Nuclide instance, use the following syntax:\n\t' \
                                          'Nuclide.from_symbol(<symbol>)'
-        self.is_valid = True
+
+        self.is_valid: bool = True  # Was there any available data for this nuclide?
         orig_name = name
         if '-' in name:
             name = name.replace('-', '')
@@ -330,12 +435,12 @@ class Nuclide:
             msg = 'OpenMC nuclides follow the GND naming convention. Nuclide ' \
                   '"{}" is being renamed as "{}".'.format(orig_name, name)
             warn(msg)
-        self.name = name
+        self.name: str = name
 
         self.__Z_A_iso_state__ = get_z_a_m_from_name(name)
 
-        self.half_life = kwargs.get("half_life", None)
-        self.spin = kwargs.get("spin", None)
+        self.half_life: UFloat = kwargs.get("half_life", None)
+        self.spin: int = kwargs.get("spin", None)
         self.mean_energies = kwargs.get("mean_energies", None)  # look into this
         self.is_stable: bool = kwargs.get("is_stable", None)  # maybe default to something else
 
@@ -346,69 +451,74 @@ class Nuclide:
 
         self.__decay_mode_for_print__ = None
 
+    def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity:float=0.05, ax=None,
+                                  log_scale=False, label=None):
+        assert isinstance(label_first_n_lines, int)
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig, ax = ax.gcf(), ax.gca()
+
+        if log_scale:
+            ax.set_yscale('log')
+        x = []
+        x_err = []
+        y = []
+        y_err = []
+        ax.set_xlabel('Gamma energy')
+        ax.set_ylabel('Gammas per decay')
+        for g in self.decay_gamma_lines:
+            if g.intensity.n >= min_intensity:
+                x.append(g.erg.n)
+                x_err.append(g.erg.std_dev)
+
+                y.append(g.intensity.n)
+                y_err.append(g.intensity.std_dev)
+
+        label_first_n_lines += 1
+        label_first_n_lines = min(len(x), label_first_n_lines)
+        used_xys = set()
+        ax.set_ylim(0, ax.get_ylim()[1]*1.5)
+
+        y_max = ax.get_ylim()[1]
+        _x_ = np.array(x[:label_first_n_lines])
+        _y_ = np.array(y[:label_first_n_lines])
+        sorter = np.argsort(_x_)
+        for index, xy in enumerate(zip(_x_[sorter], _y_[sorter])):
+            xy = np.array(xy)
+            erg = xy[0]
+            print('Label: {:.2f}KeV'.format(erg))
+
+            text_xy = (xy[0], y_max*0.7)
+            ax.annotate('{:.2f}KeV'.format(erg), xy=xy, xytext=text_xy,
+                        arrowprops=dict(width=0.1, headwidth=4, facecolor='black', shrink=0.03), rotation=90)
+
+        ax.set_title('Gamma spectrum of {}, half-life = {}'.format(self.name, self.human_friendly_half_life()))
+        ax.errorbar(x, y, yerr=y_err, xerr=x_err, label=label, marker='p', ls='none')
+        return fig, ax
 
     @property
-    def Z(self):
+    def Z(self) -> int:
+        """Proton number"""
         if not hasattr(self, '__Z_A_iso_state__'):
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['Z']
 
     @property
-    def isometric_state(self):
+    def isometric_state(self) -> int:
+        """Meta stable excited state, starting with "0" as the ground state."""
         if not hasattr(self, '__Z_A_iso_state__'):
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['M']
 
     @property
-    def A(self):
+    def A(self) -> int:
         if not hasattr(self, '__Z_A_iso_state__'):
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['A']
 
-    def human_friendly_half_life(self, hl=None) -> str:
-        hl_in_sec = self.half_life.n if hl is None else hl
-
-        if isinstance(hl_in_sec, UFloat):
-            hl_in_sec = hl_in_sec.n
-
-        if hl_in_sec == np.inf or hl_in_sec == np.nan:
-            return str(hl_in_sec)
-
-        if hl_in_sec < 1:
-            return "{:.2e} seconds".format(hl_in_sec)
-
-        elif hl_in_sec < 60:
-            return "{:.2f} seconds".format(hl_in_sec)
-
-        seconds_in_a_minute = 60
-        seconds_in_a_hour = 60 * seconds_in_a_minute
-        seconds_in_a_day = seconds_in_a_hour * 24
-        seconds_in_a_month = seconds_in_a_day * 30
-        seconds_in_a_year = 12 * seconds_in_a_month
-
-        n_seconds = hl_in_sec % seconds_in_a_minute
-        n_minutes = (hl_in_sec % seconds_in_a_hour) / seconds_in_a_minute
-        n_hours = (hl_in_sec % seconds_in_a_day) / seconds_in_a_hour
-        n_days = (hl_in_sec % seconds_in_a_month) / seconds_in_a_day
-        n_months = (hl_in_sec % seconds_in_a_year) / seconds_in_a_month
-        n_years = (hl_in_sec / seconds_in_a_year)
-
-        out = None
-        for v, s in zip([n_seconds, n_minutes, n_hours, n_days, n_months, n_years],
-                        ['seconds', 'minutes', 'hours', 'days', 'months', 'years']):
-            if int(v) != 0:
-                if v <= 10:
-                    out = '{:.2f} {}'.format(v, s)
-                elif 10 < v < 1000:
-                    out = '{:.1f} {}'.format(v, s)
-                elif v >= 1000:
-                    out = '{:.2e} {}'.format(v, s)
-                # else:
-                #     out = '{:.2e} {}'.format(v, s)
-        if out is None:
-            assert False, 'Issue in "pretty_half_life'
-
-        return out
+    def human_friendly_half_life(self, include_errors: bool=True) -> str:
+        return human_readable_half_life(self.half_life, include_errors)
 
     @property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
@@ -462,11 +572,11 @@ class Nuclide:
             return atomic_mass(ATOMIC_SYMBOL[z] + str(a))*c
 
     @property
-    def mass_in_mev_per_c2(self):
+    def mass_in_mev_per_c2(self) -> float:
         return self.rest_energy('MeV')
 
     @property
-    def atomic_mass(self):
+    def atomic_mass(self) -> float:
         try:
             return atomic_mass(self.name)
         except KeyError:
@@ -474,7 +584,7 @@ class Nuclide:
             return None
 
     @property
-    def grams_per_mole(self):
+    def grams_per_mole(self) -> float:
         try:
             return atomic_weight(self.name)
         except KeyError:
@@ -482,7 +592,7 @@ class Nuclide:
             return None
 
     @property
-    def isotopic_abundance(self):
+    def isotopic_abundance(self) -> float:
         _m = re.match('([A-Za-z]{1,2}[0-9]+)(?:m_[0-9]+)?', self.name)
         if _m:
             s = _m.groups()[0]
@@ -493,7 +603,8 @@ class Nuclide:
         return 0
 
     @property
-    def atomic_symbol(self):
+    def atomic_symbol(self) -> str:
+        """Atomic symbol according to the proton number of this isotope"""
         _m = re.match('([A-Za-z]{1,2}).+', self.name)
         if _m:
             return _m.groups()[0]
@@ -512,21 +623,40 @@ class Nuclide:
     def add_neutron(self) -> Nuclide:
         return self.from_Z_A_M(self.Z, self.A+1, self.isometric_state)
 
-    def is_heavy_FF(self):
+    def is_heavy_FF(self) -> bool:
         return 125 < self.A < 158
 
-    def is_light_FF(self):
+    def is_light_FF(self) -> bool:
         return 78 < self.A < 112
 
     @classmethod
-    def from_Z_A_M(cls, z, a, m=0) -> Nuclide:
+    def from_Z_A_M(cls, z: int, a: int, isometric_state: int = 0) -> Nuclide:
+        try:
+            z = int(z)
+        except ValueError:
+            assert False, 'Invalid value passed to `z` argument: "{}"'.format(z)
+
+        try:
+            a = int(a)
+        except ValueError:
+            assert False, 'Invalid value passed to `a` argument: "{}"'.format(a)
+
+        try:
+            isometric_state = int(isometric_state)
+        except ValueError:
+            if isinstance(isometric_state, str):
+                if len(isometric_state) == 0:
+                    isometric_state = 0
+                else:
+                    assert False, '\n`isometric_state` argument must be able to be converted into an integer,' \
+                                  ' not "{}"'.format(isometric_state)
         try:
             symbol = ATOMIC_SYMBOL[z]
         except KeyError:
-            assert False, "Invalid atomic number: {0}. Cant find atonic symbol".format(z)
+            assert False, "Invalid atomic number: {0}. Cant find atomic symbol".format(z)
         name = "{0}{1}".format(symbol, a)
-        if m != 0:
-            name += "_m" + str(m)
+        if isometric_state != 0:
+            name += "_m" + str(isometric_state)
         return cls.from_symbol(name)
 
     @classmethod
@@ -805,12 +935,17 @@ class Nuclide:
 
         return out
 
+    def is_effectively_stable(self, threshold_in_years=100):
+        return self.half_life.n >= (365*24*60**2)*threshold_in_years
+
     def __set_data_from_open_mc__(self, open_mc_decay):
         self.half_life = open_mc_decay.half_life
         self.mean_energies = open_mc_decay.average_energies
         self.spin = open_mc_decay.nuclide["spin"]
-        if isinf(self.half_life) or open_mc_decay.nuclide["stable"]:
+
+        if isinf(self.half_life.n) or open_mc_decay.nuclide["stable"]:
             self.is_stable = True
+            self.half_life = ufloat(np.inf, 0)
         else:
             self.is_stable = False
 
@@ -942,12 +1077,8 @@ dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
 
 
 if __name__ == "__main__":
-    # import time
-    # t0 = time.time()
-    # n = Nuclide.from_symbol('Np238')
-    # ergs, yield_ = n.independent_neutron_fission_yield_endf('Xe139')
-    xs = Nuclide.from_symbol('N14').get_incident_proton_daughters()['O14'].xs
-    xs.plot()
+    s = Nuclide.from_symbol('La144')
+    s.plot_decay_gamma_spectrum()
     plt.show()
 
 

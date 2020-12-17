@@ -75,6 +75,11 @@ class Spectrum:
 
         return out
 
+    def plot_energy_spectrum(self, ax=None):
+        hist = TH1F(bin_left_edges=self.discrete_ergs)
+        hist.Project(self.tree, 'erg', )
+        return hist.plot(ax)
+
     def save(self, title: str, path_to_dir: Union[str, Path]):
         """
         Save spectrum to disk for quick future use.
@@ -112,6 +117,7 @@ if __name__ == '__main__':
     # tree.MakeClass('gamma_spec')
 
     s = Spectrum.from_tree(tree, get_global_energy_bins(150), 20)
+    s.plot_energy_spectrum()
     plt.show()
 
 
