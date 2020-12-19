@@ -66,14 +66,16 @@ class TH1F:
                 self.__bin_left_edges__ = np.array(bin_left_edges, dtype=np.float)
 
             if title is None:
-                self.title = "hist{0}".format(TH1F.title_number)
+                title = "hist{0}".format(TH1F.title_number)
                 TH1F.title_number += 1
             else:
-                self.title = str(title)
+                title = str(title)
                 assert title not in TH1F.titles
 
             self.n_bins = len(self.__bin_left_edges__) - 1
-            self.__ROOT_hist__ = ROOT.TH1F(self.title, self.title, self.n_bins, self.__bin_left_edges__)
+            self.__ROOT_hist__ = ROOT.TH1F(title, title, self.n_bins, self.__bin_left_edges__)
+            self.title = title
+
         self.bin_centers = np.array(
             [0.5 * (b2 + b1) for b1, b2 in zip(self.__bin_left_edges__[:-1], self.__bin_left_edges__[1:])])
 
@@ -83,6 +85,15 @@ class TH1F:
         self.draw_expression = None
         self.cut = None
         self.draw_weight = None
+
+    @property
+    def title(self) -> str:
+        return self.__ROOT_hist__.GetTitle()
+
+    @title.setter
+    def title(self, title: str):
+        self.__ROOT_hist__.SetTitle(str(title))
+        return title
 
     @property
     def bin_width(self):
@@ -238,19 +249,19 @@ class TH1F:
 
     def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, **kwargs):
         if ax is None:
-            fig, ax = plt.subplots()
+            _, ax = plt.subplots()
         else:
-            fig = None
-        if ax is plt:
-            if logy:
-                ax.yscale(value='log')
-            if logx:
-                ax.xscale(value='log')
-        else:
-            if logy:
-                ax.set_yscale(value='log')
-            if logx:
-                ax.set_xscale(value='log')
+            if ax is plt:
+                ax = ax.gca()
+
+        if logy:
+            ax.set_yscale(value='log')
+        if logx:
+            ax.set_xscale(value='log')
+
+        if self.title is not None:
+            ax.set_title(self.title)
+
         if xmin is None:
             xmin = self.__bin_left_edges__[0]
         if xmax is None:
@@ -259,7 +270,7 @@ class TH1F:
 
         ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
                     yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
-        return fig, ax
+        return ax
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
         bin_start_stops = []
@@ -411,7 +422,8 @@ class TH1F:
         return self.__ROOT_hist__.FindBin(x) - 1
 
     def SetTitle(self, title):
-        self.__ROOT_hist__.SetTitle(title)
+
+        self.__ROOT_hist__.SetTitle(str(title))
 
     def GetTitle(self):
         return self.__ROOT_hist__.GetTitle()
@@ -607,6 +619,9 @@ class TH1F:
     def __abs__(self):
         self.__set_bin_values__(abs(self.bin_values))
         return self
+
+    def __repr__(self):
+        return '<TH1F object, title: "{}">'.format(self.title)
 
     def shift_left_or_right(self, value):
         new_bin_values = unp.uarray(np.zeros(len(self)), np.zeros(len(self)))

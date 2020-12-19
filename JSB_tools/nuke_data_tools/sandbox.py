@@ -9,13 +9,14 @@ from scipy.signal import find_peaks
 # hist = TH1F(bin_left_edges=get_global_energy_bins())
 # hist.Project(shot_group.tree, 'erg', weight='1.0/eff')
 # hist.plot(logy=False)
+from uncertainties import ufloat
 
 
 
-n = Nuclide.from_symbol('W184')
-# n = Nuclide.from_symbol('U238')
-n.proton_induced_fiss_xs.plot()
-plt.show()
+dx = 25E-4*(ufloat(1.35, 0.12)*1E11 + ufloat(0.506, 0.047)*1E11)
+atom_density = 4.79429E-02
+xs = Nuclide.from_symbol('U238').proton_induced_fiss_xs.interp(20)
+print(dx*atom_density*xs)
 
 
 #

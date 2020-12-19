@@ -12,6 +12,7 @@ from warnings import warn
 from uncertainties import ufloat, UFloat
 from uncertainties import unumpy as unp
 from uncertainties.umath import isinf, isnan
+from uncertainties import UFloat
 import uncertainties
 import marshal
 from functools import cached_property
@@ -198,7 +199,7 @@ class GammaLine:
         Rate [s^-1] of gammas with energy self.erg emitted per nuclide.
     """
         self.erg: uncertainties.UFloat = erg
-        self.intensity: uncertainties.UFloat = intensity
+        self.intensity: UFloat = intensity
         self.from_mode: DecayMode = from_mode
         self.intensity_thu_mode: uncertainties.UFloat = intensity_thu_mode
         self.absolute_rate: uncertainties.UFloat = nuclide.decay_constant*self.intensity
@@ -455,13 +456,14 @@ class Nuclide:
                                   log_scale=False, label=None):
         if len(self.decay_gamma_lines) == 0:
             warn('\nNo gamma lines for {}. No plot.'.format(self.name))
-            return None
+            return ax
 
         assert isinstance(label_first_n_lines, int)
         if ax is None:
-            fig, ax = plt.subplots()
+            _, ax = plt.subplots()
         else:
-            fig, ax = ax.gcf(), ax.gca()
+            if ax is plt:
+                ax = ax.gcf()
 
         if log_scale:
             ax.set_yscale('log')
@@ -479,7 +481,9 @@ class Nuclide:
 
                 y.append(g.intensity.n)
                 y_err.append(g.intensity.std_dev)
-
+        if len(y) == 0:
+            warn('\nNo gamma lines for {} above intensity threshold of `{}`. No plot.'.format(self.name, min_intensity))
+            return ax
 
         label_first_n_lines += 1
         label_first_n_lines = min(len(x), label_first_n_lines)
@@ -502,7 +506,7 @@ class Nuclide:
             ax.set_xlim(x[0] - 10, x[0] + 10)
         ax.set_ylim(0, max(y+y_err)*1.5)
 
-        return fig, ax
+        return ax
 
     @property
     def Z(self) -> int:
