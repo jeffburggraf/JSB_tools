@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pathlib import Path
 import re
 import warnings
@@ -9,14 +10,63 @@ from uncertainties import UFloat
 from numbers import Number
 from JSB_tools.TH1 import TH1F
 import sys
+import numpy as np
+from typing import Dict, List, Union
+from collections import OrderedDict
 
-# todo: Make Clean.py do a regex search natively
-
+o = OrderedDict()
+print(dir(o))
 
 class Cell:
-    def __init__(self, cell_num):
-        self.cell_num = cell_num
+    # cell_numbers_used: List[int] = []
+    # cell_names_used: List[str] = []
+    # auto_picked_cell_nums = []
+    all_cells: Dict[int, Cell] = {}
 
+    @staticmethod
+    def get_cell_number():
+        if len(Cell.all_cells) == 0:
+            return 10
+        else:
+            return Cell.__get_all_cell_numbers_sorted__()[-1] + 1
+
+    @staticmethod
+    def __get_all_cell_numbers_sorted__():
+        return list(sorted(Cell.all_cells.keys()))
+
+    @staticmethod
+    def __get_all_cell_names__():
+        return map(lambda x: x.name, Cell.all_cells.values())
+
+    def __init__(self, cell_name=None, cell_num=None):
+        if cell_num is not None:
+            self.__auto_cell_num__ = False
+            self.number = cell_num
+            if self.number in Cell.all_cells.keys():
+                # If a previously created cell was given a number automatically that conflicts with a
+                # number provided by the user, automatically reassign the number of the previously created cell.
+                conflict_cell = Cell.all_cells[self.number]
+                if conflict_cell.__auto_cell_num__:
+                    conflict_cell.number = Cell.get_cell_number()
+                    Cell.all_cells[conflict_cell.number] = conflict_cell
+                else:
+                    raise Exception('Cell number {} has already been used.'.format(self.number))
+
+        else:
+            self.number = self.get_cell_number()
+            self.__auto_cell_num__ = True
+
+        if cell_name is None:
+            self.name = 'cell {}'.format(self.number)
+        else:
+            self.name = cell_name
+            if cell_name in Cell.all_cells.values():
+                raise Exception('Cell name `{}` has already been used.'.format(self.name))
+
+        Cell.all_cells[self.number] = self
+
+    def __repr__(self):
+        return '<MCNP cell, name: "{}";  cell number: {}>'.format(self.name, self.number)
 
 class Cuboid(Cell):  # Todo: or not?
     def __init__(self, cell_num, xmin, xmax, ymin, ymax, zmin, zmax):
@@ -469,4 +519,11 @@ def __clean__(paths, warn_message):
 
 
 if __name__ == "__main__":
+    c = Cell('omg',cell_num=0)
+    c2 = Cell(cell_num=3)
+    c3 = Cell(cell_name='im cell 4 auto')
+    c3 = Cell(cell_name='im cell four demanded', cell_num=4)
+
+    c3 = Cell(cell_name=10)
+    print(Cell.all_cells)
     pass

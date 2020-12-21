@@ -29,29 +29,20 @@ __u_to_kg__ = 1.6605390666E-27  # atomic mass units to kg
 __speed_of_light__ = 299792458   # c in m/s
 
 
+
 #  Note to myself: Pickled nuclear data is on personal SSD
 #  Todo:
+#   * make cross section pulls be implemented in a nuike_data.cross_secion file. Let the endf to pickle also be
+#     implemented there
+#   * Make a Nuclide.fromreaction('parent_nuclide_name', inducing particle, daughter_nuclide_name )
+#   * Implement FissionProductYields object, similar to CrossSection1D
 #   * Add a custom exception, not AssertionError, when an unknown symbol is passed to Nuclide.
-#   * Investigate why some half-lives, such as Te-123, are 0 when they are in actuality very very long.
-#     Is this an artifact of openmc?
 #   * Add doc strings.
 #   * Add documentation, and exception messages, to explain where the data can be downloaded and how to regenerate
 #     the pickle files.
-#   * Add more  comments to document code.
-#   * Implement openmc.FissionProductYields
-#   * Any speed enhancements would be nice.
-#   * Use pyne to read latest ENDSFs and fill in some missing half lives via a pickle file.
-#     Then, read results into <additional_nuclide_data> variable.
-#   * Uncertainty in xs values for CrossSection1D.plot? xs values are ufloats
-#   * Find a way to include data files in the pip package
-#   * Xe134 shows a half-life of 0, when in fact it is very large. The ENDF file has thee correct half-life.
-#     Whats going on here?
-
-# p = '/Users/jeffreyburggraf/PycharmProjects/miscellaneous/data.zip'
-#
-# with ZipFile(p, 'r') as zip_ref:
-#     zip_ref.ext
-
+#   * Get rid of <additional_nuclide_data> functionality. too complex.
+#   * Why no uncertainty in xs values for CrossSection1D.plot? (some) xs values are ufloats. (no ufloat for PADF?)
+#   * Find a way to include data files in the pip package, maybe create a seperate reposity.
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
 PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
