@@ -11,8 +11,6 @@ from scipy.signal import find_peaks
 # hist.plot(logy=False)
 from uncertainties import ufloat
 
-
-
 dx = 25E-4*(ufloat(1.35, 0.12)*1E11 + ufloat(0.506, 0.047)*1E11)
 atom_density = 4.79429E-02
 xs = Nuclide.from_symbol('U238').proton_induced_fiss_xs.interp(20)
