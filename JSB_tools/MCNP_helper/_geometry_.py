@@ -104,6 +104,8 @@ from typing import Tuple, List, Dict, Union, Iterable, Sized
 
 
 class BinaryOperator:
+    n = 0
+
     def __init__(self, left, right, operator, compliment=1):
         self.left = left
         self.right = right
@@ -114,18 +116,34 @@ class BinaryOperator:
         else:
             self.__precedence__ = 1
 
+        self.__n__ = BinaryOperator.n
+        BinaryOperator.n += 1
+
+        self.use_parentheses = False
+        for thing in [self.left, self.right]:
+            if self.operator == 'and' and isinstance(thing, BinaryOperator):
+                if thing.operator == 'or' or thing.compliment == True:
+                    thing.use_parentheses = True
+
+        print('Call to init, operator: {}'.format(self.operator))
+        print('left: ', self.left, 'left type: ', type(self.left))
+        print('left: ', self.right, 'right type: ', type(self.right), '\n')
+        # print('left number: {}'.format(self.left.number if not isinstance(self.left, BinaryOperator) else None))
+        # print('Right number: {}'.format(self.right.number if not isinstance(self.right, (BinaryOperator, GeomSpecMixin)) else None))
+
     def __str__(self, verbose=False):
         left = str(self.left)
         right = str(self.right)
+        use_parentheses = False
 
         operator = ' ' if self.operator == 'and' else ' : '
 
-        if self.compliment == -1:
-            out = "# ({}{}{})".format(left, operator, right)
-        else:
-            use_parentheses = True
 
-            if use_parentheses:
+        if self.compliment == -1:
+            out = "#({}{}{})".format(left, operator, right)
+        else:
+
+            if self.use_parentheses:
                 out = "({}{}{})".format(left, operator, right)
             else:
                 out = "{}{}{}".format(left, operator, right)
@@ -149,32 +167,31 @@ class GeomSpecMixin:
     def __init__(self, number, init_type, compliment=1):
         self.compliment = compliment
         self.init_type = init_type
-        self.__number__ = number
+        if not hasattr(self, 'number'):
+            self.number = number
         self.__precedence__ = 0
 
     def __invert__(self):
         assert self.init_type == Cell,  '"~" operator can only be used on Cell instances, not Surface'
         assert isinstance(self, GeomSpecMixin)
-        return GeomSpecMixin(self.__number__, self.init_type, self.compliment * -1)
+        return GeomSpecMixin(self.number, self.init_type, self.compliment * -1)
 
     def __neg__(self):
-
         assert self.init_type == Surface, '"-" operator can only be used on Surface instances, not Cell'
         assert isinstance(self, GeomSpecMixin)
-        return GeomSpecMixin(self.__number__, self.init_type, self.compliment*-1)
+        return GeomSpecMixin(self.number, self.init_type, self.compliment*-1)
 
     def __str__(self, verbose=False):
-
         if self.init_type == Cell:
             assert isinstance(self, GeomSpecMixin)
             assert self.compliment == -1, '\nCell instance can only be used in geometry specification\nif a compliment' \
                                           ' operator precedes it, like with "cell_10"\nin the following valid ' \
                                           'example,\n\t>>>~cell_10 & -surf_1\n\t>>>#10 -1\nnot like in the following ' \
                                           'invalid example,\n\t>>>cell_10 & surf_1'
-            return '#{}'.format(self.__number__)
+            return '#{}'.format(self.number)
         elif self.init_type == Surface:
             assert isinstance(self, GeomSpecMixin)
-            return "{}{}".format("" if self.compliment == 1 else '-', self.__number__)
+            return "{}{}".format("" if self.compliment == 1 else '-', self.number)
         else:
             assert False, 'Invalid type: {}'.format(self.init_type)
 
@@ -204,12 +221,11 @@ surf1 = Surface(1)
 surf2 = Surface(2)
 surf3 = Surface(3)
 surf4 = Surface(4)
+surf5 = Surface(5)
 
 # s = ~cell1 | (surf1 & surf2)
-s2 = surf3 | surf4 | cell1
-'s2 ((#(#10 : 1) #(-2 : 4)) 3)'
+s2 = (-surf3 | surf4) & (~(~cell1 | surf4 & surf1) | surf5)
 # print(s)
-print('here')
-print('s2', s2)
+print(s2)
 # print('type(s): ', type(s))
 # print(type(str(s)))

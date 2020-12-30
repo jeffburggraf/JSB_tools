@@ -35,6 +35,108 @@ def get_rotation_matrix(theta, vx=0, vy=0, vz=1, _round=3):
     return out
 
 
+class BinaryOperator:
+    n = 0
+
+    def __init__(self, left, right, operator, compliment=1):
+        self.left = left
+        self.right = right
+        self.operator = operator
+        self.compliment = compliment
+        if operator == 'and':
+            self.__precedence__ = 0
+        else:
+            self.__precedence__ = 1
+
+        self.__n__ = BinaryOperator.n
+        BinaryOperator.n += 1
+
+        self.use_parentheses = False
+        for thing in [self.left, self.right]:
+            if self.operator == 'and' and isinstance(thing, BinaryOperator):
+                if thing.operator == 'or' or thing.compliment == True:
+                    thing.use_parentheses = True
+
+        print('Call to init, operator: {}'.format(self.operator))
+        print('left: ', self.left, 'left type: ', type(self.left))
+        print('left: ', self.right, 'right type: ', type(self.right), '\n')
+        # print('left number: {}'.format(self.left.number if not isinstance(self.left, BinaryOperator) else None))
+        # print('Right number: {}'.format(self.right.number if not isinstance(self.right, (BinaryOperator, GeomSpecMixin)) else None))
+
+    def __str__(self, verbose=False):
+        left = str(self.left)
+        right = str(self.right)
+
+        operator = ' ' if self.operator == 'and' else ' : '
+
+        if self.compliment == -1:
+            out = "#({}{}{})".format(left, operator, right)
+        else:
+
+            if self.use_parentheses:
+                out = "({}{}{})".format(left, operator, right)
+            else:
+                out = "{}{}{}".format(left, operator, right)
+
+        return out
+
+    def __and__(self, other):
+        return BinaryOperator(self, other, 'and')
+
+    def __or__(self, other):
+        return BinaryOperator(self, other, 'or')
+
+    def __invert__(self):
+        return BinaryOperator(self.left, self.right, self.operator, self.compliment * -1)
+
+    def __neg__(self):
+        return ~self
+
+
+class GeomSpecMixin:
+    def __init__(self, number, init_type, compliment=1):
+        self.compliment = compliment
+        self.init_type = init_type
+        if not hasattr(self, 'number'):
+            self.number = number
+
+    def __invert__(self):
+        assert self.init_type == Cell,  '"~" operator can only be used on Cell instances, not Surface'
+        assert isinstance(self, GeomSpecMixin)
+        print(self.number)
+        return GeomSpecMixin(self.number, self.init_type, self.compliment * -1)
+
+    def __neg__(self):
+        assert self.init_type == Surface or hasattr(self, 'surface'), '"-" operator can only be used on Surface instances, or single surface cells.'
+        if hasattr(self, 'surface'):
+            assert isinstance(self.surface, Surface)
+            number = self.surface.number
+        else:
+            number = self.number
+        assert isinstance(self, GeomSpecMixin)
+        return GeomSpecMixin(number, self.init_type, self.compliment*-1)
+
+    def __str__(self):
+        if self.init_type == Cell:
+            assert isinstance(self, GeomSpecMixin)
+            assert self.compliment == -1, '\nCell instance can only be used in geometry specification\nif a compliment' \
+                                          ' operator precedes it, like with "cell_10"\nin the following valid ' \
+                                          'example,\n\t>>>~cell_10 & -surf_1\n\t>>>#10 -1\nnot like in the following ' \
+                                          'invalid example,\n\t>>>cell_10 & -surf_1'
+            return '#{}'.format(self.number)
+        elif self.init_type == Surface:
+            assert isinstance(self, GeomSpecMixin)
+            return "{}{}".format("" if self.compliment == 1 else '-', self.number)
+        else:
+            assert False, 'Invalid type: {}'.format(self.init_type)
+
+    def __and__(self, other):
+        return BinaryOperator(self, other, 'and')
+
+    def __or__(self, other):
+        return BinaryOperator(self, other, 'or')
+
+
 class MCNPNumberMapping(dict):
     """Used for automatically assigning numbers to MCNP cells and surfaces. """
 
@@ -76,7 +178,9 @@ class MCNPNumberMapping(dict):
             number = self.get_number_auto()
 
         super(MCNPNumberMapping, self).__setitem__(number, item)  # re-assign current cell to number
+        # item.__number__ = number
         item.__number__ = number
+        # print('Settting number of {} to {} '.format(item, ))
         if isinstance(item.name, str):
             assert len(item.name) > 0, 'Blank name used in {} {}'.format(self.class_name, item)
         if item.name is not None:
@@ -99,23 +203,26 @@ def __get_comment__(comment, name):
     return return_comment
 
 
-class Surface(ABC, GeomSpec):
+class Surface(ABC, GeomSpecMixin):
     all_surfs: MCNPNumberMapping = MCNPNumberMapping('Surface', 1)
 
     def __init__(self, surf_name=None, surf_num=None, comment=None):
         self.name = surf_name
         self.number = surf_num
-        super().__init__(self)
 
         self.comment = comment
         Surface.all_surfs[surf_num] = self
+        super().__init__(self, Surface)
 
     @abstractmethod
     def surface_card(self):
         pass
 
+    def __str__(self):
+        return self.surface_card
 
-class CuboidSurface(Surface, GeomSpec):
+
+class CuboidSurface(Surface):
     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax, surf_name=None, surf_num=None, comment=None):
         super(CuboidSurface, self).__init__(surf_name, surf_num, comment)
         self.xmin = xmin
@@ -137,7 +244,7 @@ class CuboidSurface(Surface, GeomSpec):
                     zmax=self.zmax, comment=comment)
 
 
-class Cell(ABC, GeomSpec):
+class Cell(ABC, GeomSpecMixin):
     all_cells: MCNPNumberMapping = MCNPNumberMapping('Cell', 10)
 
     def __init__(self,
@@ -152,8 +259,9 @@ class Cell(ABC, GeomSpec):
         if self.name is not None:
             assert isinstance(self.name, str)
         self.number = cell_num
-        super().__init__(self)
         Cell.all_cells[cell_num] = self
+        super().__init__(self, Cell)
+
         self.density = density
         if isinstance(self.density, float):
             self.density = abs(self.density)
@@ -179,7 +287,7 @@ class Cell(ABC, GeomSpec):
     def set_void(self):
         self.density = 0
 
-    def set_geometry(self, obj):
+    def set_geometry(self, obj: GeomSpecMixin):
         self.__geom_spec__ = str(obj)
 
     @abstractmethod
@@ -206,7 +314,7 @@ class Cell(ABC, GeomSpec):
         return out + comment
 
     def __repr__(self):
-        return '<MCNP cell, name: "{}";  cell number: {}>'.format(self.name, self.number)
+        return '<MCNP cell. name: "{}";  cell number: {}>'.format(self.name, self.number)
 
 
 class CuboidCell(Cell):
@@ -268,38 +376,11 @@ class CuboidCell(Cell):
         return out
 
 
-
-
-
 if __name__ == '__main__':
-    def test_geom_spec():
-        cell1 = CellSpec(89)
-        surf1 = SurfaceSpec(1)
-        surf2 = SurfaceSpec(2)
-        surf3 = SurfaceSpec(3)
-
-        s1 = ~cell1 & surf1 & surf2
-        s2 = ~cell1 | surf1 & surf2
-        print(s1)
-        print(s2)
     c1 = CuboidCell.from_coordinates(-1,1, -1,1 ,-1,1, (1, 'np'), 1000 )
     c99 = CuboidCell.from_coordinates(-10,10, -10,10 ,-10,10, (1, 'np'), 1000)
-    c1.set_geometry(c1 & ~c2)
-
-    c2 = c1.offset([1,0, 0])
-
-
-
-    # c0 = CuboidCell.from_coordinates(-1,1, -1,1 ,-1,1, (1, 'np'), material=1000, density=1.2, cell_comment=None, cell_num=13, cell_name='c',
-    #                                 surf_comment='fuck', surf_name='surf camsd')
-    # c2 = c.copy()
-    # c2.offset([1,1,1])
-    #
-    #
-    # for k, v in Cell.all_cells.items():
-    #     print(k, v, '\n',v.cell_card)
-    #
-    # for k, v in Surface.all_surfs.items():
-    #     print(k, v, '\n', v.surface_card)
+    c2 = Cell((1, 'np'), 1000, 10)
+    c2.set_geometry(~c1 )
+    print(~c1 & ~c99)
 
 
