@@ -3,14 +3,10 @@ from JSB_tools.MCNP_helper.geometry.__init__ import Cell, Surface, TRCL
 from JSB_tools.MCNP_helper.geometry.__init__ import get_comment
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 
-
-
-
-
-# class LikeButCell(Cell):
-#     def like_but(self, trcl: TRCL = None, material=None, density=None, geometry=None, importance=None):
-#         'RHO -> density'
-#         if density is None:
+"""
+For the creation of surfaces and cells in MCNP. Cell/surface numbers can be managed automatically, 
+or manually specified.
+"""
 
 
 class CuboidSurface(Surface):
@@ -38,12 +34,46 @@ class CuboidSurface(Surface):
 
 
 class CuboidCell(Cell, CuboidSurface):
+    """
+    Examples:
+        c1 = CuboidCell(0, 1, 0, 1, 0, 1, importance=('np', 1))  # A void cuboid cell from (0,0,0) to (1,1,1)
+
+        c1.cell_card  # string of the cell card
+
+        c1.surface_card  # string of the surface card
+
+
+        # You can also specify density and material
+
+        c2 = CuboidCell(0, 1, 0, 1, 0, 1, importance=('np', 1), density=1, material=1000)
+
+    """
     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax,
-                 importance: Tuple[str, int], material=0,
-                 density=None, cell_name=None,
-                 cell_num=None, cell_comment=None,
-                 surf_name=None, surf_number=None,
-                 surf_comment=None, cell_kwargs=None):
+                 importance: Tuple[str, int], material: int = 0,
+                 density: float = None, cell_name: str = None,
+                 cell_num: int = None, cell_comment: str = None,
+                 surf_name: str = None, surf_number: int = None,
+                 surf_comment: str = None, cell_kwargs=None):
+        """
+        Args:
+            xmin:  min x
+            xmax: max x
+            ymin: etc...
+            ymax: ...
+            zmin: ...
+            zmax: ...
+            importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
+            material: MCNP material number
+            density:  Density in g/cm3
+            cell_name:  For use in outpreader.py for looking up cell and tallies by name.
+            cell_num: Cell number. If None, automatically choose a cell number.
+            cell_comment: Comment for cell
+            surf_name:
+            surf_number:
+            surf_comment:
+            cell_kwargs:  Additional keyword arguments to be used in cell card, i.g. vol=1
+        """
+
         if cell_name is not None:
             if surf_name is None:
                 surf_name = cell_name
@@ -58,7 +88,7 @@ class CuboidCell(Cell, CuboidSurface):
              cell_number=cell_num,
              cell_name=cell_name,
              cell_comment=cell_comment,
-             mcnp_kwargs=cell_kwargs
+             cell_kwargs=cell_kwargs
              )
         super(Cell, self).__init__(xmin, xmax, ymin, ymax, zmin, zmax, surf_name=surf_name, surf_num=surf_number,
                                    comment=surf_comment)
@@ -70,13 +100,20 @@ class CuboidCell(Cell, CuboidSurface):
         pass
 
     def offset(self, offset_vector: Sized[float]):
-        #  Todo: use like but here (if all changes are none)!
+        """
+        Offsets the current cell. Does not create another cell! Use CuboidCell.like_but for that.
+        Args:
+            offset_vector: Vector defining the translation.
+
+        Returns: None
+
+        """
 
         assert isinstance(offset_vector, Iterable)
         assert hasattr(offset_vector, '__len__')
         assert len(offset_vector) == 3
 
-        self.mcnp_kwargs['trcl'] = '({} {} {})'.format(*offset_vector)
+        self.cell_kwargs['trcl'] = '({} {} {})'.format(*offset_vector)
 
     @property
     def volume(self):
@@ -100,3 +137,4 @@ c99 = CuboidCell(0, 1, 0, 1, 0, 1, ('np', 1))
 print(-0 == 0)
 print(c3.cell_card)
 print(c1 | ~(c2 & (-c99 | c1)), 'ggg ')
+print(1.0==1)

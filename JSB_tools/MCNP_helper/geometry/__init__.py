@@ -111,27 +111,27 @@ class Surface(ABC, GeomSpecMixin):
     def surface_card(self):
         pass
 
-
-class CuboidSurface(Surface):
-    def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax, surf_name=None, surf_num=None, comment=None):
-        super(CuboidSurface, self).__init__(surf_name, surf_num, comment)
-        self.xmin = xmin
-        self.xmax = xmax
-        self.ymin = ymin
-        self.ymax = ymax
-        self.zmin = zmin
-        self.zmax = zmax
-
-    @property
-    def volume(self):
-        return (self.xmax - self.xmin) * (self.ymax - self.ymin) * (self.zmax - self.zmin)
-
-    @property
-    def surface_card(self):
-        comment = get_comment(self.surface_comment, self.surface_name)
-        return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
-            .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=self.zmin,
-                    zmax=self.zmax, comment=comment)
+#
+# class CuboidSurface(Surface):
+#     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax, surf_name=None, surf_num=None, comment=None):
+#         super(CuboidSurface, self).__init__(surf_name, surf_num, comment)
+#         self.xmin = xmin
+#         self.xmax = xmax
+#         self.ymin = ymin
+#         self.ymax = ymax
+#         self.zmin = zmin
+#         self.zmax = zmax
+#
+#     @property
+#     def volume(self):
+#         return (self.xmax - self.xmin) * (self.ymax - self.ymin) * (self.zmax - self.zmin)
+#
+#     @property
+#     def surface_card(self):
+#         comment = get_comment(self.surface_comment, self.surface_name)
+#         return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
+#             .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=self.zmin,
+#                     zmax=self.zmax, comment=comment)
 
 
 class TRCL:
@@ -155,6 +155,12 @@ class TRCL:
 
 
 class Cell(GeomSpecMixin):
+    """
+    Methods:
+        cell_card: Property returning the cell card.
+        surface_card: Property returning the surface card
+        like_but: Create a new cell using MCNP's LIKE BUT feature.
+    """
     all_cells = MCNPNumberMapping('Cell', 10)
 
     def __init__(self, importance: Tuple[str, int],
@@ -164,7 +170,17 @@ class Cell(GeomSpecMixin):
                  cell_number:  float = None,
                  cell_name: Union[str, None] = None,
                  cell_comment: Union[str, type(None)] = None,
-                 mcnp_kwargs: Dict = None):
+                 cell_kwargs: Dict = None):
+        """
+        Args:
+            importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
+            material: MCNP material number
+            density:  Density in g/cm3
+            cell_name:  Name tagging for use in outpreader.py for looking up cells, surfaces, and tallies by name.
+            cell_number: Cell number. If None, automatically choose a cell number.
+            cell_comment: Comment for cell
+            cell_kwargs:  Additional keyword arguments to be used in cell card, i.g. vol=1
+        """
         self.__name__ = cell_name
         self.cell_number = cell_number
         self.importance = importance
@@ -172,10 +188,10 @@ class Cell(GeomSpecMixin):
         self.geometry = None
         self.density = density
         self.geometry = geometry
-        if mcnp_kwargs is not None:
-            self.mcnp_kwargs = mcnp_kwargs
+        if cell_kwargs is not None:
+            self.cell_kwargs = cell_kwargs
         else:
-            self.mcnp_kwargs = {}
+            self.cell_kwargs = {}
         self.cell_comment = cell_comment
         Cell.all_cells[cell_number] = self
         GeomSpecMixin.__init__(self)
@@ -186,14 +202,33 @@ class Cell(GeomSpecMixin):
     def cell_name(self) -> str:
         return self.__name__
 
-    def like_but(self, importance: Tuple[str, int]=None,
-                 material: int = 0,
+    def like_but(self, trcl: TRCL,
+                 importance: Tuple[str, int] = None,
+                 material: int = None,
                  density: Union[float, type(None)] = None,
                  cell_number:  float = None,
                  cell_name: Union[str, None] = None,
                  cell_comment: Union[str, type(None)] = None,
-                 trcl: TRCL = None) -> Cell:
+                 ) -> Cell:
+        """
+        Create a new cell using MCNP's LIKE BUT feature. Leave an arg as None to keep it the same.
+        Args:
+            trcl:  An instance of the TRCL class. Translated and rotates cell.
+            importance: new cell importance
+            material: new cell material number
+            density:  new cell density
+            cell_number:  new cell number (leave None for automatic)
+            cell_name:  new cell name
+            cell_comment:  New cell's comment
+
+        Returns:
+            Cell: new cell identical to original except for some select changes.
+
+        """
         like_but_kwargs = {}
+        if importance == density == material == trcl:
+            assert False, "Like but used, but no changes were made (all args were None)"
+
         if density is None:
             density = self.density
         else:
@@ -209,8 +244,8 @@ class Cell(GeomSpecMixin):
         else:
             like_but_kwargs['MAT'] = material
 
-        if trcl is not None:
-            like_but_kwargs['TRCL'] = str(trcl)
+        assert isinstance(trcl, TRCL)
+        like_but_kwargs['TRCL'] = str(trcl)
 
         new_cell = Cell(importance=importance, material=material, density=density, geometry=None,
                         cell_number=cell_number, cell_name=cell_name, cell_comment=cell_comment)
@@ -245,7 +280,7 @@ class Cell(GeomSpecMixin):
         if self.geometry is None:
             warn('Cell card of cell {} was accessed with out specifying geometry.')
         out += ' {} {}'.format(self.geometry, imp)
-        for key, arg in self.mcnp_kwargs.items():
+        for key, arg in self.cell_kwargs.items():
             out += ' {}={}'.format(key, arg)
         comment = get_comment(self.cell_comment, self.cell_name)
         return out + comment
