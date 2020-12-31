@@ -1,5 +1,5 @@
 from __future__ import annotations
-from JSB_tools.MCNP_helper.geometry.__init__ import Cell, Surface
+from JSB_tools.MCNP_helper.geometry.__init__ import Cell, Surface, TRCL
 from JSB_tools.MCNP_helper.geometry.__init__ import get_comment
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 
@@ -87,10 +87,16 @@ class CuboidCell(Cell, CuboidSurface):
         out = super(CuboidCell, self).cell_card
         return out
 
-c1 = CuboidCell(0,1, 0,1, 0,1, ('np', 1), cell_num=10000, surf_comment='omg', surf_name='i am a surface ane')
-c2 = CuboidCell(0,1, 0,1, 0,1, ('np', 1), cell_num=2)
-c99 = CuboidCell(0,1, 0,1, 0,1, ('np', 1))
 
-print(c1.surface_card)
-print(c1.cell_card)
+c1 = CuboidCell(0, 1, 0, 1, 0, 1, ('np', 1), cell_num=10000, surf_comment='omg', surf_name='i am a surface ane')
+c2 = CuboidCell(0, 1, 0, 1, 0, 1, ('np', 1), cell_num=2)
+c3 = c2.like_but(trcl=TRCL([1,1,0], rotation_theta = 180))
+
+c99 = CuboidCell(0, 1, 0, 1, 0, 1, ('np', 1))
+
+# print(c1.surface_card)
+# print(c1.cell_card)
+
+print(-0 == 0)
+print(c3.cell_card)
 print(c1 | ~(c2 & (-c99 | c1)), 'ggg ')

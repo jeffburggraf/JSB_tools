@@ -1,6 +1,19 @@
 import numpy as np
 
 
+# list(list(-(((-1 + vz ** 2) * (1 - vy ** 2 - vz ** 2 + (vy ** 2 + vz ** 2) * np.cos((np.pi * theta) / 180.))) / (
+#             vx ** 2 + vy ** 2)),
+#           -(vx * vy * (-1 + np.cos((np.pi * theta) / 180.))) - vz * np.sin((np.pi * theta) / 180.),
+#           -(vx * vz * (-1 + np.cos((np.pi * theta) / 180.))) + vy * np.sin((np.pi * theta) / 180.)),
+#      list(-(vx * vy * (-1 + np.cos((np.pi * theta) / 180.))) + vz * np.sin((np.pi * theta) / 180.),
+#           vy ** 2 - (-1 + vy ** 2) * np.cos((np.pi * theta) / 180.),
+#           ((-1 + vz ** 2) * (vy * vz * (-1 + np.cos((np.pi * theta) / 180.)) + vx * np.sin((np.pi * theta) / 180.))) / (
+#                       vx ** 2 + vy ** 2)),
+#      list(-(vx * vz * (-1 + np.cos((np.pi * theta) / 180.))) - vy * np.sin((np.pi * theta) / 180.),
+#           vy * vz - vy * vz * np.cos((np.pi * theta) / 180.) + vx * np.sin((np.pi * theta) / 180.),
+#           vz ** 2 - (-1 + vz ** 2) * np.cos((np.pi * theta) / 180.)))
+
+
 def get_rotation_matrix(theta, vx=0, vy=0, vz=1, _round=3):
     """Return the rotation matrix for a rotation around an arbitrary axis. theta is in degrees.
 
@@ -8,26 +21,25 @@ def get_rotation_matrix(theta, vx=0, vy=0, vz=1, _round=3):
     v = np.array([vx, vy, vz], dtype=float)
     v /= np.linalg.norm(v)
     vx, vy, vz = v
-    out = [[((-1 + vz ** 2) * (-1 + vy ** 2 + vz ** 2) * (
-            1 - vy ** 2 - vz ** 2 + (vy ** 2 + vz ** 2) * np.cos((np.pi * theta) / 180.))) / (
-            vx ** 2 * (vx ** 2 + vy ** 2)), (
-            -(vy * (-1 + vy ** 2 + vz ** 2)) + vy * (-1 + vy ** 2 + vz ** 2) * np.cos(
-            (np.pi * theta) / 180.) - vx * vz * np.sin((np.pi * theta) / 180.)) / vx, (
-            -(vz * (-1 + vy ** 2 + vz ** 2)) + vz * (-1 + vy ** 2 + vz ** 2) * np.cos(
-            (np.pi * theta) / 180.) + vx * vy * np.sin((np.pi * theta) / 180.)) / vx], [(-(
-            vy * (-1 + vy ** 2 + vz ** 2)) + vy * (-1 + vy ** 2 + vz ** 2) * np.cos(
-            (np.pi * theta) / 180.) + vx * vz * np.sin((np.pi * theta) / 180.)) / vx, vy ** 2 - (-1 + vy ** 2) * np.cos(
-            (np.pi * theta) / 180.), ((-1 + vz ** 2) * (
-            vy * vz * (-1 + np.cos((np.pi * theta) / 180.)) + vx * np.sin((np.pi * theta) / 180.))) / (
-            vx ** 2 + vy ** 2)],
-            [(-(vz * (-1 + vy ** 2 + vz ** 2)) + vz * (-1 + vy ** 2 + vz ** 2) * np.cos(
-            (np.pi * theta) / 180.) - vx * vy * np.sin((np.pi * theta) / 180.)) / vx,
-            vy * vz - vy * vz * np.cos((np.pi * theta) / 180.) - (
-            (-1 + vy ** 2 + vz ** 2) * np.sin((np.pi * theta) / 180.)) / vx,
-            vz ** 2 - (-1 + vz ** 2) * np.cos((np.pi * theta) / 180.)]]
+
+    out = list([list([vx ** 2 + (vy ** 2 + vz ** 2) * np.cos((np.pi * theta) / 180.),
+                      vx * vy - vx * vy * np.cos((np.pi * theta) / 180.) - vz * np.sqrt(
+                          vx ** 2 + vy ** 2 + vz ** 2) * np.sin((np.pi * theta) / 180.),
+                      vx * vz - vx * vz * np.cos((np.pi * theta) / 180.) + vy * np.sqrt(
+                          vx ** 2 + vy ** 2 + vz ** 2) * np.sin((np.pi * theta) / 180.)]), list([
+        vx * vy - vx * vy * np.cos((np.pi * theta) / 180.) + vz * np.sqrt(vx ** 2 + vy ** 2 + vz ** 2) * np.sin(
+            (np.pi * theta) / 180.), vy ** 2 + (vx ** 2 + vz ** 2) * np.cos((np.pi * theta) / 180.),
+        vy * vz - vy * vz * np.cos((np.pi * theta) / 180.) - vx * np.sqrt(vx ** 2 + vy ** 2 + vz ** 2) * np.sin(
+            (np.pi * theta) / 180.)]), list([
+        vx * vz - vx * vz * np.cos((np.pi * theta) / 180.) - vy * np.sqrt(vx ** 2 + vy ** 2 + vz ** 2) * np.sin(
+            (np.pi * theta) / 180.),
+        vy * vz - vy * vz * np.cos((np.pi * theta) / 180.) + vx * np.sqrt(vx ** 2 + vy ** 2 + vz ** 2) * np.sin(
+            (np.pi * theta) / 180.), vz ** 2 + (vx ** 2 + vy ** 2) * np.cos((np.pi * theta) / 180.)])])
     for i in [0, 1, 2]:
         for j in [0, 1, 2]:
             out[i][j] = round(out[i][j], _round)
+            if out[i][j] == 0.0:
+                out[i][j] = 0
     return out
 
 
@@ -118,7 +130,7 @@ class GeomSpecMixin:
 
         else:
             assert self.__cell_number is not None
-            assert self.compliment == -1, '\nCell instance can only be used in geometry specification\nif a compliment'\
+            assert self.compliment == -1, '\nCell instance can only be used in geometry specification\nif a compliment' \
                                           ' operator precedes it, like with "cell_10"\nin the following valid ' \
                                           'example,\n\t>>>~cell_10 & -surf_1\n\t>>>#10 -1\nand not like in the' \
                                           ' following, invalid example:\n\t>>>cell_10 & -surf_1'
@@ -132,4 +144,3 @@ class GeomSpecMixin:
 
     def __str__(self):
         return self.__to_str__()
-

@@ -6,6 +6,7 @@ from warnings import warn
 from numbers import Number
 import numpy as np
 
+
 class MCNPNumberMapping(dict):
     """Used for automatically assigning numbers to MCNP cells and surfaces. """
 
@@ -179,13 +180,13 @@ class Cell(GeomSpecMixin):
         Cell.all_cells[cell_number] = self
         GeomSpecMixin.__init__(self)
         self.__like_but_kwargs__ = {}
-        self.like_but_number = None
+        self.__like_but_number__ = None
 
     @property
     def cell_name(self) -> str:
         return self.__name__
 
-    def like_but(self, importance: Tuple[str, int],
+    def like_but(self, importance: Tuple[str, int]=None,
                  material: int = 0,
                  density: Union[float, type(None)] = None,
                  cell_number:  float = None,
@@ -214,15 +215,15 @@ class Cell(GeomSpecMixin):
         new_cell = Cell(importance=importance, material=material, density=density, geometry=None,
                         cell_number=cell_number, cell_name=cell_name, cell_comment=cell_comment)
         new_cell.__like_but_kwargs__ = like_but_kwargs
-        new_cell.like_but_number = self.cell_number
+        new_cell.__like_but_number__ = self.cell_number
         return new_cell
 
     def __build_like_but_cell_card__(self):
-        assert self.like_but_number is not None
+        assert self.__like_but_number__ is not None
         assert len(self.__like_but_kwargs__) != 0
         kwargs = ['{} = {}'.format(k, v) for k, v in self.__like_but_kwargs__.items()]
         kwargs = ' '.join(kwargs)
-        return 'LIKE {} BUT {}'.format(self.like_but_number, kwargs)
+        return 'LIKE {} BUT {}'.format(self.__like_but_number__, kwargs)
 
     def __get_imp_str__(self, imp=None):
 
