@@ -9,6 +9,7 @@ import numpy as np
 import time
 from numbers import Number
 
+
 class ProgressReport:
     def __init__(self, i_final, sec_per_print=2, i_init=0):
         self.__i_final__ = i_final

@@ -86,7 +86,7 @@ class BinaryOperator:
 
 class GeomSpecMixin:
     def __init__(self, surf_number=None, cell_number=None, __compliment__=1):
-        self.compliment = __compliment__
+        self.__compliment = __compliment__
         if not hasattr(self, 'surface_number'):
             self.__surface_number = surf_number
         else:
@@ -99,25 +99,25 @@ class GeomSpecMixin:
 
     def __invert__(self):
         assert self.__cell_number is not None, 'Compliment operator, "~", can only be used on cell instances.'
-        return GeomSpecMixin(None, self.__cell_number, self.compliment * -1)
+        return GeomSpecMixin(None, self.__cell_number, self.__compliment * -1)
 
     def __neg__(self):
         assert self.__surface_number is not None, 'negative operator, "-", can only be used on surface instances.'
-        return GeomSpecMixin(self.__surface_number, None, self.compliment * -1)
+        return GeomSpecMixin(self.__surface_number, None, self.__compliment * -1)
 
     def __pos__(self):
         assert self.__surface_number is not None, 'The (optional) positive operator, "+", can only be used on ' \
                                                   'surface instances.'
-        return GeomSpecMixin(self.__surface_number, None, self.compliment)
+        return GeomSpecMixin(self.__surface_number, None, self.__compliment)
 
     def __to_str__(self):
         if self.__surface_number is not None:
 
-            return "{}{}".format("" if self.compliment == 1 else '-', self.__surface_number)
+            return "{}{}".format("" if self.__compliment == 1 else '-', self.__surface_number)
 
         else:
             assert self.__cell_number is not None
-            assert self.compliment == -1, '\nCell instance can only be used in geometry specification\nif a compliment' \
+            assert self.__compliment == -1, '\nCell instance can only be used in geometry specification\nif a compliment' \
                                           ' operator precedes it, like with "cell_10"\nin the following valid ' \
                                           'example,\n\t>>>~cell_10 & -surf_1\n\t>>>#10 -1\nand not like in the' \
                                           ' following, invalid example:\n\t>>>cell_10 & -surf_1'

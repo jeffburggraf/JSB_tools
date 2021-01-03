@@ -152,11 +152,11 @@ class MCNPSICard:
         pass
 
 
-class InputFile:
+class InputDeck:
     def __init__(self, *args, **kwargs):
         assert '__internal__' in kwargs, '\nTo create an input file, use one of the two factory methods:\n' \
-                                         '\tInputFile.mcnp_input_deck(*args, **kwargs)\n' \
-                                         '\tInputFile.phits_input_deck(*args, **kwargs)'
+                                         '\tInputDeck.mcnp_input_deck(*args, **kwargs)\n' \
+                                         '\tInputDeck.phits_input_deck(*args, **kwargs)'
         assert "inp_file_path" in kwargs, "Must supply 'inp_file_path' keyword argument."
         self.inp_file_path = Path(kwargs["inp_file_path"])
         assert self.inp_file_path.exists(), "Cannot find input deck:\n{0}".format(self.inp_file_path)
@@ -414,17 +414,17 @@ class InputFile:
             print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
         else:
             warnings.warn('\nTo evaluate and write input file use\n\ti.write_inp_in_scope(globals(), [optional args])\n'
-                          'where `i` is an InputFile instance.')
+                          'where `i` is an InputDeck instance.')
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
                         warn_msg_in_cleanpy=True):
-        return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
+        return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy)
 
     @classmethod
     def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
-        return InputFile(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
+        return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=False, __internal__=True)
 
 
