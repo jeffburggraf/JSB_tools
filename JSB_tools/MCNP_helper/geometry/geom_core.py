@@ -5,81 +5,8 @@ from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import get_rotation_matrix,
 from warnings import warn
 from numbers import Number
 import numpy as np
-
-
-class MCNPNumberMapping(dict):
-    """Used for automatically assigning numbers to MCNP cells and surfaces. """
-
-    def __init__(self, class_name, starting_number: int, step=1):
-        self.step = step
-        self.class_name: type = class_name
-        self.starting_number: int = starting_number
-        super(MCNPNumberMapping, self).__init__()  # initialize empty dict
-        self.__auto_picked_numbers__ = []  # numbers that have been chosen automatically.
-
-    def number_getter(self, item):
-        if self.class_name == 'Cell':
-            return getattr(item, 'cell_number')
-        elif self.class_name == 'Surface':
-            return getattr(item, 'surface_number')
-        elif self.class_name == 'F4Tally':
-            return getattr(item, 'tally_number')
-        elif self.class_name == 'Material':
-            return getattr(item, 'mat_number')
-        else:
-            assert False
-
-    def number_setter(self, item, num):
-        if self.class_name == 'Cell':
-            return setattr(item, 'cell_number', num)
-        elif self.class_name == 'Surface':
-            return setattr(item, 'surface_number', num)
-        elif self.class_name == 'F4Tally':
-            return setattr(item, 'tally_number', num)
-        else:
-            assert False
-
-    def get_number_auto(self):
-        if len(self) == 0:
-            num = self.starting_number
-        else:
-            num = list(sorted(self.keys()))[-1] + self.step
-
-        self.__auto_picked_numbers__.append(num)
-        return num
-
-    def names_used(self):
-        return [o.__name__ for o in self.values() if o.__name__ is not None]
-
-    def __setitem__(self, number, item):
-        assert isinstance(number, (int, type(None))), '{} number must be an integer'.format(self.class_name)
-
-        if isinstance(item.__name__, str):
-            assert len(item.__name__) > 0, 'Blank name used in {} {}'.format(self.class_name, item)
-        if item.__name__ is not None:
-            if item.__name__ in self.names_used():
-                raise Exception('{} name `{}` has already been used.'.format(self.class_name, item.__name__))
-        else:
-            item.__name__ = None
-
-        if number is not None:  # do not pick number automatically
-            if number in self.keys():  # there is a numbering conflict, not allowed in MCNP. Try to resolve conflict
-                conflicting_item = self[number]  # Item with numbering conflict.
-                if number in self.__auto_picked_numbers__:  # Can we fix the numbering conflict by changing a number?
-                    # Yes, we can, because the conflicting instance's number was not user chosen, but this one was.
-                    self.__auto_picked_numbers__.remove(number)
-                    new_number = self.get_number_auto()
-                    self[new_number] = conflicting_item  # re-assign old cell to new number, resolving the conflict
-                    self.number_setter(conflicting_item, new_number)  # change
-
-                else:  # cannot fix the numbering conflict, raise an Exception
-                    raise Exception('{} number {} has already been used (by {})'.format(self.class_name, number,
-                                                                                        conflicting_item))
-        else:
-            number = self.get_number_auto()
-
-        super(MCNPNumberMapping, self).__setitem__(number, item)  # re-assign current cell to number
-        self.number_setter(item, number)  # set the cell or surf instance's number attribute to the correct value
+from JSB_tools.MCNP_helper.materials import Material
+from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping
 
 
 def get_comment(comment, name):
@@ -241,7 +168,7 @@ class Cell(GeomSpecMixin):
     all_cells = MCNPNumberMapping('Cell', 10)
 
     def __init__(self, importance: Tuple[str, int],
-                 material: int = 0,
+                 material: Union[int, Material] = 0,
                  density: Union[float, type(None)] = None,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
                  cell_number:  float = None,
@@ -263,7 +190,13 @@ class Cell(GeomSpecMixin):
         self.importance = importance
         self.material = material
         self.geometry = None
-        self.density = density
+        if isinstance(self.material, Material):
+            if density is not None:
+                warn('Material instances passed to `material` argument along with a `density`.\n'
+                     'Using density from the Material object, and ignoring the `density` argument.')
+            self.density = material.density
+        else:
+            self.density = density
         self.geometry = geometry
         if cell_kwargs is not None:
             self.cell_kwargs = cell_kwargs
@@ -302,7 +235,7 @@ class Cell(GeomSpecMixin):
 
     def like_but(self, trcl: TRCL,
                  importance: Tuple[str, int] = None,
-                 material: int = None,
+                 material: Union[int, Material] = None,
                  density: Union[float, type(None)] = None,
                  cell_number:  float = None,
                  cell_name: Union[str, None] = None,
@@ -313,7 +246,7 @@ class Cell(GeomSpecMixin):
         Args:
             trcl:  An instance of the TRCL class. Translated and rotates cell.
             importance: new cell importance
-            material: new cell material number
+            material: new cell material number or a JSB_tools.MCNP_helper.materials.Material instance.
             density:  new cell density
             cell_number:  new cell number (leave None for automatic)
             cell_name:  new cell name
@@ -324,8 +257,20 @@ class Cell(GeomSpecMixin):
 
         """
         like_but_kwargs = {}
-        if importance == density == material == trcl:
+        if importance is density is material is trcl is None:
             assert False, "Like but used, but no changes were made (all args were None)"
+
+        if material is None:
+            material = self.material
+        else:
+            if isinstance(material, Material):
+                density = material.density
+                like_but_kwargs['MAT'] = material.mat_number
+            else:
+                assert isinstance(material, (str, int))
+                if isinstance(material, str):
+                    material = int(material)
+                like_but_kwargs['MAT'] = material
 
         if density is None:
             density = self.density
@@ -337,10 +282,7 @@ class Cell(GeomSpecMixin):
         else:
             like_but_kwargs['imp'] = self.__get_imp_str__(importance)
 
-        if material is None:
-            material = self.material
-        else:
-            like_but_kwargs['MAT'] = material
+
 
         assert isinstance(trcl, TRCL)
         like_but_kwargs['TRCL'] = str(trcl)
@@ -382,6 +324,7 @@ class Cell(GeomSpecMixin):
 
     @property
     def cell_card(self):
+
         if self.density is None or self.density == 0:
             assert (self.material in [0, None]), \
                 '`density` was not specified for cell with {} {}, therefore `material` must be ' \

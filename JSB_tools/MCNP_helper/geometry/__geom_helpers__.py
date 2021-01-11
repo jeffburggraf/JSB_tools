@@ -1,6 +1,83 @@
 import numpy as np
 
 
+class MCNPNumberMapping(dict):
+    """Used for automatically assigning numbers to MCNP cells and surfaces. """
+
+    def __init__(self, class_name, starting_number: int, step=1):
+        self.step = step
+        self.class_name: type = class_name
+        self.starting_number: int = starting_number
+        super(MCNPNumberMapping, self).__init__()  # initialize empty dict
+        self.__auto_picked_numbers__ = []  # numbers that have been chosen automatically.
+
+    def number_getter(self, item):
+        if self.class_name == 'Cell':
+            return getattr(item, 'cell_number')
+        elif self.class_name == 'Surface':
+            return getattr(item, 'surface_number')
+        elif self.class_name == 'F4Tally':
+            return getattr(item, 'tally_number')
+        elif self.class_name == 'Material':
+            return getattr(item, 'mat_number')
+        else:
+            assert False
+
+    def number_setter(self, item, num):
+        if self.class_name == 'Cell':
+            return setattr(item, 'cell_number', num)
+        elif self.class_name == 'Surface':
+            return setattr(item, 'surface_number', num)
+        elif self.class_name == 'F4Tally':
+            return setattr(item, 'tally_number', num)
+        elif self.class_name == 'Material':
+            return setattr(item, 'mat_number', num)
+        else:
+            assert False
+
+    def get_number_auto(self):
+        if len(self) == 0:
+            num = self.starting_number
+        else:
+            num = list(sorted(self.keys()))[-1] + self.step
+
+        self.__auto_picked_numbers__.append(num)
+        return num
+
+    def names_used(self):
+        return [o.__name__ for o in self.values() if o.__name__ is not None]
+
+    def __setitem__(self, number, item):
+        assert isinstance(number, (int, type(None))), '{} number must be an integer'.format(self.class_name)
+
+        if isinstance(item.__name__, str):
+            assert len(item.__name__) > 0, 'Blank name used in {} {}'.format(self.class_name, item)
+        if item.__name__ is not None:
+            if item.__name__ in self.names_used():
+                raise Exception('{} name `{}` has already been used.'.format(self.class_name, item.__name__))
+        else:
+            item.__name__ = None
+
+        if number is not None:  # do not pick number automatically
+            if number in self.keys():  # there is a numbering conflict, not allowed in MCNP. Try to resolve conflict
+                conflicting_item = self[number]  # Item with numbering conflict.
+                if number in self.__auto_picked_numbers__:  # Can we fix the numbering conflict by changing a number?
+                    # Yes, we can, because the conflicting instance's number was not user chosen, but this one was.
+                    self.__auto_picked_numbers__.remove(number)
+                    new_number = self.get_number_auto()
+                    self[new_number] = conflicting_item  # re-assign old cell to new number, resolving the conflict
+                    self.number_setter(conflicting_item, new_number)  # change
+
+                else:  # cannot fix the numbering conflict, raise an Exception
+                    raise Exception('{} number {} has already been used (by {})'.format(self.class_name, number,
+                                                                                        conflicting_item))
+        else:
+            number = self.get_number_auto()
+
+        super(MCNPNumberMapping, self).__setitem__(number, item)  # re-assign current cell to number
+        self.number_setter(item, number)  # set the cell or surf instance's number attribute to the correct value
+
+
 def get_rotation_matrix(theta, vx=0, vy=0, vz=1, _round=3):
     """Return the rotation matrix for a rotation around an arbitrary axis. theta is in degrees.
     """
