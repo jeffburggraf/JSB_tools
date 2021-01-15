@@ -120,14 +120,14 @@ class F4Tally(Tally):
 
             tally_declaration_match = re.compile(r' *f{}:(?P<particle>.) +(?P<cell>[0-9]+) *'.format(self.tally_number))
 
-            tally_modifier_match1 = re.compile('([etc]){}:'.format(self.tally_number))
+            tally_modifier_match1 = re.compile('^([etc]){}:?'.format(self.tally_number))
             tally_modifier_match2 = re.compile('(fm|em|tm|cm){}'.format(self.tally_number))
 
             __cell__: Cell = None
             self.particle: str = None
             #  Todo: make fm, em, ect compatible. Do these multipliers change the form of the outp?
-
             for card in outp.input_deck:
+                card = card.lower()
                 if _m := tally_declaration_match.match(card):
                     cell_number = int(_m.group('cell'))
                     assert cell_number in outp.cells, 'Invalid cell number for tally {}. Card:\n\t{}' \
@@ -175,7 +175,6 @@ class F4Tally(Tally):
                 index += 1
             else:
                 assert False, "Tally modifiers {} not yet supported!".format(self.tally_modifiers)
-
             if (self.tally_modifiers - {'fm'}) == set():
                 if 'fm' in self.tally_modifiers:
                     index += 1
@@ -253,7 +252,7 @@ class F4Tally(Tally):
 
     @property
     def dx_per_src(self):
-        assert len(self.fluxes) > 0, "can't use `dx_per_src` unless tally has bions. Use `total_dx_per_src` instead"
+        assert len(self.fluxes) > 0, "can't use `dx_per_src` unless tally has bins. Use `total_dx_per_src` instead"
         return self.total_volume*self.__fluxes__
 
     @property
@@ -402,6 +401,8 @@ class OutP:
             _m_nps = re.match(" *dump no\. +[0-9].+nps = +([0-9]+)", line)
             if _m_nps:
                 self.nps = int(_m_nps.group(1))
+
+        self.inp_title = self.input_deck[0]
 
         self.cells = {}
 

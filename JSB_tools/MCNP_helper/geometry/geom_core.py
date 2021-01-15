@@ -1,7 +1,8 @@
 from __future__ import annotations
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 from abc import ABC, abstractmethod
-from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import get_rotation_matrix, GeomSpecMixin, BinaryOperator
+from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import get_rotation_matrix, GeomSpecMixin, BinaryOperator,\
+    get_comment
 from warnings import warn
 from numbers import Number
 import numpy as np
@@ -9,21 +10,12 @@ from JSB_tools.MCNP_helper.materials import Material
 from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping
 
 
-def get_comment(comment, name):
-    if name is not None:
-        return_comment = " name: {}".format(name)
-    else:
-        return_comment = ''
-    if comment is not None:
-        return_comment = '{} {}'.format(comment, return_comment)
-
-    if len(return_comment):
-        return_comment = " $ " + return_comment
-    return return_comment
-
-
 class Surface(ABC, GeomSpecMixin):
     all_surfs = MCNPNumberMapping('Surface', 1)
+
+    @staticmethod
+    def clear():
+        Surface.all_surfs = MCNPNumberMapping('Surface', 1000, 1000)
 
     def __init__(self, surface_number: float = None,
                  surface_name: Union[str, None] = None,
@@ -43,7 +35,7 @@ class Surface(ABC, GeomSpecMixin):
         outs = []
         for surf in Surface.all_surfs.values():
             outs.append(surf.surface_card)
-        return '/n'.join(outs)
+        return '\n'.join(outs)
 
     @abstractmethod
     def surface_card(self):
@@ -51,7 +43,11 @@ class Surface(ABC, GeomSpecMixin):
 
 
 class Tally:
-    all_f4_tallies = MCNPNumberMapping("F4Tally", 4)
+    all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+
+    @staticmethod
+    def clear():
+        Tally.all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
 
     @staticmethod
     def get_all_tally_cards():
@@ -110,7 +106,7 @@ class F4Tally(Tally):
 
     @property
     def mcnp_tally_number(self):
-        return int(str(self.tally_number)[:-1] + '4')
+        return int(str(self.tally_number) + '4')
 
     def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
         if erg_bins_array is not None:
@@ -146,7 +142,7 @@ class TRCL:
         assert isinstance(rotation_theta, Number), 'Invalid rotation_theta, {}'.format(rotation_theta)
         assert hasattr(rotation_axis, '__iter__'), 'Invalid rotation_axis, {}'.format(rotation_axis)
         assert len(rotation_axis) == 3, 'Invalid rotation_axis, {}'.format(rotation_axis)
-        self.offset_vector = offset_vector
+        self.offset_vector = np.array(offset_vector)
         if rotation_axis == (0, 0, 1) and rotation_theta == 0:
             self.rotation_matrix = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
         else:
@@ -167,6 +163,10 @@ class Cell(GeomSpecMixin):
     """
     all_cells = MCNPNumberMapping('Cell', 10)
 
+    @staticmethod
+    def clear():
+        Cell.all_cells = MCNPNumberMapping('Cell', 10)
+
     def __init__(self, importance: Tuple[str, int],
                  material: Union[int, Material] = 0,
                  density: Union[float, type(None)] = None,
@@ -174,7 +174,8 @@ class Cell(GeomSpecMixin):
                  cell_number:  float = None,
                  cell_name: Union[str, None] = None,
                  cell_comment: Union[str, type(None)] = None,
-                 cell_kwargs: Dict = None):
+                 cell_kwargs: Dict = None,
+                 trcl: Union[None, TRCL] = None):
         """
         Args:
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
@@ -184,10 +185,12 @@ class Cell(GeomSpecMixin):
             cell_number: Cell number. If None, automatically choose a cell number.
             cell_comment: Comment for cell
             cell_kwargs:  Additional keyword arguments to be used in cell card, i.g. vol=1
+            trcl: TRCL instance.
         """
         self.__name__ = cell_name
         self.cell_number = cell_number
         self.importance = importance
+        self.importance = self.importance[0].replace(',', ''), self.importance[1]  # remove commas added by the user.
         self.material = material
         self.geometry = None
         if isinstance(self.material, Material):
@@ -199,10 +202,13 @@ class Cell(GeomSpecMixin):
             self.density = density
         self.geometry = geometry
         if cell_kwargs is not None:
+            assert 'trcl' not in cell_kwargs and 'TRCL' not in cell_kwargs,\
+                'To use trcl, use pass a TRCL instance to the `trcl` argument'
             self.cell_kwargs = cell_kwargs
         else:
             self.cell_kwargs = {}
         self.cell_comment = cell_comment
+        self.trcl = trcl
         Cell.all_cells[cell_number] = self
         GeomSpecMixin.__init__(self)
         self.__like_but_kwargs__ = {}
@@ -225,13 +231,33 @@ class Cell(GeomSpecMixin):
             A string of all cell cards created in current session to be used in an MCNP input deck
         """
         outs = []
-        for cell in Cell.all_cells.values():
+        for cell in sorted(Cell.all_cells.values(), key=lambda x: x.cell_number):
             outs.append(cell.cell_card)
         return '\n'.join(outs)
 
     @property
     def cell_name(self) -> str:
         return self.__name__
+
+    def offset(self, offset_vector: Sized[float]):
+        """
+        Offsets the current cell. Does not create another cell! Use CuboidCell.like_but for that.
+        Args:
+            offset_vector: Vector defining the translation.
+
+        Returns: None
+
+        """
+
+        assert isinstance(offset_vector, Iterable)
+        assert hasattr(offset_vector, '__len__')
+        assert len(offset_vector) == 3
+        offset_vector = np.array(offset_vector)
+
+        if self.trcl is None:
+            self.trcl = TRCL(offset_vector)
+        else:
+            self.trcl.offset_vector += offset_vector
 
     def like_but(self, trcl: TRCL,
                  importance: Tuple[str, int] = None,
@@ -275,28 +301,28 @@ class Cell(GeomSpecMixin):
         if density is None:
             density = self.density
         else:
-            like_but_kwargs['rho'] = density
+            like_but_kwargs['RHO'] = density
 
         if importance is None:
             importance = self.importance
         else:
-            like_but_kwargs['imp'] = self.__get_imp_str__(importance)
+            like_but_kwargs['IMP'] = self.__get_imp_str__(importance)
 
-
-
-        assert isinstance(trcl, TRCL)
-        like_but_kwargs['TRCL'] = str(trcl)
 
         new_cell = Cell(importance=importance, material=material, density=density, geometry=None,
                         cell_number=cell_number, cell_name=cell_name, cell_comment=cell_comment)
         new_cell.__like_but_kwargs__ = like_but_kwargs
         new_cell.__like_but_number__ = self.cell_number
+        assert isinstance(trcl, TRCL)
+        new_cell.trcl = trcl
         return new_cell
 
     def __build_like_but_cell_card__(self):
         assert self.__like_but_number__ is not None
         assert len(self.__like_but_kwargs__) != 0
         kwargs = ['{} = {}'.format(k, v) for k, v in self.__like_but_kwargs__.items()]
+        if self.trcl is not None:  # todo: this is ugly. Incorporate it differently
+            kwargs += ['TRCL = {}'.format(self.trcl)]
         kwargs = ' '.join(kwargs)
         return 'LIKE {} BUT {}'.format(self.__like_but_number__, kwargs)
 
@@ -310,7 +336,15 @@ class Cell(GeomSpecMixin):
         return 'imp:{}={}'.format(','.join(imp[0]), int(imp[1]))
 
     def __build_cell_card__(self):
-        out = '{} {}'.format(self.cell_number, self.material)
+        if isinstance(self.material, int):
+            mat = self.material
+        elif isinstance(self.material, Material):
+            mat = self.material.mat_number
+        else:
+            assert False, 'Invalid material type, {}'.format(type(self.material))
+
+        out = '{} {}'.format(self.cell_number, mat)
+
         if self.density is not None:
             out += ' {}'.format(self.density)
         imp = self.__get_imp_str__()
@@ -319,6 +353,8 @@ class Cell(GeomSpecMixin):
         out += ' {} {}'.format(self.geometry, imp)
         for key, arg in self.cell_kwargs.items():
             out += ' {}={}'.format(key, arg)
+        if self.trcl is not None:  # todo: this is ugly. Incorporate it differently
+            out += ' TRCL = {} '.format(self.trcl)
         comment = get_comment(self.cell_comment, self.cell_name)
         return out + comment
 
@@ -345,11 +381,12 @@ class Cell(GeomSpecMixin):
             return self.__build_like_but_cell_card__()
 
     def set_geometry(self, geom: Union[str, GeomSpecMixin, BinaryOperator]):
-        if isinstance(geom, (GeomSpecMixin, BinaryOperator)):
-            self.geometry = geom.__to_str__()
-        else:
-            self.geometry = str(geom)
-        return self.geometry
+        self.geometry = geom
+        # if isinstance(geom, (GeomSpecMixin, BinaryOperator)):
+        #     self.geometry = geom.__to_str__()
+        # else:
+        #     self.geometry = str(geom)
+        # return self.geometry
 
     def __str__(self):
         return self.cell_card

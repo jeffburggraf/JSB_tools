@@ -36,10 +36,15 @@ class MCNPNumberMapping(dict):
             assert False
 
     def get_number_auto(self):
-        if len(self) == 0:
+        if len(self.__auto_picked_numbers__) == 0:
             num = self.starting_number
         else:
-            num = list(sorted(self.keys()))[-1] + self.step
+            i = 1
+
+            last_num = max(self.__auto_picked_numbers__)
+            while last_num + i in self.keys():
+                i += 1
+            num = last_num + i
 
         self.__auto_picked_numbers__.append(num)
         return num
@@ -76,6 +81,19 @@ class MCNPNumberMapping(dict):
 
         super(MCNPNumberMapping, self).__setitem__(number, item)  # re-assign current cell to number
         self.number_setter(item, number)  # set the cell or surf instance's number attribute to the correct value
+
+
+def get_comment(comment, name):
+    if name is not None:
+        return_comment = " name: {}".format(name)
+    else:
+        return_comment = ''
+    if comment is not None:
+        return_comment = '{} {}'.format(comment, return_comment)
+
+    if len(return_comment):
+        return_comment = " $ " + return_comment
+    return return_comment
 
 
 def get_rotation_matrix(theta, vx=0, vy=0, vz=1, _round=3):
@@ -199,6 +217,7 @@ class GeomSpecMixin:
                                           'example,\n\t>>>~cell_10 & -surf_1\n\t>>>#10 -1\nand not like in the' \
                                           ' following, invalid example:\n\t>>>cell_10 & -surf_1'
             return '#{}'.format(self.__cell_number)
+            # return '{}{}'.format("#" if self.__compliment == -1 else '', self.__cell_number)
 
     def __and__(self, other):
         return BinaryOperator(self, other, 'and')

@@ -1,7 +1,7 @@
-from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping
+from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
-from openmc.data import atomic_weight, ATOMIC_NUMBER
+from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
 import numpy as np
 import re
 from typing import List
@@ -10,16 +10,31 @@ import openmc.material
 # Todo: Revamp the IdealGas interface.
 
 
+chemical_regex = re.compile(r'(?P<symbol>[A-Z][a-z]{0,2}-?(?P<A>[0-9]{0,3}))(?:\((?P<n_atoms>[0-9]+)\))?')
+
+
 class ChemicalFormula:
     def __init__(self, formula: str):
+        """
+
+        Args:
+            formula: Chemical formula, e.g. N(2), O(3) or Ar(1) or Ar
+        """
         self.atomic_weights, self.atom_numbers = [], []
-        for m in (re.finditer(r'([A-Z][a-z]*)([0-9]*)', formula)):
-            self.atomic_weights.append(atomic_weight(m.groups()[0]))
-            n_atoms = m.groups()[1]
-            if n_atoms == '':
-                n_atoms = 1
+        for m in chemical_regex.finditer(formula):
+            a = m.group('A')
+            symbol = m.group('symbol')
+            n_atoms = m.group('n_atoms')
+
+            if a:
+                self.atomic_weights.append(atomic_mass(symbol + a))
             else:
+                self.atomic_weights.append(atomic_weight(symbol))
+
+            if n_atoms:
                 n_atoms = int(n_atoms)
+            else:
+                n_atoms = 1
             self.atom_numbers.append(n_atoms)
         self.atom_numbers = np.array(self.atom_numbers)
         self.atomic_weights = np.array(self.atomic_weights)
@@ -37,7 +52,6 @@ class IdealGas:
         """
         list_of_chemical_formulas = [ChemicalFormula(s) for s in list_of_chemicals]
         self.total_grams_per_mole_list = np.array([a.total_grams_peer_mole for a in list_of_chemical_formulas])
-        print(self.total_grams_per_mole_list)
 
     @staticmethod
     def __temp_and_pressure__(temp, pressure, temp_units, press_units):
@@ -62,7 +76,7 @@ class IdealGas:
             assert False, 'Invalid units for pressure: {}'.format(press_units)
         return temp, pressure
 
-    def get_density_from_mass_ratios(self, mass_ratios: List[Number], temperature=273.15, temp_units: str = 'K',
+    def get_density_from_mass_ratios(self, mass_ratios: List[Number], temperature=293, temp_units: str = 'K',
                                      pressure: float = 1, pressure_units: str = 'bars', n_sig_digits=4):
         temperature, pressure = self.__temp_and_pressure__(temperature, pressure, temp_units, pressure_units)
         mass_ratios = np.array(mass_ratios)
@@ -72,10 +86,11 @@ class IdealGas:
         _x = np.sum((mass_ratios/norm)/self.total_grams_per_mole_list)
         out = 1E-6*p_over_r_t/_x
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
+
         out = float(fmt.format(out))
         return out
 
-    def get_density_from_atom_fractions(self, atom_fractions: List[Number], temperature=273.15, temp_units: str = 'K',
+    def get_density_from_atom_fractions(self, atom_fractions: List[Number], temperature=293.15, temp_units: str = 'K',
                                         pressure: float = 1, pressure_units: str = 'bars', n_sig_digits=4):
         temperature, pressure = self.__temp_and_pressure__(temperature, pressure, temp_units, pressure_units)
         atom_fractions = np.array(atom_fractions)
@@ -104,6 +119,17 @@ def get_most_abundant_isotope(symbol):
 class Material:
     all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
+    @staticmethod
+    def clear():
+        Material.all_materials = MCNPNumberMapping('Material', 1000, 1000)
+
+    @staticmethod
+    def get_all_material_cards():
+        cards = []
+        for mat in Material.all_materials.values():
+            cards.append(mat.mat_card)
+        return '\n'.join(cards)
+
     def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
         self.mat_number = mat_number
         self.__name__ = mat_name
@@ -121,8 +147,8 @@ class Material:
 
     @classmethod
     def gas(cls, list_of_chemicals: List[str],
-            mass_ratios: List[Number] = None, atom_fractions: List[Number] = None,
-            temperature=273.15,
+            mass_ratios: List[Number] = None, atom_fractions: List[Number] = None, use_natural_abundences=False,
+            temperature=293,
             temp_units: str = 'K',
             pressure: float = 1,
             pressure_units: str = 'bars',
@@ -131,22 +157,29 @@ class Material:
             mat_name: str = None,
             mat_kwargs: Dict[str, str] = None,
             ):
+        # Todo: Use N(2) or N_2 to specify number of N atoms. Thus, allowing isotope specification normally.
 
         g = IdealGas(list_of_chemicals)
-        if mass_ratios is not None:
-            assert hasattr(mass_ratios, '__iter__')
-            assert atom_fractions is None, 'Can use `atom_fractions` or `mass_ratios`, but not both.'
-            density = g.get_density_from_mass_ratios(mass_ratios, temperature, temp_units, pressure, pressure_units,
-                                                     n_sig_digits)
-
+        if len(list_of_chemicals) == 1:
             is_weight_fraction = True
-            fractions = mass_ratios
+            fractions = [1]
+            density = g.get_density_from_atom_fractions([1], temperature, temp_units, pressure, pressure_units,
+                                                        n_sig_digits)
         else:
-            assert atom_fractions is not None, 'Must specify either `atom_fractions` or `mass_ratios`.'
-            density = g.get_density_from_atom_fractions(atom_fractions,  temperature, temp_units, pressure,
-                                                        pressure_units, n_sig_digits)
-            is_weight_fraction = False
-            fractions = atom_fractions
+            if mass_ratios is not None:
+                assert hasattr(mass_ratios, '__iter__')
+                assert atom_fractions is None, 'Can use `atom_fractions` or `mass_ratios`, but not both.'
+                density = g.get_density_from_mass_ratios(mass_ratios, temperature, temp_units, pressure, pressure_units,
+                                                         n_sig_digits)
+
+                is_weight_fraction = True
+                fractions = mass_ratios
+            else:
+                assert atom_fractions is not None, 'Must specify either `atom_fractions` or `mass_ratios`.'
+                density = g.get_density_from_atom_fractions(atom_fractions,  temperature, temp_units, pressure,
+                                                            pressure_units, n_sig_digits)
+                is_weight_fraction = False
+                fractions = atom_fractions
 
         if mat_kwargs is None:
             mat_kwargs = {'GAS': "1"}
@@ -157,13 +190,17 @@ class Material:
         out = Material(density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
 
         for s, fraction in zip(list_of_chemicals, fractions):
-            if m := re.match('([A-Z][a-z]*)([0-9]*)', s):
-                s_ = m.groups()[0]
-                if m.groups()[1] == '':
-                    s_ = get_most_abundant_isotope(s_)
-
-                n = Nuclide.from_symbol(s_)
-                assert n.is_valid, 'Invalid atomic symbol, "{}"'.format(s_)
+            if m := chemical_regex.match(s):
+                a = m.group('A')
+                symbol = m.group('symbol')
+                if not a:
+                    a = None
+                if a is None:
+                    nuclide_name = get_most_abundant_isotope(symbol)
+                else:
+                    nuclide_name = symbol + a
+                n = Nuclide.from_symbol(nuclide_name)
+                assert n.is_valid, 'Invalid atomic symbol, "{}"'.format(nuclide_name)
             else:
                 assert False, 'Invalid atomic symbol, "{}"'.format(s)
             out.add_zaid(n, fraction, is_weight_fraction)
@@ -208,8 +245,8 @@ class Material:
             self.mat_kwargs.update(mat_kwargs)
 
         assert len(self.__zaids) > 0, 'No materials added! Use Material.add_zaid'
-
-        outs = ['M{}  $ density = {}'.format(self.mat_number, self.density)]
+        comment = get_comment('density = {}'.format(self.density), self.name )
+        outs = ['M{}  {}'.format(self.mat_number, comment)]
         for n, zaid in zip(self.__zaid_proportions, self.__zaids):
             outs.append('     {} {}'.format(zaid, '-{}'.format(n) if self.is_weight_fraction else n))
         outs.extend(["     {} = {}".format(k, v) for k, v in self.mat_kwargs.items()])
@@ -221,25 +258,29 @@ class Material:
 
 
 class DepletedUranium(Material):
-    def __init__(self, density=19.1, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density=19.1, mat_number: int = None, mat_name: str = "DepletedUranium",
+                 mat_kwargs: Dict[str, str] = None):
         super(DepletedUranium, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
         self.add_element_natural('U')
 
 
 class Tungsten(Material):
-    def __init__(self, density=19.28, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density=19.28, mat_number: int = None, mat_name: str = "Tungsten",
+                 mat_kwargs: Dict[str, str] = None):
         super(Tungsten, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
         self.add_element_natural('W')
 
 
 class Titanium(Material):
-    def __init__(self, density=4.54, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density=4.54, mat_number: int = None, mat_name: str = "Titanium",
+                 mat_kwargs: Dict[str, str] = None):
         super(Titanium, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
         self.add_element_natural('Ti')
 
 
 class StainlessSteel(Material):
-    def __init__(self, density=7.86, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density=7.86, mat_number: int = None, mat_name: str = "Stainless steel",
+                 mat_kwargs: Dict[str, str] = None):
         super(StainlessSteel, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
         self.add_element_natural('Fe', 0.659)
         self.add_element_natural('Cr', 0.18)
@@ -248,16 +289,17 @@ class StainlessSteel(Material):
 
 
 class Aluminum(Material):
-    def __init__(self, density=2.63, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density=2.63, mat_number: int = None, mat_name: str = "Aluminum",
+                 mat_kwargs: Dict[str, str] = None):
         super(Aluminum, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
         self.add_element_natural('Al')
 
 
 class Air(Material):
-    def __init__(self, temperature=273.15, temp_units: str = 'K', pressure: float = 1, pressure_units: str = 'bars',
-                 n_sig_digits=4, density=None,  mat_number: int = None, mat_name: str = None,
+    def __init__(self, temperature=293, temp_units: str = 'K', pressure: float = 1, pressure_units: str = 'bars',
+                 n_sig_digits=4, density=None,  mat_number: int = None, mat_name: str = "air",
                  mat_kwargs: Dict[str, str] = None):
-        elements = ['C', 'N2', 'O2', 'Ar']
+        elements = ['C', 'N(2)', 'O(2)', 'Ar']
         zaids = [6000, 7014, 8016, 180000]
         fractions = [1.5E-4, 0.78, 0.21, 0.0047]
         if density is not None:
@@ -274,11 +316,3 @@ class Air(Material):
             self.add_zaid(zaid, f)
 
 
-
-u = DepletedUranium()
-t = Tungsten()
-a = Air()
-# print(u.mat_card)
-print(u.mat_card)
-print(t.mat_card)
-print(a.mat_card)

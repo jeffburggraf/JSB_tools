@@ -1,11 +1,19 @@
 from __future__ import annotations
-from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment
+from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, F4Tally
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 import numpy as np
+from JSB_tools.MCNP_helper.materials import Material
 """
 For the creation of surfaces and cells in MCNP. Cell/surface numbers can be managed automatically, 
 or manually specified.
 """
+
+
+def clear_all():
+    Material.clear()
+    Cell.clear()
+    Surface.clear()
+    F4Tally.clear()
 
 
 class CuboidSurface(Surface):
@@ -48,7 +56,7 @@ class CuboidCell(Cell, CuboidSurface):
 
     """
     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax,
-                 importance: Tuple[str, int], material: int = 0,
+                 importance: Tuple[str, int], material: Union[int, Material] = 0,
                  density: float = None, cell_name: str = None,
                  cell_num: int = None, cell_comment: str = None,
                  surf_name: str = None, surf_number: int = None,
@@ -98,22 +106,6 @@ class CuboidCell(Cell, CuboidSurface):
              new_cell_name=None, new_cell_num=None, new_cell_comment=None) -> CuboidCell:
         pass
 
-    def offset(self, offset_vector: Sized[float]):
-        """
-        Offsets the current cell. Does not create another cell! Use CuboidCell.like_but for that.
-        Args:
-            offset_vector: Vector defining the translation.
-
-        Returns: None
-
-        """
-
-        assert isinstance(offset_vector, Iterable)
-        assert hasattr(offset_vector, '__len__')
-        assert len(offset_vector) == 3
-
-        self.cell_kwargs['trcl'] = '({} {} {})'.format(*offset_vector)
-
     @property
     def volume(self):
         return self.volume
@@ -153,6 +145,18 @@ class RightCylinderSurface(Surface):
         self.radius = radius
 
     @property
+    def zmax(self):
+        return self.z0 + self.dz
+
+    @property
+    def xmax(self):
+        return self.x0 + self.dx
+
+    @property
+    def ymax(self):
+        return self.y0 + self.dy
+
+    @property
     def volume(self):
         dv = np.array([self.dx, self.dy, self.dz])
         return np.pi*self.radius**2*np.linalg.norm(dv)
@@ -167,15 +171,16 @@ class RightCylinderSurface(Surface):
 
 class RightCylinder(Cell, RightCylinderSurface):
     def __init__(self,  x0: float, y0: float, z0: float, dx: float, dy: float, dz: float, radius: float,
-                 importance: Tuple[str, int], material: int = 0,
+                 importance: Tuple[str, int], material: Union[int, Material] = 0,
                  density: float = None, cell_name: str = None,
                  cell_num: int = None, cell_comment: str = None,
-                 surf_name: str = None, surf_number: int = None,
+                 surf_number: int = None,
                  surf_comment: str = None, cell_kwargs=None):
 
         if cell_name is not None:
-            if surf_name is None:
-                surf_name = cell_name
+            surf_name = cell_name
+        else:
+            surf_name = None
         if cell_comment is not None:
             if surf_comment is None:
                 surf_comment = cell_comment
@@ -185,5 +190,7 @@ class RightCylinder(Cell, RightCylinderSurface):
                                             cell_kwargs=cell_kwargs)
         super(Cell, self).__init__(x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, radius=radius, surf_name=surf_name,
                                    surf_num=surf_number, comment=surf_comment)
+        self.geometry = -self  # set geom to negative of surface.
+
 
 
