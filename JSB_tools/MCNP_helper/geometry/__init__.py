@@ -1,5 +1,5 @@
 from __future__ import annotations
-from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, F4Tally
+from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, F4Tally, CellGroup
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 import numpy as np
 from JSB_tools.MCNP_helper.materials import Material
@@ -56,8 +56,9 @@ class CuboidCell(Cell, CuboidSurface):
 
     """
     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax,
-                 importance: Tuple[str, int], material: Union[int, Material] = 0,
+                 material: Union[int, Material] = 0,
                  density: float = None, cell_name: str = None,
+                 importance: Union[None, Tuple[str, int]] = None,
                  cell_num: int = None, cell_comment: str = None,
                  surf_name: str = None, surf_number: int = None,
                  surf_comment: str = None, cell_kwargs=None):
@@ -89,9 +90,9 @@ class CuboidCell(Cell, CuboidSurface):
                 surf_comment = cell_comment
 
         super(CuboidCell, self).__init__(
-             importance=importance,
              material=material,
              density=density,
+             importance=importance,
              cell_number=cell_num,
              cell_name=cell_name,
              cell_comment=cell_comment,
@@ -99,7 +100,6 @@ class CuboidCell(Cell, CuboidSurface):
              )
         super(Cell, self).__init__(xmin, xmax, ymin, ymax, zmin, zmax, surf_name=surf_name, surf_num=surf_number,
                                    comment=surf_comment)
-
         self.geometry = -self
 
     def copy(self, new_importance: Union[Tuple[int, str], type(None)] = None, new_material=None, new_density=None,
@@ -117,8 +117,10 @@ class CuboidCell(Cell, CuboidSurface):
 
 
 class RightCylinderSurface(Surface):
-    def __init__(self, x0: float, y0: float, z0: float, dx: float, dy: float, dz: float, radius: float,
-                 surf_name: str = None, surf_num: str = None, comment: str = None):
+    def __init__(self, radius: float, x0: float = 0, y0: float = 0, z0: float = 0,
+                 dx: float = 0, dy: float = 0, dz: float = 0,
+                 surf_name: str = None, surf_num: Union[int, str] = None,
+                 comment: str = None):
         """
         Defines a cylindrical surface who's axis spans from (x0, y0, z0) to (x0+dx, y0+dy, z0+dz), with perpendicular
         radial component of the given radius.
@@ -134,6 +136,7 @@ class RightCylinderSurface(Surface):
             surf_num:
             comment:
         """
+        assert not dx == dy == dz == 0, 'dx, dy, and dz cannot all be zero!'
         super(RightCylinderSurface, self).__init__(surface_number=surf_num, surface_name=surf_name,
                                                            surface_comment=comment)
         self.x0 = x0
@@ -164,15 +167,19 @@ class RightCylinderSurface(Surface):
     @property
     def surface_card(self):
         comment = get_comment(self.surface_comment, self.surface_name)
-        return '{0} RCC {x0} {y0} {z0}  {dx} {dy} {dz} {r} {comment}' \
+        out = '{0} RCC {x0} {y0} {z0}  {dx} {dy} {dz} {r} {comment}' \
             .format(self.surface_number, x0=self.x0, y0=self.y0, z0=self.z0, dx=self.dx, dy=self.dy,
                     dz=self.dz, r=self.radius, comment=comment)
+        return out
 
 
 class RightCylinder(Cell, RightCylinderSurface):
-    def __init__(self,  x0: float, y0: float, z0: float, dx: float, dy: float, dz: float, radius: float,
-                 importance: Tuple[str, int], material: Union[int, Material] = 0,
-                 density: float = None, cell_name: str = None,
+    def __init__(self, radius: float,
+                 material: Union[int, Material] = 0,
+                 density: float = None,
+                 importance: Union[None, Tuple[str, int]] = None,
+                 x0: float = 0, y0: float = 0, z0: float = 0,
+                 dx: float = 0, dy: float = 0, dz: float = 0,  cell_name: str = None,
                  cell_num: int = None, cell_comment: str = None,
                  surf_number: int = None,
                  surf_comment: str = None, cell_kwargs=None):
@@ -185,12 +192,13 @@ class RightCylinder(Cell, RightCylinderSurface):
             if surf_comment is None:
                 surf_comment = cell_comment
 
-        super(RightCylinder, self).__init__(importance=importance, material=material, density=density,
+        super(RightCylinder, self).__init__(material=material, density=density, importance=importance,
                                             cell_number=cell_num, cell_name=cell_name, cell_comment=cell_comment,
                                             cell_kwargs=cell_kwargs)
         super(Cell, self).__init__(x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, radius=radius, surf_name=surf_name,
                                    surf_num=surf_number, comment=surf_comment)
-        self.geometry = -self  # set geom to negative of surface.
+        self.geometry = -self
+
 
 
 

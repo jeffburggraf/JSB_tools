@@ -117,23 +117,23 @@ def get_most_abundant_isotope(symbol):
 
 
 class Material:
-    all_materials = MCNPNumberMapping('Material', 1000, 1000)
+    __all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
     @staticmethod
     def clear():
-        Material.all_materials = MCNPNumberMapping('Material', 1000, 1000)
+        Material.__all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
     @staticmethod
     def get_all_material_cards():
         cards = []
-        for mat in Material.all_materials.values():
+        for mat in Material.__all_materials.values():
             cards.append(mat.mat_card)
         return '\n'.join(cards)
 
     def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
         self.mat_number = mat_number
         self.__name__ = mat_name
-        Material.all_materials[self.mat_number] = self
+        Material.__all_materials[self.mat_number] = self
         self.density = density
         self.__zaids = []
         self.__zaid_proportions = []

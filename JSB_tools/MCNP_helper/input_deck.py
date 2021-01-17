@@ -183,7 +183,6 @@ class InputDeck:
             new_file_dir = Path(new_file_dir)
             assert new_file_dir.exists() and new_file_dir.is_dir(), '`new_file_dir` must be a directory that exists.'
         self.inp_root_directory = new_file_dir
-        print("self.inp_root_directory", self.inp_root_directory)
         self.directories_created = []
 
         self.__files_written_so_far__ = []

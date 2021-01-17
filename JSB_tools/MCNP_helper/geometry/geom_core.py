@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Union, List, Dict, Tuple, Sized, Iterable
+from typing import Union, List, Dict, Tuple, Sized, Iterable, Type
 from abc import ABC, abstractmethod
 from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import get_rotation_matrix, GeomSpecMixin, BinaryOperator,\
     get_comment
@@ -167,10 +167,10 @@ class Cell(GeomSpecMixin):
     def clear():
         Cell.all_cells = MCNPNumberMapping('Cell', 10)
 
-    def __init__(self, importance: Tuple[str, int],
-                 material: Union[int, Material] = 0,
+    def __init__(self, material: Union[int, Material] = 0,
                  density: Union[float, type(None)] = None,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
+                 importance: Tuple[str, int] = None,
                  cell_number:  float = None,
                  cell_name: Union[str, None] = None,
                  cell_comment: Union[str, type(None)] = None,
@@ -189,15 +189,20 @@ class Cell(GeomSpecMixin):
         """
         self.__name__ = cell_name
         self.cell_number = cell_number
-        self.importance = importance
-        self.importance = self.importance[0].replace(',', ''), self.importance[1]  # remove commas added by the user.
+        if importance is not None:
+            assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
+                                                                             "for example, ('np', 1)"
+            self.importance = importance[0].replace(',', ''), importance[1]  # remove commas added by the user.
+        else:
+            self.importance = importance
+
         self.material = material
         self.geometry = None
         if isinstance(self.material, Material):
             if density is not None:
                 warn('Material instances passed to `material` argument along with a `density`.\n'
                      'Using density from the Material object, and ignoring the `density` argument.')
-            self.density = material.density
+            self.density = -material.density
         else:
             self.density = density
         self.geometry = geometry
@@ -330,6 +335,8 @@ class Cell(GeomSpecMixin):
 
         if imp is None:
             imp = self.importance
+        if imp is None:
+            return ''
         assert hasattr(imp, '__iter__') and len(imp) == 2 and isinstance(imp[0], str), \
             'Importance, "{}", not specified properly. Correct example: ("np", 1)'.format(imp)
 
@@ -390,4 +397,38 @@ class Cell(GeomSpecMixin):
 
     def __str__(self):
         return self.cell_card
+
+
+class CellGroup:
+    def __init__(self, *cells: Cell):
+        self.cells = list(cells)
+
+    def add_cells(self, *cells):
+        for x in cells:
+            assert isinstance(x, Cell), 'Only Cell instances can be used in CellGroup, not "{}"'.format(type(x))
+            assert x not in self.cells, 'Cell (#{}, name: {} added twice to cell group.'.format(x.cell_number,
+                                                                                                x.cell_name)
+
+    def remove_cell(self, cell_obj: Cell):
+        self.cells.remove(cell_obj)
+
+    def __invert__(self):
+        geom = None
+        assert len(self.cells) > 0, 'No cells in group!'
+
+        def f(cells):
+            nonlocal geom
+            if len(cells) == 0:
+                return
+            else:
+                cell = cells[0]
+                if geom is None:
+                    geom = ~cell
+                else:
+                    geom = geom & ~cell
+                f(cells[1:])
+
+        f(self.cells)
+        return geom
+
 

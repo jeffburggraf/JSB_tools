@@ -193,7 +193,7 @@ class GammaLine:
         self.intensity: UFloat = intensity
         self.from_mode: DecayMode = from_mode
         self.intensity_thu_mode: uncertainties.UFloat = intensity_thu_mode
-        self.absolute_rate: uncertainties.UFloat = nuclide.decay_constant*self.intensity
+        self.absolute_rate: uncertainties.UFloat = nuclide.decay_rate * self.intensity
 
     def __repr__(self):
         return "Gamma line at {0:.1f} KeV; true_intensity = {1:.2e}; decay: {2} ".format(self.erg, self.intensity,
@@ -662,7 +662,8 @@ class Nuclide:
         return cls.from_symbol(name)
 
     @classmethod
-    def from_symbol(cls, symbol):
+    def from_symbol(cls, symbol: str):
+        assert isinstance(symbol, str), '`symbol` argument must be a string.'
         if '-' in symbol:
             symbol = symbol.replace('-', '')
             if symbol.endswith('m'):
@@ -699,7 +700,7 @@ class Nuclide:
         return out
 
     @property
-    def decay_constant(self):
+    def decay_rate(self):
         return np.log(2)/self.half_life
 
     @property
