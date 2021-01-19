@@ -1,9 +1,20 @@
+"""
+Creates ROOT Trees from PHITS dump files. Requires pyROOT to be installed.
+
+To have PHITS create a dump file, add the following section:
+    [ T-Userdefined ]
+      file= <name of file>
+where <name of file> is the name of the simulation dump file.
+
+Definition of TTree branches: Todo
+    nps
+"""
 import ROOT
 from pathlib import Path
 import os
 import re
 import numpy as np
-from .core import ProgressReport
+from JSB_tools import ProgressReport
 
 __all__ = ["phits_to_root"]
 

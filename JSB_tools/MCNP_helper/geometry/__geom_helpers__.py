@@ -36,15 +36,16 @@ class MCNPNumberMapping(dict):
             assert False
 
     def get_number_auto(self):
-        if len(self.__auto_picked_numbers__) == 0:
+        if self.starting_number not in self:
             num = self.starting_number
         else:
-            i = 1
-
-            last_num = max(self.__auto_picked_numbers__)
-            while last_num + i in self.keys():
+            for i in sorted(self.keys()):
                 i += 1
-            num = last_num + i
+                if i not in self.keys():
+                    num = i
+                    break
+            else:
+                assert False, 'WTF?!'
 
         self.__auto_picked_numbers__.append(num)
         return num

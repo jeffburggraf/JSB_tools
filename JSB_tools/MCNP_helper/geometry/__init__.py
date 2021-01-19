@@ -28,6 +28,13 @@ class CuboidSurface(Surface):
         for kmin, kmax in zip([xmin, ymin, zmin], [xmax, ymax, zmax]):
             assert kmin < kmax, 'Cuboid with minimum coordinate >= maximum coordinate: {} is >= {}'.format(kmax, kmax)
 
+    @classmethod
+    def like_cylinder(cls, z0, dz, x_width, y_width, x_center=0, y_center=0,  surf_name=None, surf_num=None,
+                      comment=None):
+        return CuboidSurface(xmin=x_center-x_width/2, ymin=y_center-y_width/2, zmin=z0, xmax=x_center + x_width/2,
+                             ymax=y_center+y_width/2, zmax=z0+dz, surf_name=surf_name, surf_num=surf_num,
+                             comment=comment)
+
     @property
     def volume(self):
         return (self.xmax - self.xmin) * (self.ymax - self.ymin) * (self.zmax - self.zmin)
@@ -150,6 +157,10 @@ class RightCylinderSurface(Surface):
     @property
     def zmax(self):
         return self.z0 + self.dz
+
+    @property
+    def zmin(self):
+        return self.z0
 
     @property
     def xmax(self):

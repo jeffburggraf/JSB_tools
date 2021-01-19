@@ -15,7 +15,7 @@ class Surface(ABC, GeomSpecMixin):
 
     @staticmethod
     def clear():
-        Surface.all_surfs = MCNPNumberMapping('Surface', 1000, 1000)
+        Surface.all_surfs = MCNPNumberMapping('Surface', 1)
 
     def __init__(self, surface_number: float = None,
                  surface_name: Union[str, None] = None,
@@ -202,9 +202,13 @@ class Cell(GeomSpecMixin):
             if density is not None:
                 warn('Material instances passed to `material` argument along with a `density`.\n'
                      'Using density from the Material object, and ignoring the `density` argument.')
-            self.density = -material.density
+            self.density = -abs(material.density)
         else:
             self.density = density
+        if self.density is not None and self.density > 0:
+            warn('Positive densities in MCNP are interpreted as atoms per barn cm. Use negative number for grams'
+                 'per cm3')
+
         self.geometry = geometry
         if cell_kwargs is not None:
             assert 'trcl' not in cell_kwargs and 'TRCL' not in cell_kwargs,\
@@ -307,12 +311,14 @@ class Cell(GeomSpecMixin):
             density = self.density
         else:
             like_but_kwargs['RHO'] = density
+            if density > 0:
+                warn('Positive densities in MCNP are interpreted as atoms per barn cm. Use negative number for grams'
+                     'per cm3')
 
         if importance is None:
             importance = self.importance
         else:
             like_but_kwargs['IMP'] = self.__get_imp_str__(importance)
-
 
         new_cell = Cell(importance=importance, material=material, density=density, geometry=None,
                         cell_number=cell_number, cell_name=cell_name, cell_comment=cell_comment)
@@ -356,7 +362,8 @@ class Cell(GeomSpecMixin):
             out += ' {}'.format(self.density)
         imp = self.__get_imp_str__()
         if self.geometry is None:
-            warn('Cell card of cell {} was accessed with out specifying geometry.')
+            warn('\nCell card of cell {} was accessed with out specifying geometry.'
+                 .format(self.cell_name if self.cell_name is not None else self.cell_number))
         out += ' {} {}'.format(self.geometry, imp)
         for key, arg in self.cell_kwargs.items():
             out += ' {}={}'.format(key, arg)
@@ -408,6 +415,7 @@ class CellGroup:
             assert isinstance(x, Cell), 'Only Cell instances can be used in CellGroup, not "{}"'.format(type(x))
             assert x not in self.cells, 'Cell (#{}, name: {} added twice to cell group.'.format(x.cell_number,
                                                                                                 x.cell_name)
+        self.cells.extend(cells)
 
     def remove_cell(self, cell_obj: Cell):
         self.cells.remove(cell_obj)
@@ -432,3 +440,41 @@ class CellGroup:
         return geom
 
 
+class CellGroup:
+    def __init__(self, *cells: Union[Cell, Surface]):
+        self.cells = list(cells)
+
+    def add_cells(self, *cells):
+        for x in cells:
+            assert isinstance(x, (Cell, Surface)),\
+                'Only Cell/Surface instances can be used in CellGroup, not "{}"'.format(type(x))
+            number = x.surface_number if isinstance(x, Surface) else x.cell_number
+            name = x.surface_name if isinstance(x, Surface) else x.cell_name
+            assert x not in self.cells, 'Cell (#{}, name: {} added twice to cell group.'.format(number, name)
+        self.cells.extend(cells)
+
+    def remove_cell(self, cell_obj: Union[Cell, Surface]):
+        self.cells.remove(cell_obj)
+
+    def __invert__(self):
+        geom = None
+        assert len(self.cells) > 0, 'No cells in group!'
+
+        def f(cells):
+            nonlocal geom
+            if len(cells) == 0:
+                return
+            else:
+                cell = cells[0]
+                if isinstance(cell, Surface):
+                    additional_geom = +cell
+                else:
+                    additional_geom = ~cell
+                if geom is None:
+                    geom = additional_geom
+                else:
+                    geom = geom & additional_geom
+                f(cells[1:])
+
+        f(self.cells)
+        return geom

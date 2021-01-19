@@ -1,3 +1,4 @@
+from __future__ import annotations
 import re
 import numpy as np
 import os
@@ -6,7 +7,7 @@ from uncertainties import ufloat, UFloat
 import uncertainties.unumpy as unp
 from matplotlib import pyplot as plt
 from pathlib import Path
-from typing import List, Dict, Set, Iterable, Sized
+from typing import List, Dict, Set, Iterable, Sized, Union, Type, Optional
 from numbers import Number
 from openmc import Material
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
@@ -649,9 +650,33 @@ class StoppingPowerData:
         return ax
 
     @classmethod
-    def get_stopping_power(cls, particle, material_element_symbols, grams_per_cm3, material_atom_percents=None,
-                           material_mass_percents=None, gas=False, emax=200, temperature=None, mcnp_command='mcnp6',
-                           verbose=False):
+    def get_stopping_power(cls, particle: str,
+                           material_element_symbols: Union[List[str], str],
+                           grams_per_cm3: float,
+                           material_atom_percents: Optional[Union[List[float], float]] = None,
+                           material_mass_percents: Optional[Union[List[float], float]] = None,
+                           gas: bool = False,
+                           emax=200,
+                           temperature: Optional[float] = None,
+                           mcnp_command='mcnp6',
+                           verbose: bool = False) -> StoppingPowerData:
+        """
+
+        Args:
+            particle: Either a zaid in the form of zzaaa, i.e. str(1000*z+a), or a nuclide name, i.e. 'Xe139'.
+            material_element_symbols: List of elements that make up the medium using similar convention as in`particle`
+                argument. Can also use "U" instead of "U238" to automatically isotopic composition of natural U
+            grams_per_cm3: Density of medium.
+            material_atom_percents: relative atoms percents for each element in `material_element_symbols`
+            material_mass_percents: relative mass ratios for each element in `material_element_symbols`
+            gas: True is medium is gas.
+            emax: Max energy to calculate stopping powers.
+            temperature:  ???
+            mcnp_command: The command that executes MCNP in youtr terminal.
+            verbose: For debugging.
+
+        Returns:
+        """
         assert platform.system() != 'Windows', '`get_stopping_power` is not compatible with windows systems!'
         assert isinstance(gas, bool), '`gas` argument must be either True or False'
         assert isinstance(grams_per_cm3, Number), '`grams_per_cm3` argument must be a number'

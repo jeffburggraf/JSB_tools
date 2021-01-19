@@ -5,7 +5,7 @@ import warnings
 import platform
 import os
 import stat
-from atexit import register
+from atexit import register, unregister
 from uncertainties import UFloat
 from numbers import Number
 from JSB_tools.TH1 import TH1F
@@ -211,7 +211,13 @@ class InputDeck:
         register(self.__del)
 
     def __split_new_lines__(self):
-        new_inp_lines = self.__new_inp_lines__[:]
+        title_line = self.__new_inp_lines__[0]  # Don't split the title line. MCNP sucks and won't allow it
+        if len(title_line) > 79:
+            title_line = title_line[:79]
+            warnings.warn('Title line cannot be greater than 79 chars long due to MCNP limitations. Truncating to:\n'
+                          '"{}"'.format(title_line))
+
+        new_inp_lines = self.__new_inp_lines__[1:]
         self.__new_inp_lines__ = []
         for line in new_inp_lines[:self.MCNP_EOF]:
             split_lines = line.split('\n')
@@ -219,6 +225,8 @@ class InputDeck:
             self.__new_inp_lines__.extend('\n'.join([_split_line(l) for l in split_lines]))
 
         self.__new_inp_lines__.extend(new_inp_lines[self.MCNP_EOF:])
+        self.__new_inp_lines__.insert(0, title_line)
+
 
     def cycle_random_number_mcnp(self):
         assert isinstance(self.cycle_rnd_seed, int)
@@ -284,6 +292,7 @@ class InputDeck:
                         except Exception as e:
                             err = _exception(str(e))
                             exception_msg += err
+                            unregister(InputDeck.__del)  # Don't print closing messages if exception raised.
 
                     exp_to_process = None
                 else:
