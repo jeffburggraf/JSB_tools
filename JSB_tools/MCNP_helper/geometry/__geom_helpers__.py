@@ -67,12 +67,14 @@ class MCNPNumberMapping(dict):
         if number is not None:  # do not pick number automatically
             if number in self.keys():  # there is a numbering conflict, not allowed in MCNP. Try to resolve conflict
                 conflicting_item = self[number]  # Item with numbering conflict.
+
                 if number in self.__auto_picked_numbers__:  # Can we fix the numbering conflict by changing a number?
                     # Yes, we can, because the conflicting instance's number was not user chosen, but this one was.
                     self.__auto_picked_numbers__.remove(number)
                     new_number = self.get_number_auto()
+                    del self[number]  # unlink conflicting number from `number` or else naming conflict may be raised
                     self[new_number] = conflicting_item  # re-assign old cell to new number, resolving the conflict
-                    self.number_setter(conflicting_item, new_number)  # change
+                    self.number_setter(conflicting_item, new_number)  # change conflicting instances number
 
                 else:  # cannot fix the numbering conflict, raise an Exception
                     raise Exception('{} number {} has already been used (by {})'.format(self.class_name, number,

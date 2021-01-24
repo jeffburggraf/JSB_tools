@@ -17,12 +17,8 @@ from scipy.signal import find_peaks
 from typing import Union, Iterable, List, Dict, Tuple
 from abc import ABC, abstractmethod
 from matplotlib.patches import Rectangle
-# class MaximumLogLikelyHood:
-#     def __init__(self):
-#         pass
-#
-#     def
-from numpy import ndarray
+
+
 
 class HalfLifeSignature:
     def __init__(self, tree, discrete_ergs, min_time):

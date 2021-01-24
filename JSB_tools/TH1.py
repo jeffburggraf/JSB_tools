@@ -17,6 +17,8 @@ from matplotlib import pyplot as plt
 from typing import List
 import re
 import os
+from typing import Union
+
 
 class HistoBinMerger:
     def __init__(self, start_stop_tuples, new_bin_left_edges, old_hist):
@@ -25,6 +27,21 @@ class HistoBinMerger:
         self.__old_bin_left_edges__ = old_hist.__bin_left_edges__
         self.__new_bin_left_edges__ = new_bin_left_edges
 
+
+def binned_median(bin_left_edges, weights):
+    x = bin_left_edges
+    assert len(bin_left_edges) == len(weights) + 1
+    if not isinstance(weights, list):
+        weights = list(weights)
+    weights.insert(0, 0)
+    cum_sum = np.cumsum(weights)
+    median_w = cum_sum[-1]/2
+    index = np.searchsorted(cum_sum, median_w) - 1
+    dy = cum_sum[index + 1] - cum_sum[index]
+    b_width = x[index+1] - x[index]
+    error = median_w - cum_sum[index]
+    dx = error/dy*b_width
+    return x[index] + dx
 
 class TH1F:
     title_number = 0
@@ -272,6 +289,22 @@ class TH1F:
                     yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
         return ax
 
+    def rolling_distance_from_median(self, window_width: float):
+        """
+        Takes the median of a rolling window and then subtract the result from the values in each bin.
+        This operation has the tendency of removing backgrounds/baselines.
+        Args:
+            window_width: Width of window (in number of bins).
+
+        Returns: None, Modifies the histogram.
+
+        """
+        nom_vals = self.nominal_bin_values  # for optimization
+        n = window_width  # short hand
+        window_indicies = [np.arange(max([0, i-n//2]), min([len(self)-1, i+n//2])) for i in np.arange(len(self))]
+        medians = np.array([np.median(nom_vals[idx]) for idx in window_indicies], dtype=np.ndarray)
+        self -= medians
+
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
         bin_start_stops = []
         if merge_range_x is not None:
@@ -452,6 +485,10 @@ class TH1F:
                                   weights=unp.uarray(self.bin_std_devs / 2., self.bin_std_devs / 2.))
 
         return np.average(self.bin_centers, weights=np.abs(self.bin_values))
+
+    @property
+    def median(self):
+        return binned_median(self.__bin_left_edges__, self.bin_values)
 
     @property
     def rel_errors(self):

@@ -349,7 +349,7 @@ class Container:
             root_dtype = "{0}[{1}]/{2}".format(b_name, length, _)
 
         setattr(self, b_name + "_br", np.array([0]*length, dtype=_dtype))
-        self.tree.Branch(b_name, getattr(self, b_name + "_br"),root_dtype)
+        self.tree.Branch(b_name, getattr(self, b_name + "_br"), root_dtype)
 
         if reset is not None:  # some values must be reset to default value at each point in simulation
             self.__br_arrays__.append((getattr(self, b_name + "_br"), reset))
@@ -483,6 +483,7 @@ def phits_to_root(input_file_path, output_file_name=None, output_directory=None,
 
             if container.ncol in [7, 8, 9, 11, 12]:
                 container.is_term = 1
+            #todo: handle NCOLS 13 and 14, after which particle reaction information is written.
 
         elif nps_re.match(line):
             line = file.readline()
@@ -492,10 +493,18 @@ def phits_to_root(input_file_path, output_file_name=None, output_directory=None,
             values = line_of_values(file.readline())
             container._cas_num = int(values[0])
             container.mat = int(values[1])
-            container.par_id = int(values[2])
+            container.par_id = int(values[2])  # ITYP
             zaid = int(values[3])
             container.charge_number = int(values[4])
-            container.zaid = zaid//1000 + zaid % 1000000
+            if container.par_id == 1:  # proton
+                container.zaid = 1000
+            elif container.par_id == 2:  # neutron
+                container.zaid = 1
+            elif 15 <= container.par_id <= 19:  # nucleus, can use ZAID
+                container.zaid = zaid // 1000 + zaid % 1000000
+            else:  # everything else. In this case use par_id for particle identification.
+                container.zaid = 0
+
             container.rest_mass = float(values[-2])
 
         elif info_2_re.match(line):
