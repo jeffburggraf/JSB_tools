@@ -1,3 +1,4 @@
+from __future__ import annotations
 try:
     import ROOT
 except ModuleNotFoundError:
@@ -5,7 +6,7 @@ except ModuleNotFoundError:
 
 import numpy as np
 from uncertainties import unumpy as unp
-from uncertainties import ufloat
+from uncertainties import ufloat, UFloat
 from uncertainties.core import Variable, AffineScalarFunc, wrap
 from numbers import Number
 from warnings import warn
@@ -14,10 +15,10 @@ from lmfit import Model, fit_report
 from scipy.signal import find_peaks
 from pathlib import Path
 from matplotlib import pyplot as plt
-from typing import List
+from typing import List, Union, Sequence
 import re
 import os
-from typing import Union
+from scipy.stats import norm
 
 
 class HistoBinMerger:
@@ -42,6 +43,96 @@ def binned_median(bin_left_edges, weights):
     error = median_w - cum_sum[index]
     dx = error/dy*b_width
     return x[index] + dx
+
+
+def rolling_median(window_width, values):
+    """
+    Rolling median over a uniform window. Window is clipped at the edges.
+    Args:
+        window_width: Size of independent arrays for median calculations.
+        values: array of values
+
+    Returns:
+
+    """
+    n = min([window_width, len(values)])
+    if not isinstance(values, np.ndarray):
+        values = np.array(values)
+    window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
+
+    medians = np.array([np.median(values[idx]) for idx in window_indicies], dtype=np.ndarray)
+
+    return medians
+
+
+def MAD(values):
+    """
+    MAD (Median Absolute Deviation).
+    Args:
+        values: array of values.
+
+    Returns: MAD
+
+    """
+    if not isinstance(values, np.ndarray):
+        values = np.array(values)
+    median = np.median(values)
+    return np.median(np.abs(values - median))
+
+
+def rolling_MAD(window_width, values):
+    """
+    Calculate the median absolute deviation over a uniform rolling window. Window is clipped at the edges.
+    Args:
+        window_width: Width of window
+        values: Array-like
+
+    Returns: Result.
+
+    """
+    n = min([window_width, len(values)])
+    if not isinstance(values, np.ndarray):
+        values = np.array(values)
+    window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
+    print(list(window_indicies))
+    out = np.array([np.median(np.abs(values[idx] - np.median(values[idx]))) for idx in window_indicies],
+                   dtype=np.ndarray)
+
+    return out
+
+
+def convolve_uniform(window_width: int, values):
+    """
+    Convolve array with a square pulse. Sum of array values is preserved.
+    Args:
+        window_width: size of square wave for convolution
+        values: Array to convolve
+
+    Returns:
+
+    """
+    assert isinstance(window_width, int), '`window_width` must be expressed in a number of bins,' \
+                                          ' and so must be an integer'
+    v = np.ones(window_width)
+    v /= len(v)
+    return np.convolve(values, v, mode='same')
+
+
+def convolve_gaus(sigma: float, values):
+    """
+    Convolve array of values with a gaussian.  Sum of array values is preserved.
+    Args:
+        sigma: The width of window (number of bins).
+        values: Array to convolve
+
+    Returns: result
+
+    """
+    x = np.arange(int(-6*sigma), int(6*sigma)+1)
+    v = norm.pdf(x=x, scale=sigma)
+    v /= sum(v)
+    return np.convolve(values, v, mode='same')
+
 
 class TH1F:
     title_number = 0
@@ -102,6 +193,77 @@ class TH1F:
         self.draw_expression = None
         self.cut = None
         self.draw_weight = None
+
+    @classmethod
+    def from_data_points(cls, data: Sequence[Number], bins=None, weights=None):
+        if bins is None:
+            bins = 'auto'
+        bin_values, bin_lef_edges = np.histogram(data, bins=bins, weights=weights)
+        hist = cls(bin_left_edges=bin_lef_edges)
+        bin_errors = np.sqrt(bin_values)
+        bin_values = unp.uarray(bin_values, bin_errors)
+        hist.__set_bin_values__(bin_values)
+        return hist
+
+    @classmethod
+    def from_x_and_y(cls, x: Sequence[float], y: Sequence[Union[UFloat, float]]) -> TH1F:
+        """
+        Generate a histogram from x and y points. This generally shouldn't be used.
+
+        Args:
+            x: bin centers
+            y: bin values (can be floats or UFloats)
+
+        Returns: histogram.
+
+        """
+        assert isinstance(x, Sequence) and len(x) >= 2, '`x` must be a collection with minimum length of 2'
+        assert not isinstance(x[0], UFloat), 'x bust be a Number, not UFloat'
+        y = [i.n if isinstance(i, UFloat) else i for i in y]
+        y_err = [i.std_dev if isinstance(i, UFloat) else 0 for i in y]
+        bin_left_edges = [x[0] - (x[1]-x[0])/2]
+        for xi in x:
+            bin_left_edges.append(-bin_left_edges[-1] + 2*xi)
+        assert all([x1-x0 > 0 for x0, x1 in zip(bin_left_edges[:-1], bin_left_edges[1:])]),\
+            'Provided bins are not increasing monotonically!'
+
+        bin_values = unp.uarray(y, y_err)
+        hist = cls(bin_left_edges=bin_left_edges)
+        hist.__set_bin_values__(bin_values)
+        return hist
+
+    def __uniform_binsQ__(self):
+        """"
+        test whether bin widths are all equal.
+        """
+        uniform_bins = True
+        for b in self.bin_widths:
+            if not np.isclose(b, self.bin_widths[0]):
+                uniform_bins = False
+                break
+        return uniform_bins
+
+    def convolve_uniform(self, window_width):
+        """
+        Convolve the bin values with a uniform square pulse with width `window_width`.
+        Args:
+            window_width: The width of window (number of bins).
+
+        Returns: None, modifies the histogram.
+
+        """
+        self.__set_bin_values__(convolve_uniform(window_width, self.bin_values))
+
+    def convolve_gaus(self, sigma: float):
+        """
+        Convolve the bin values with a gaussian pulse.
+        Args:
+            sigma: The width of window (number of bins).
+
+        Returns: None, modifies the histogram.
+
+        """
+        self.__set_bin_values__(convolve_gaus(sigma, self.bin_values))
 
     @property
     def title(self) -> str:
@@ -289,21 +451,38 @@ class TH1F:
                     yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
         return ax
 
-    def rolling_distance_from_median(self, window_width: float):
+    def convolve_median(self, window_width):
+        """
+        Replace the value in each bin[i] with the median of bins within a rolling window of width
+        `window_width` centered around bin[i].
+        Args:
+            window_width: width of rolling window
+
+        Returns: None, modifies hist.
+        """
+        new_bin_values = rolling_median(window_width, self.bin_values)
+        self.__set_bin_values__(new_bin_values)
+
+    def dist_from_rolling_median(self, window_width: float):
         """
         Takes the median of a rolling window and then subtract the result from the values in each bin.
         This operation has the tendency of removing backgrounds/baselines.
+        Setting `window_width` to None will pick a `window_width` that is about 6 times the typical FWHM
+        of your spectra's features.
         Args:
             window_width: Width of window (in number of bins).
 
         Returns: None, Modifies the histogram.
 
         """
+        # if window_width is None:
+        #     peak_idx, peak_infos = find_peaks(self.nominal_bin_values,
+        #                                       prominence=2.5 * self.std_errs,
+        #                                       plateau_size=[0, 20],
+        #                                       width=2)
         nom_vals = self.nominal_bin_values  # for optimization
-        n = window_width  # short hand
-        window_indicies = [np.arange(max([0, i-n//2]), min([len(self)-1, i+n//2])) for i in np.arange(len(self))]
-        medians = np.array([np.median(nom_vals[idx]) for idx in window_indicies], dtype=np.ndarray)
-        self -= medians
+        medians = rolling_median(window_width, nom_vals)
+        self.__isub__(medians)
 
     def get_merge_obj_max_rel_error(self, max_rel_error, merge_range_x=None):
         bin_start_stops = []
@@ -467,10 +646,11 @@ class TH1F:
         assert len(errors) == len(self), "{0}, {1}".format(len(errors), len(self))
         for raw_index, b in enumerate(self.bin_centers):
             bin_index = hist.FindBin(b)
-            assert b == hist.GetBinCenter(
-                bin_index), "incompatible bins. {0} should equal {1}. This should not happen".format(b,
-                                                                                                     hist.GetBinCenter(
-                                                                                                         bin_index))
+            assert np.isclose(b, hist.GetBinCenter(bin_index)), \
+                "incompatible bin centers. '{0}' should equal '{1}'. This should not happen"\
+                     .format(b,
+                             hist.GetBinCenter(
+                                bin_index))
             values[raw_index] = hist.GetBinContent(bin_index)
             errors[raw_index] = hist.GetBinError(bin_index)
         return unp.uarray(values, errors)
@@ -549,6 +729,9 @@ class TH1F:
         new_ROOT_hist = self.__ROOT_hist__.Clone("hist{0}".format(TH1F.title_number))
         TH1F.title_number += 1
         return TH1F(ROOT_hist=new_ROOT_hist)
+
+    def copy(self):
+        return self.__copy__()
 
     def __convert_other_for_operator__(self, other):
         if hasattr(other, "__iter__"):
