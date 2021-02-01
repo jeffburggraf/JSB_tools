@@ -8,6 +8,7 @@ from numbers import Number
 import numpy as np
 from JSB_tools.MCNP_helper.materials import Material
 from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping
+from JSB_tools.MCNP_helper.input_deck import NDIGITS
 
 
 class Surface(ABC, GeomSpecMixin):

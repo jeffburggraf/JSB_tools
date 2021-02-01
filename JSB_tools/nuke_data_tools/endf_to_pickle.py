@@ -6,26 +6,36 @@ from openmc.data import Reaction, Decay
 from pathlib import Path
 import re
 import marshal
-from typing import Dict, List
+from typing import Dict, List, TypedDict
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR,\
-    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer, SF_YIELD_PICKLE_DIR, NEUTRON_F_YIELD_PICKLE_DIR_GEF,\
-    NEUTRON_F_YIELD_PICKLE_DIR_ENDF, GammaLine, DecayMode
+    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer,\
+     GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
 import numpy as np
 
 
+for _directory in [DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR, PROTON_PICKLE_DIR,FISS_YIELDS_PATH]:
+    if not _directory.exists():
+        print(_directory)
+        _directory.mkdir()
+
 cwd = Path(__file__).parent
 
 parent_data_dir = cwd / 'endf_files'
 
+#  Below are instructions for downloading all the required data. As the names of the downloaded folders may change
+#  as libraries are updated, make sure the changes are reflected in the below directories.
+
 # download decay data from https://fispact.ukaea.uk/nuclear-data/downloads/. You should find a file titled
 # 'general decay data' in the list.
+#  Second set of decay files (JEFF) can be found at  https://www.nndc.bnl.gov/endf/b8.0/download.html
+#  See endf_files/decay/readme for more information.
 decay_data_dir = parent_data_dir / 'decay'
 
-# doenload the below at: https://www-nds.iaea.org/padf/
-proton_padf_data_dir = parent_data_dir / 'PADF_2007' / 'Files'
+# Download Proton Activation Data File from: https://www-nds.iaea.org/padf/
+proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
 proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
@@ -36,17 +46,15 @@ neutron_fission_yield_data_dir_endf = parent_data_dir / 'ENDF-B-VIII.0_nfy'
 sf_yield_data_dir = parent_data_dir / 'gefy81_s'
 neutron_fission_yield_data_dir_gef = parent_data_dir / 'gefy81_n'
 
-for _directory in [DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR, PROTON_PICKLE_DIR,
-                  SF_YIELD_PICKLE_DIR, NEUTRON_F_YIELD_PICKLE_DIR_GEF]:
-    if not _directory.exists():
-        _directory.mkdir()
+#  Download proton induced fission yields from https://fispact.ukaea.uk/nuclear-data/downloads/
+proton_fiss_yield_data = parent_data_dir/'UKFY41data'/'ukfy4_1p'
 
 _seconds_in_day = 24*60**2
 _seconds_in_month = _seconds_in_day*30
 _seconds_in_year = _seconds_in_month*12
 
-hl_match_1 = re.compile('Parent half-life: +([0-9.E+-]+) ([a-zA-Z]+) ([0-9A-Z]+).*')
-hl_match_2 = re.compile('T1\/2=([0-9.decE+-]+) ([A-Z]+).*')
+hl_match_1 = re.compile(r'Parent half-life: +([0-9.E+-]+) ([a-zA-Z]+) ([0-9A-Z]+).*')
+hl_match_2 = re.compile(r'T1\/2=([0-9.decE+-]+) ([A-Z]+).*')
 stable_match = re.compile('Parent half-life: STABLE.+')
 
 
@@ -64,7 +72,6 @@ def get_error_from_error_in_last_digit(x: Number, last_digit_err: Number):
 
     if '.' not in x_str:
         x_str += '.'
-    print(x_str)
     n_digits_after_zero = len(x_str[x_str.index('.'):]) - 1
     err_scale = 10**-n_digits_after_zero
     err = float(last_digit_err)*err_scale
@@ -251,7 +258,7 @@ def pickle_decay_data():
 
     for nuclide_name in NUCLIDE_INSTANCES.keys():
         with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
-            print("Writing data for {0}".format(nuclide_name))
+            print("Writing decay data for {0}".format(nuclide_name))
             pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
 
     with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'wb') as f:
@@ -260,6 +267,34 @@ def pickle_decay_data():
             key = nuclide.A, nuclide.Z, nuclide.half_life
             data[key] = name
         pickle.dump(data, f)
+
+    # data structure of d: {g_erg: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...])}
+
+    d = {}
+    for nuclide in NUCLIDE_INSTANCES.values():
+        for g in nuclide.decay_gamma_lines:
+            erg = g.erg.n
+            intensity: float = g.intensity.n
+            hl = nuclide.half_life.n
+            try:
+                i = len(d[erg][1]) - np.searchsorted(d[erg][1][::-1], intensity)
+                # the below flow control is to avoid adding duplicates.
+                for __name, __intensity in zip(d[erg][0], d[erg][1]):
+                    if __name == nuclide.name and __intensity == intensity:
+                        break
+                else:
+                    d[erg][0].insert(i, nuclide.name)
+                    d[erg][1].insert(i, intensity)
+                    d[erg][2].insert(i, hl)
+
+            except KeyError:
+                d[erg] = ([nuclide.name], [intensity], [hl])
+    for k, v in d.items():
+        print(k, v)
+    print('writing "__fast__gamma_dict__.marshal"')
+
+    with open(DECAY_PICKLE_DIR / '__fast__gamma_dict__.marshal', 'wb') as f:
+        marshal.dump(d, f)
 
 
 # modularize the patch work of reading PADF and ENDF-B-VIII.0_protons data.
@@ -347,7 +382,7 @@ def pickle_proton_activation_data():
 proton_fission_xs = {}
 
 
-def pickle_proton_fission_data():
+def pickle_proton_fission_xs_data():
     for file in (parent_data_dir/'FissionXS'/'Proton').iterdir():
         _m = re.match(r'([A-Z][a-z]{0,2})-([0-9]{1,3})\(P,F\)', file.name)
         if _m:
@@ -385,7 +420,7 @@ def pickle_proton_fission_data():
                 pickle.dump(data, f)
 
 
-def pickle_photon_fission_data():
+def pickle_gamma_fission_xs_data():
     photo_fission_data = {}
     for file in photon_enfd_b_data_dir.iterdir():
         _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file.name)
@@ -408,7 +443,7 @@ def pickle_photon_fission_data():
             pickle.dump(xs, f)
 
 
-def pickle_photon_activation_data():
+def pickle_gamma_activation_data():
     assert PHOTON_PICKLE_DIR.exists()
 
     all_reactions = {}
@@ -461,92 +496,118 @@ def pickle_sf_yields():
                 pickle.dump(y.independent[0], f)
 
 
-def pickle_gef_neutron_yields():
-    ergs_flag = False  # only write energies once.
+class Helper:
+    def __init__(self, raw_data_dir: Path, new_data_dir: Path, file_name_converter):
+        """
 
-    for f_path in neutron_fission_yield_data_dir_gef.iterdir():
-        _m = re.match('GEFY_([0-9]+)_([0-9]+)_n.dat', f_path.name)
-        if _m:
-            z = int(_m.groups()[0])
-            a = int(_m.groups()[1])
-            e_symbol = ATOMIC_SYMBOL[z]
+        Args:
+            raw_data_dir: dir of downloaded data
+            new_data_dir: Dir to save data
+            matcher: a re.compiled object that has 2-3 capturing groups that are, in order, Z, A, <m>, where m is
+             optional.
+        """
+        self.raw_data_dir = Path(raw_data_dir)
+        self.new_data_dir = Path(new_data_dir)
 
+        if isinstance(file_name_converter, str):
+            _compilied = re.compile(file_name_converter)
+
+            def file_name_converter(s):
+                if m := _compilied.match(s):
+                    if len(m.groups()) > 1:
+                        z = int(m.groups()[0])
+                        a = int(m.groups()[1])
+                        try:
+                            m = m.groups()[2]
+                            if m is None:
+                                m = 0
+                        except IndexError:
+                            m = 0
+                        symbol = ATOMIC_SYMBOL[z] + str(a) + ("m{}".format(m) if m else '')
+                        return symbol
+
+            self.file_name_converter = file_name_converter
+
+        else:
+            assert hasattr(file_name_converter, '__call__')
+            self.file_name_converter = file_name_converter
+
+    def get_valid(self):
+        """Generator that loops through source directory and returns dict of nuclide name and data path"""
+        for f_path in self.raw_data_dir.iterdir():
+            f_name = f_path.name
+            if symbol := self.file_name_converter(f_name):
+                if symbol is not None:
+                    yield {'parent_symbol': symbol, 'f_path': f_path}
+
+
+def pickle_fission_product_yields():
+
+    def build_data(y: FissionProductYields) -> yield_data_type:
+        data: yield_data_type = {}
+        for attrib in ['independent', 'cumulative']:
+            data[attrib] = {}
+            for energy, yield_dict in zip(y.energies, getattr(y, attrib)):
+                energy /= 1E6
+                energy = float(f"{energy:.4E}")
+                data[attrib][energy] = {}
+                for n_name, yield_ in yield_dict.items():
+                    yield_, yield_err = yield_.n, yield_.std_dev
+                    # if yield_ > 0:
+                    data[attrib][energy][n_name] = {'yield': float(yield_), "yield_err": float(yield_err)}
+        return data
+
+    #   To add more fission yield source, add the data source directory, write directory,
+    #   and the regex to extract Z,A and M (All is done via a Helper instance)
+    neutron_yield_marshal_path_endf = FISS_YIELDS_PATH/'neutron'/'endf'
+    neutron_yield_marshal_path_gef = FISS_YIELDS_PATH/'neutron'/'gef'
+    sf_yield_marshal_path_gef = FISS_YIELDS_PATH/'SF'/'gef'
+    proton_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'proton'/'ukfy'
+
+    for _dir in [neutron_yield_marshal_path_endf, neutron_yield_marshal_path_gef, sf_yield_marshal_path_gef]:
+        if not _dir.parent.exists():
+            Path.mkdir(_dir.parent)
+        if not _dir.exists():
+            Path.mkdir(_dir)
+    helpers = [Helper(neutron_fission_yield_data_dir_gef,
+                      neutron_yield_marshal_path_gef,
+                      'GEFY_([0-9]+)_([0-9]+)_n.dat'),
+               Helper(neutron_fission_yield_data_dir_endf,
+                      neutron_yield_marshal_path_endf,
+                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
+               Helper(sf_yield_data_dir,
+                      sf_yield_marshal_path_gef,
+                      'GEFY_([0-9]+)_([0-9]+)_s.dat'),
+               Helper(proton_fiss_yield_data,
+                      proton_yield_marshal_path_ukfy,
+                      lambda x: x)]
+    #
+
+    for helper in helpers:
+        for x in helper.get_valid():
+            f_path = x['f_path']
+            parent_symbol = x['parent_symbol']
             try:
-                print('Pickling neutron-induced fission data for {}, z={}, a={} from file {}'.format(e_symbol, z, a, f_path))
-                y = FissionProductYields(str(f_path))
+                openmc_yield = FissionProductYields(f_path)
             except KeyError:
-                warn('Failed to load neutron-induced fission data from "{}" in "{}"'.format(e_symbol, f_path.name))
+                warn('Unable to load fission yield from file {}'.format(f_path))
                 continue
 
-            data = {'independent': {}, 'cumulative': {}}
+            data = build_data(openmc_yield)
+            for yield_type, data in data.items():  # yield_type: cumulative or independent
+                if not (helper.new_data_dir/yield_type).exists():
+                    Path.mkdir(helper.new_data_dir/yield_type)
+                f_path = helper.new_data_dir/str(yield_type)/str(parent_symbol + '.marshal')
 
-            for yield_type in data.keys():
-                parent_directory = NEUTRON_F_YIELD_PICKLE_DIR_GEF / yield_type
-                if not parent_directory.exists():
-                    parent_directory.mkdir()
-
-                for i, erg in enumerate(y.energies):
-                    # for product, yield_ in y.independent[i].items():
-                    for product, yield_ in getattr(y, yield_type)[i].items():
-                        assert isinstance(product, str)
-                        try:
-                            data[yield_type][product]['ergs'].append(float(erg))
-                            data[yield_type][product]['yield'].append(float(yield_.n))
-                            data[yield_type][product]['yield_err'].append(float(yield_.std_dev))
-                        except KeyError:
-                            data[yield_type][product] = {'ergs': [erg], 'yield': [yield_.n],
-                                                         'yield_err': [float(yield_.std_dev)]}
-
-            for yield_type, yield_data in data.items():
-                for daughter_nuclide in yield_data.keys():
-                    for key in yield_data[daughter_nuclide].keys():
-                        if key == 'ergs':
-                            if not ergs_flag:
-                                ergs_flag = True
-                                with open(NEUTRON_F_YIELD_PICKLE_DIR_GEF / 'yield_ergs.pickle', 'wb') as f:
-                                    erg_data = np.array(yield_data[daughter_nuclide]['ergs'])*1E-6  # eV -> MeV
-                                    pickle.dump(erg_data, f)
-                        else:
-                            # set yield and yield_error
-                            yield_data[daughter_nuclide][key] = list(yield_data[daughter_nuclide][key])
-
-                    del yield_data[daughter_nuclide]['ergs']
-                with open(NEUTRON_F_YIELD_PICKLE_DIR_GEF / yield_type / (y.nuclide['name'] + '.marshal'), 'wb') as f:
-                    marshal.dump(yield_data, f)
-
-
-def pickle_endf_neutron_yields():
-    for f_path in neutron_fission_yield_data_dir_endf.iterdir():
-        _m = re.match('nfy-([0-9]+)_([a-zA-Z]+)_([0-9]+)(m[0-9])*', f_path.name)
-        if _m:
-            s = _m.groups()[1] + _m.groups()[2]
-            if _m.groups()[-1] is not None:
-                s += '_' + _m.groups()[-1]
-            y = FissionProductYields(f_path)
-            ergs = y.energies/1E6
-            for yield_type in ['independent', 'cumulative']:
-                data = {'ergs': [float(e) for e in ergs]}
-                new_f_path = Path(str(NEUTRON_F_YIELD_PICKLE_DIR_ENDF/yield_type/s) + '.marshal')
-                if not new_f_path.parent.exists():
-                    new_f_path.parent.mkdir()
-                for yields in getattr(y, yield_type):
-                    for product, yield_ in yields.items():
-                        if product not in data:
-                            data[product] = {'yield': [yield_.n], 'yield_err': [float(yield_.std_dev)]}
-                        else:
-                            data[product]['yield'].append(yield_.n)
-                            data[product]['yield_err'].append(float(yield_.std_dev))
-                with open(new_f_path, 'wb') as f:
+                with open(f_path, 'wb') as f:
                     marshal.dump(data, f)
-
-
-
+                print('Written Fission yields for {}'
+                      .format(Path(f_path.parents[2].name)/f_path.parents[1].name/f_path.parent.name/f_path.name))
 
 
 def pickle_all_nuke_data():
     # pickle_gef_neutron_yields()
     # pickle_endf_neutron_yields()
-    # pickle_sf_yields()
     pickle_decay_data()
     # pickle_proton_activation_data()
     # pickle_proton_fission_data()  # pickle proton fission data in a special way due to compatibility issues with EDNF6
@@ -557,15 +618,15 @@ def pickle_all_nuke_data():
 
 
 if __name__ == '__main__':
-    pass
+    pickle_fission_product_yields()
     import matplotlib.pyplot as plt
     # pickle_all_nuke_data()
-    print(Nuclide.from_symbol('N14').get_incident_photon_daughters().values())
-    for n in Nuclide.from_symbol('N14').get_incident_proton_daughters().values():
-        if not n.is_stable:
-            n.plot_decay_gamma_spectrum(min_intensity=0)
-
-    plt.show()
+    # print(Nuclide.from_symbol('N14').get_incident_photon_daughters().values())
+    # for n in Nuclide.from_symbol('N14').get_incident_proton_daughters().values():
+    #     if not n.is_stable:
+    #         n.plot_decay_gamma_spectrum(min_intensity=0)
+    #
+    # plt.show()
     # e = Evaluation('/Users/jeffreyburggraf/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/decay/decay_2020/C010')
     # d =Decay.from_endf(e)
     # print(d.spectra)

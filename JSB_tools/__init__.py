@@ -8,6 +8,8 @@ from typing import List
 import numpy as np
 import time
 from numbers import Number
+from itertools import islice
+from sortedcontainers import SortedDict
 
 
 class ProgressReport:
@@ -47,6 +49,15 @@ class ProgressReport:
         if t_now > self.__next_print_time__:
             self.__report__(t_now, i)
             self.__next_print_time__ += self.__sec_per_print__
+
+
+def closest(sorted_dict: SortedDict, key):
+    """Return closest key in `sorted_dict` to given `key`."""
+    assert isinstance(sorted_dict, SortedDict)
+    assert len(sorted_dict) > 0
+    keys = list(islice(sorted_dict.irange(minimum=key), 1))
+    keys.extend(islice(sorted_dict.irange(maximum=key, reverse=True), 1))
+    return min(keys, key=lambda k: abs(key - k))
 
 
 def ROOT_loop():

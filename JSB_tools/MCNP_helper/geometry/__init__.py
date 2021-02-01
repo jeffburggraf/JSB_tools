@@ -1,5 +1,5 @@
 from __future__ import annotations
-from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, F4Tally, CellGroup
+from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, F4Tally, CellGroup, NDIGITS
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 import numpy as np
 from JSB_tools.MCNP_helper.materials import Material
@@ -10,6 +10,11 @@ or manually specified.
 
 
 def clear_all():
+    """
+    Clears all Cell, Surface, Material, and Tally class variables
+    Returns:None
+
+    """
     Material.clear()
     Cell.clear()
     Surface.clear()
@@ -29,8 +34,25 @@ class CuboidSurface(Surface):
             assert kmin < kmax, 'Cuboid with minimum coordinate >= maximum coordinate: {} is >= {}'.format(kmax, kmax)
 
     @classmethod
-    def like_cylinder(cls, z0, dz, x_width, y_width, x_center=0, y_center=0,  surf_name=None, surf_num=None,
-                      comment=None):
+    def from_thickness_and_widths(cls, z0, dz, x_width, y_width, x_center=0, y_center=0, orientation='xyz', surf_name=None, surf_num=None,
+                                  comment=None, ):
+        """
+        Args:
+            z0: initial z
+            dz: thickness in the z direction
+            x_width: full with in the x-axis
+            y_width:  full with in the y-axis
+            x_center: center of cell in the x axis.
+            y_center: center of cell in the y axis.
+            orientation: make the direction of the z axis refer to another axis - todo
+            surf_name:
+            surf_num:
+            comment:
+
+        Returns:
+
+        """
+        #  todo: orientation
         return CuboidSurface(xmin=x_center-x_width/2, ymin=y_center-y_width/2, zmin=z0, xmax=x_center + x_width/2,
                              ymax=y_center+y_width/2, zmax=z0+dz, surf_name=surf_name, surf_num=surf_num,
                              comment=comment)
@@ -42,9 +64,13 @@ class CuboidSurface(Surface):
     @property
     def surface_card(self):
         comment = get_comment(self.surface_comment, self.surface_name)
-        return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
-            .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=self.zmin,
-                    zmax=self.zmax, comment=comment)
+        out = f'{self.surface_number} {self.xmin:.{NDIGITS}g} {self.xmax:.{NDIGITS}g}  ' \
+              f'{self.ymin:.{NDIGITS}g} {self.ymax:.{NDIGITS}g}  {self.zmin:.{NDIGITS}g} {self.zmax:.{NDIGITS}g}' \
+              f' {comment}'
+        # return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
+        #     .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=zmin,
+        #             zmax=self.zmax, comment=comment)  # old
+        return out
 
 
 class CuboidCell(Cell, CuboidSurface):
@@ -178,9 +204,12 @@ class RightCylinderSurface(Surface):
     @property
     def surface_card(self):
         comment = get_comment(self.surface_comment, self.surface_name)
-        out = '{0} RCC {x0} {y0} {z0}  {dx} {dy} {dz} {r} {comment}' \
-            .format(self.surface_number, x0=self.x0, y0=self.y0, z0=self.z0, dx=self.dx, dy=self.dy,
-                    dz=self.dz, r=self.radius, comment=comment)
+        out = f"{self.surface_number} RCC {self.x0:.{NDIGITS}g} {self.y0:.{NDIGITS}g} {self.z0:.{NDIGITS}g}" \
+              f"  {self.dx:.{NDIGITS}g} {self.dy:.{NDIGITS}g} {self.dz:.{NDIGITS}g} {self.radius:.{NDIGITS}g}" \
+              f" {comment}"
+        # out = '{0} RCC {x0} {y0} {z0}  {dx} {dy} {dz} {r} {comment}' \
+        #     .format(self.surface_number, x0=self.x0, y0=self.y0, z0=self.z0, dx=self.dx, dy=self.dy,
+        #             dz=self.dz, r=self.radius, comment=comment)
         return out
 
 

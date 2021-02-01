@@ -9,10 +9,14 @@ from atexit import register, unregister
 from uncertainties import UFloat
 from numbers import Number
 from JSB_tools.TH1 import TH1F
+import pickle
 import sys
 import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
+from types import ModuleType
 from abc import abstractmethod, ABC
+
+NDIGITS = 5  # the number of digits for rounding all evaluated numbers. Helps with round-off error
 
 
 def _split_line(line):
@@ -213,9 +217,11 @@ class InputDeck:
     def __split_new_lines__(self):
         title_line = self.__new_inp_lines__[0]  # Don't split the title line. MCNP sucks and won't allow it
         if len(title_line) > 79:
-            title_line = title_line[:79]
-            warnings.warn('Title line cannot be greater than 79 chars long due to MCNP limitations. Truncating to:\n'
-                          '"{}"'.format(title_line))
+            warnings.warn('Title line cannot be greater than 79 chars long due to MCNP limitations. Truncating\n'
+                          'with comment line'.format(title_line))
+            titles = [title_line[i*78:(i+1)*78] for i in range(len(title_line)//78)]
+            titles.append('\n')
+            title_line = '\nc '.join(titles)
 
         new_inp_lines = self.__new_inp_lines__[1:]
         self.__new_inp_lines__ = []
@@ -226,7 +232,6 @@ class InputDeck:
 
         self.__new_inp_lines__.extend(new_inp_lines[self.MCNP_EOF:])
         self.__new_inp_lines__.insert(0, title_line)
-
 
     def cycle_random_number_mcnp(self):
         assert isinstance(self.cycle_rnd_seed, int)
@@ -288,7 +293,12 @@ class InputDeck:
                         warnings.warn("Empty embedded code in line {0} in file {1} ".format(line_number, f_name))
                     else:
                         try:
-                            new_line += "{0}".format(eval(exp_to_process, dict_of_globals))
+                            evaluated = eval(exp_to_process, dict_of_globals)
+                            if isinstance(evaluated, Number):
+                                _fmt = ':.{}e'.format(NDIGITS)
+                                evaluated = ('{' + _fmt + '}').format(evaluated)
+
+                            new_line += "{0}".format(evaluated)
                         except Exception as e:
                             err = _exception(str(e))
                             exception_msg += err
@@ -316,6 +326,23 @@ class InputDeck:
 
         assert new_inp_directory.exists(), "Directory '{0}' doesn't exist.".format(new_inp_directory)
         return new_inp_directory
+
+    @staticmethod
+    def __pickle_globals__(new_file_full_path: Path, dict_of_globals: dict):
+        def check_type(x):
+            if isinstance(x, (Number, str, bool)):
+                return True
+            else:
+                return False
+        new_file_full_path = Path(new_file_full_path)
+        new_f_path = new_file_full_path.with_suffix('.pickle')
+        with open(new_f_path, 'wb') as f:
+            for k, var in dict_of_globals.items():
+                if check_type(var):
+                    try:
+                        pickle.dump((k, var), f)
+                    except TypeError:
+                        pass
 
     def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
                            **mcnp_or_phits_kwargs):
@@ -355,6 +382,8 @@ class InputDeck:
         if self.gen_run_script is True:
             self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs)
         self.__write_file__(new_file_full_path)
+
+        self.__pickle_globals__(new_file_full_path, dict_of_globals)
 
         self.__new_inp_lines__ = []
 

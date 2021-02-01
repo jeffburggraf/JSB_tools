@@ -14,12 +14,13 @@ from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 import platform
 import subprocess
 from functools import cached_property
+import pickle
+from pickle import UnpicklingError
 #  Todo:
 #   Add function to access num particles entering cells
 
 
 class Tally:
-    # Todo: why aren't annotations working for this?
     def __init__(self):
         self.energies: Sized
         self.flux: UFloat
@@ -387,21 +388,25 @@ class F4Tally(Tally):
 
 class OutP:
     def __init__(self, file_path):
-        self.__f_path__ = file_path
+        self.__f_path__ = Path(file_path)
         self.__outp_lines__ = open(file_path).readlines()
         if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0]):
             warn('\nThe file\n"{}"\ndoes not appear to be an MCNP output file!\n'.format(file_path))
 
         self.input_deck = []
         self.nps = None
+        self.input_file_path = None
         for line in self.__outp_lines__:
             _m = re.match("^ {0,9}[0-9]+- {7}(.+)", line)
             if _m:
                 card = _m.group(1).rstrip().lower()
                 self.input_deck.append(card)
-            _m_nps = re.match(" *dump no\. +[0-9].+nps = +([0-9]+)", line)
+            _m_nps = re.match(r" *dump no\. +[0-9].+nps = +([0-9]+)", line)
             if _m_nps:
                 self.nps = int(_m_nps.group(1))
+            if self.input_file_path is None:
+                if m := re.match('.+i=([^ ]*)', line):
+                    self.input_file_path = self.__f_path__.parent/m.groups()[0]
 
         self.inp_title = self.input_deck[0]
 
@@ -426,6 +431,19 @@ class OutP:
 
     def get_tally(self, tally_number_or_name):
         return F4Tally(tally_number_or_name, self)
+
+    def get_globals(self):
+        pickle_path = Path(self.input_file_path).with_suffix('.pickle')
+        out = {}
+        assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(self.__f_path__)
+        with open(pickle_path, 'rb') as f:
+            while True:
+                try:
+                    var_name, var = pickle.load(f)
+                    out[var_name] = var
+                except (EOFError, UnpicklingError):
+                    break
+        return out
 
     def read_stopping_powers(self, particle, material_id=None, cell_num_4_density=None):
         particle = particle.lower()
@@ -452,7 +470,6 @@ class OutP:
             else:
                 material_id = self.cells[cell_num_4_density].mat
             s.cell_density = self.cells[cell_num_4_density].density
-
 
         else:
             assert material_id is not None, "At least one of `material_id` or `cell_num` must be given."
