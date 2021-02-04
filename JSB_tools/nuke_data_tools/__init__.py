@@ -15,11 +15,11 @@ import marshal
 from functools import cached_property
 from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
 from typing import Union, List, Dict, Collection, Tuple, TypedDict
-
+from numbers import Number
 pwd = Path(__file__).parent
 
 
-__all__ = ['Nuclide']
+__all__ = ['Nuclide', 'avogadros_number']
 
 
 #  Units
@@ -270,7 +270,6 @@ class FissionYields:
                             nuclide_symbol = Nuclide.from_symbol(nuclide_symbol).remove_neutron().name
                         elif _inducing_particle == 'proton':
                             nuclide_symbol = Nuclide.from_symbol(nuclide_symbol).remove_proton().name
-                        print(nuclide_symbol)
                         return self.__search_path__('neutron', data_sources, independent_bool, nuclide_symbol)
                     out = __get_fiss_yield_path__(nuclide_symbol, _inducing_particle, _d, independent_bool)
                     return out
@@ -280,19 +279,27 @@ class FissionYields:
             pass
 
     def __init__(self, nuclide: Nuclide,
-                 inducing_particle: str,
-                 eval_ergs: Union[Collection, type(None)] = None,
+                 inducing_particle: Union[str, type(None)],
+                 eval_ergs: Union[Collection, type(None), float] = None,
                  data_source=None,
                  independent_bool: bool = True):
         """
         Retrieve fission yield data, if available. In some cases (e.g. gamma fiss), the ode will convert neutron yield
         to the desired yield by adjusting the nucleaous
         Args:
-            nuclide:
-            inducing_particle:
-            eval_ergs:
-            data_source:
-            independent_bool:
+            nuclide: Fissioning Nuclide.
+            inducing_particle: Use 'sf' or None for spontaneous fission
+            eval_ergs: Iterable, Number, or None. Energies to evaluate (and interpolate ) yields at.
+             If None, use the energies from data source.
+            data_source: Several data sources are available depending on the inducing particle.
+                         neutron: ['endf', 'gef']
+                         proton': ['ukfy', <<convert from neutron>>]
+                         gamma: [<<convert from neutron>>]
+                         'sf':['gef']
+                         'alpha': []
+                         electron: []
+                         If None, pick best.
+            independent_bool: Independent or cumulative.
         """
         assert isinstance(inducing_particle, str)
         inducing_particle = inducing_particle.lower()
@@ -303,8 +310,12 @@ class FissionYields:
         nuclide_symbol = nuclide.name
 
         self.converted_from_neutron_fission = False
+
+        # data_sources: Mapping from fission type to data source/directory name.
+        #  None signifies to try to convert energy to equivalent for neutron induced fission, and use
+        #  n-induced fission yields.
         data_sources = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': [None], 'alpha': [],
-                        'electron': []}
+                        'electron': [], 'sf': ['gef']}
 
         if data_source is None:
             fiss_yield_path = self.__search_path__(inducing_particle, data_sources, independent_bool, nuclide_symbol)
@@ -329,12 +340,19 @@ class FissionYields:
                 else:
                     assert False
             else:
+                if isinstance(eval_ergs, Number):
+                    eval_ergs = [eval_ergs]
+                else:
+                    _msg = '`eval_ergs` must be an iterable of Numbers, None, or a Number'
+                    assert hasattr(eval_ergs, '__iter__'), _msg
+                    assert all(isinstance(e, Number) for e in eval_ergs), _msg
+                eval_ergs = np.array(eval_ergs)
                 if inducing_particle == 'gamma':
                     self.energies = GammaFissionErgConverter.gamma2neutron(nuclide, data_ergs)
                 elif inducing_particle == 'proton':
                     self.energies = ProtonFissionErgConverter.proton2neutron(nuclide, data_ergs)
                 else:
-                    assert False, 'Invalid inducing particle, {}'.format(inducing_particle)
+                    assert False, 'Invalid inducing particle, "{}"'.format(inducing_particle)
 
         self.yields = {}
         for erg, yield_dict in fiss_data.items():
@@ -343,12 +361,12 @@ class FissionYields:
                     self.yields[n_name] = ([], [])
                 self.yields[n_name][0].append(yield_dict['yield'])
                 self.yields[n_name][1].append(yield_dict['yield_err'])
-        # print(len(data_ergs))
-        # print(len(self.yields['Xe139'][1]))
-        for k, v in self.yields.items():
-            print(len(v[0]), len(data_ergs))
+
         self.yields = {k: unp.uarray(np.interp(eval_ergs, data_ergs, v[0]), np.interp(eval_ergs, data_ergs, v[1]))
-                       for k, v in self.yields.items()}
+                       for k, v in sorted(self.yields.items(), key=lambda x: -sum(x[1][0]))}
+
+    def __repr__(self):
+        return str(self.yields)
 
 
 class CrossSection1D:
@@ -654,7 +672,7 @@ class Nuclide:
             <Nuclide: In120_m2; t_1/2 = 47.3+/-0.5>
 
         Fission yields:
-            >>> Nuclide.from_symbol('U238').independent_sf_fission_yield()['Zn77']
+            >>>Nuclide.from_symbol('U238').independent_sf_fission_yield().yields['Zn77']
             1.1e-05+/-1.1e-05
 
         (todo)
@@ -985,7 +1003,6 @@ class Nuclide:
         else:
             instance = NUCLIDE_INSTANCES[symbol]
             instance.is_valid = True
-        # assert isinstance(instance, type(cls)), type(instance)
         return instance
 
     def __repr__(self):
@@ -1023,170 +1040,45 @@ class Nuclide:
             result[n_name]: UFloat = ufloat(data['yield'], data['yield_err'])
         return result
 
-    def __get_neutron_fiss_yield_endf__(self, yield_type) -> Tuple[Collection[float], Dict[str, unp.uarray]]:
-        assert yield_type in ['cumulative', 'independent']
-        f_path = NEUTRON_F_YIELD_PICKLE_DIR_ENDF/yield_type/(self.name + '.marshal')
-        assert f_path.exists(), 'No ENDF neutron fission yield data for {}'.format(self.name)
-        with open(f_path, 'rb') as f:
-            yield_data = marshal.load(f)
-        ergs = np.array(yield_data['ergs'])
-        del yield_data['ergs']
-        return ergs, yield_data
+    def independent_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle='gamma', eval_ergs=ergs, data_source=data_source,
+                          independent_bool=True)
+        return y
 
-    def __get_neutron_fiss_yield_gef__(self, independent_bool, eval_ergs) \
-            -> Tuple[Collection[float], Dict[str, unp.uarray]]:
-        """
-        Neutron induced fission yield from GEF library.
-        Args:
-            independent_bool: Independent or cumulative yield.
-            eval_ergs: Energies to evaluate (interpolate) the yield at. If None, use the energies in the EDNF
+    def cumulative_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle='gamma', eval_ergs=ergs, data_source=data_source,
+                          independent_bool=False)
+        return y
 
-        Returns: Dictionary structured like so:
-            ([erg1, erg2, ..., ergn],
-             {nuclide_name1: [yield1,..., yieldn], nuclide_name2: [yield1,..., yieldn],...})
+    def independent_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle='proton', eval_ergs=ergs, data_source=data_source,
+                          independent_bool=True)
+        return y
 
-        """
-        sub_dir = ('independent' if independent_bool else 'cumulative')
-        fission_nuclide_path = NEUTRON_F_YIELD_PICKLE_DIR_GEF / sub_dir / '{}.marshal'.format(self.name)
-        # un_packed_yield_data: Dict[str, Collection[UFloat]] = {}
-        # if self.name not in NEUTRON_YIELD_DATA[sub_dir]:
-        #     assert fission_nuclide_path.exists(), 'No neutron fission yield data for {}'.format(self.name)
-        #     with open(fission_nuclide_path, 'rb') as f:
-        #         yield_data = marshal.load(f)
-        #     NEUTRON_YIELD_DATA[sub_dir][self.name] = yield_data
-        # else:
-        #     yield_data: yield_data_type = NEUTRON_YIELD_DATA[sub_dir]
-        # endf_ergs = np.array(list(yield_data.keys()))
-        # for erg in endf_ergs:
-        #     for nuclide_name, __yield in yield_data[erg].items():
-        #         uncertain_yield = ufloat(__yield['yield'],__yield['yield_err'])
-        #         try:
-        #             un_packed_yield_data[nuclide_name].append(uncertain_yield)
-        #         except KeyError::
-        #         un_packed_yield_data[nuclide_name] = [uncertain_yield]
+    def cumulative_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle='proton', eval_ergs=ergs, data_source=data_source,
+                          independent_bool=False)
+        return y
 
+    def independent_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle='neutron', eval_ergs=ergs, data_source=data_source,
+                          independent_bool=True)
+        return y
 
+    def cumulative_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle='neutron', eval_ergs=ergs, data_source=data_source,
+                          independent_bool=False)
+        return y
 
+    def independent_sf_fission_yield(self, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle=None, data_source=data_source,
+                          independent_bool=True)
+        return y
 
-    #
-        # sub_dir = ('independent' if independent_bool else 'cumulative')
-        # __set_neutron_fiss_yield_ergs__()
-        # data_ergs = NEUTRON_YIELD_DATA['ergs']
-        # if eval_ergs is None:
-        #     new_ergs = data_ergs
-        # else:
-        #     new_ergs = eval_ergs
-        #
-        # fission_nuclide_path = NEUTRON_F_YIELD_PICKLE_DIR_GEF / sub_dir / '{}.marshal'.format(self.name)
-        # if self.name not in NEUTRON_YIELD_DATA[sub_dir]:
-        #     assert fission_nuclide_path.exists(), 'No neutron fission yield data for {}'.format(self.name)
-        #     with open(fission_nuclide_path, 'rb') as f:
-        #         yield_data = marshal.load(f)
-        #         NEUTRON_YIELD_DATA[sub_dir][self.name] = yield_data
-        # else:
-        #     yield_data = NEUTRON_YIELD_DATA[sub_dir][self.name]
-        #
-        # def interp(yield_data_):
-        #     nominal_values = yield_data_['yield']
-        #     std_devs = yield_data_['yield_err']
-        #     result = unp.uarray(np.interp(new_ergs, data_ergs, nominal_values),
-        #                         np.interp(new_ergs, data_ergs, std_devs))
-        #     if new_ergs[-1] > data_ergs[-1]:
-        #         warn('Attempted to search for fission yield with energy less than maximum for tabulated data!\n'
-        #              'Truncating max.\n'
-        #              'your max: {}; tabulated max: {}'.format(new_ergs[-1], data_ergs[-1]))
-        #     if new_ergs[0] < data_ergs[0]:
-        #         warn('Attempted to search for fission yield with energy less than minimum for tabulated data!\n'
-        #              'Truncating min.\n'
-        #              'your min: {}; tabulated min: {}'.format(new_ergs[0], data_ergs[0]))
-        #
-        #     return result
-        #
-        # # if product_nuclide == 'all':
-        # out = {k: interp(v) for k, v in yield_data.items()}
-        # # if eval_ergs is None:
-        # return new_ergs, out
-        # # else:
-        # #     return out
-        # #
-        # # elif product_nuclide not in yield_data:
-        # #     warn('Gef fission yield data for fission fragment {} from parent nucleus {} not present. Assuming zero.'
-        # #          .format(product_nuclide, self.name))
-        # #     _ = np.zeros_like(new_ergs)
-        # #     out = unp.uarray(_, _)
-        # #     # if eval_ergs is None:
-        # #     return new_ergs, out
-        # #     # else:
-        # #     #     return out
-        # # else:
-        # #     y = yield_data[product_nuclide]
-        # #     # if eval_ergs is None:
-        # #     return new_ergs, interp(y)
-        # #     # else:
-        # #     #     return interp(y)
-
-    def independent_neutron_fission_yield_gef(self, product_nuclide='all', ergs=None):
-        return self.__get_neutron_fiss_yield_gef__(True, ergs)
-
-    def cumulative_neutron_fission_yield_gef(self, product_nuclide='all', ergs=None):
-        return self.__get_neutron_fiss_yield_gef__(False, ergs)
-
-    def independent_gamma_fission_yield_gef(self, product_nuclide='all', ergs=None)\
-            -> Tuple[Collection[float], Dict[str, unp.uarray]]:
-        if ergs is None:
-            ergs = __set_neutron_fiss_yield_ergs__()
-        ergs = get_gamma_to_neutron_equiv_fission_erg(self, ergs)
-        out = self.__get_neutron_fiss_yield_gef__(True, ergs)
-        # if non_flag:
-        #     return ergs, out
-        # else:
-        return out
-
-    def cumulative_gamma_fission_yield_gef(self, ergs=None) \
-            -> Tuple[Collection[float], Dict[str, unp.uarray]]:
-        if ergs is None:
-            ergs = __set_neutron_fiss_yield_ergs__()
-        ergs = get_gamma_to_neutron_equiv_fission_erg(self, ergs)
-        out = self.__get_neutron_fiss_yield_gef__(False, ergs)
-        # if non_flag:
-        #     return ergs, out
-        # else:
-        return out
-
-    def independent_proton_fission_yield_gef(self, product_nuclide='all', ergs=None)\
-            -> Tuple[Collection[float], Dict[str, unp.uarray]]:
-        if ergs is None:
-            ergs = __set_neutron_fiss_yield_ergs__()
-        ergs = get_proton_to_neutron_equiv_fission_erg(self, ergs)
-        out = self.__get_neutron_fiss_yield_gef__(True, ergs)
-        # if non_flag:
-        #     return ergs, out
-        # else:
-        return out
-
-    def cumulative_proton_fission_yield_gef(self, product_nuclide='all', ergs=None) \
-            -> Tuple[Collection[float], Dict[str, unp.uarray]]:
-        # non_flag = ergs is None
-        if ergs is None:
-            ergs = __set_neutron_fiss_yield_ergs__()
-        ergs = get_proton_to_neutron_equiv_fission_erg(self, ergs)
-        out = self.__get_neutron_fiss_yield_gef__(False, ergs)
-        # if non_flag:
-        #     return ergs, out
-        # else:
-        return out
-
-    def cumulative_neutron_fission_yield_endf(self):
-        return self.__get_neutron_fiss_yield_endf__('cumulative')
-
-    def independent_neutron_fission_yield_endf(self):
-        return self.__get_neutron_fiss_yield_endf__('independent')
-
-    def independent_sf_fission_yield(self):
-        return self.__get_sf_yield__(True)
-
-    def cumulative_sf_fission_yield(self):
-        return self.__get_sf_yield__(False)
+    def cumulative_sf_fission_yield(self, data_source=None) -> FissionYields:
+        y = FissionYields(nuclide=self, inducing_particle=None,  data_source=data_source,
+                          independent_bool=False)
+        return y
 
     def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         pickle_path = PROTON_PICKLE_DIR / (self.name + ".pickle")

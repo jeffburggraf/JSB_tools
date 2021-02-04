@@ -8,6 +8,26 @@ For the creation of surfaces and cells in MCNP. Cell/surface numbers can be mana
 or manually specified.
 """
 
+__all__ = ['clear_all']
+
+
+def clear_cells():
+    Cell.clear()
+
+
+def clear_surfaces():
+    Surface.clear()
+
+
+def clear_tallys():
+    F4Tally.clear()
+
+
+def clear_all_but_materials():
+    clear_cells()
+    clear_surfaces()
+    clear_tallys()
+
 
 def clear_all():
     """

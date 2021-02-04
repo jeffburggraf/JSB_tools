@@ -426,12 +426,17 @@ class TH1F:
 
         return fit_result, eval_fit
 
-    def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, **kwargs):
+    def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
+             ylabel=None, **kwargs):
         if ax is None:
             _, ax = plt.subplots()
         else:
             if ax is plt:
                 ax = ax.gca()
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
 
         if logy:
             ax.set_yscale(value='log')
@@ -626,7 +631,7 @@ class TH1F:
         self.__Cycle_line_styles__(len(TH1F.__histo_pad_dict__[ROOT.gPad.GetName()]) - 1)
         self.__update_pads__()
 
-    def find_bin_index(self, x:float) -> int:
+    def find_bin_index(self, x: float) -> int:
         """Return bin index for the bin containing the value x"""
         assert self.__bin_left_edges__[0] <= x <= self.__bin_left_edges__[-1], \
             "x of {0} out of range, between {1} and {2}!".format(x, self.__bin_left_edges__[0],

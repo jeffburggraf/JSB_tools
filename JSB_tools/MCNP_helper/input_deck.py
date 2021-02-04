@@ -413,6 +413,7 @@ class InputDeck:
             script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in mcnp_or_phits_kwargs.items()])
         new_file_name = new_file_full_path.name
         cd_cmd = "cd {0}".format(new_file_full_path.parent)
+
         run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, new_file_name, script_kwargs) if self.is_mcnp else \
             "{0};phits.sh {1} {2}".format(cd_cmd, new_file_name, script_kwargs)
 
@@ -440,16 +441,18 @@ class InputDeck:
 
     def __del(self):
         if self.__has_called_write_inp_in_scope__:
-            with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
-                import inspect
-                cmds = inspect.getsource(__clean__)
-                cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))
-                cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
-                clean_file.write(cmds)
+            if self.is_mcnp:
+                with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
+                    import inspect
+                    cmds = inspect.getsource(__clean__)
+                    cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))
+                    cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
+                    clean_file.write(cmds)
 
             print('Run the following commands in terminal to automatically run the simulation(s) just prepared:')
             print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
-            print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
+            if self.is_mcnp:
+                print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
         else:
             warnings.warn('\nTo evaluate and write input file use\n\ti.write_inp_in_scope(globals(), [optional args])\n'
                           'where `i` is an InputDeck instance.')

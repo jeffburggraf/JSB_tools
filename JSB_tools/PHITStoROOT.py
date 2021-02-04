@@ -15,6 +15,7 @@ import os
 import re
 import numpy as np
 from JSB_tools import ProgressReport
+import time
 
 __all__ = ["phits_to_root"]
 
@@ -419,7 +420,7 @@ class PrevParameters:
 
 
 def phits_to_root(input_file_path, output_file_name=None, output_directory=None, max_histories=None, tree_name="tree",
-                  overwrite=True) -> ROOT.TTree:
+                  overwrite=True, max_time=None) -> ROOT.TTree:
 
     container = Container(input_file_path, output_file_name, output_directory, max_histories, tree_name, overwrite)
     file_size = Path(input_file_path).stat().st_size
@@ -457,15 +458,26 @@ def phits_to_root(input_file_path, output_file_name=None, output_directory=None,
         else:
             return list(map(map_func, l.replace("D", "E").split()))
 
+    t_start = time.time()
+    next_print_time = t_start + 1
     while max_histories is None or n_events < max_histories:
+        if max_time is not None:
+            t_now = time.time()
+            dt = t_now - t_start
+            if t_now >= next_print_time:
+                next_print_time = t_now + 1
+                print(f'{int(max_time-dt)} seconds remaining until max time reached')
+            if dt > max_time:
+                break
         line = file.readline()
         bytes_read = file.tell()
-        if progress is not None:
-            progress.log(bytes_read)
-        else:
-            if n_events > 5000:
-                i_final = bytes_read * max_histories / n_events
-                progress = ProgressReport(i_final, i_init=bytes_read)
+        if max_time is None:
+            if progress is not None:
+                progress.log(bytes_read)
+            else:
+                if n_events > 5000:
+                    i_final = bytes_read * max_histories / n_events
+                    progress = ProgressReport(i_final, i_init=bytes_read)
 
         if line == "":
             break

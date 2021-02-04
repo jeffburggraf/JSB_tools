@@ -386,6 +386,20 @@ class F4Tally(Tally):
         return ax
 
 
+def load_globals(pickle_path):
+    # pickle_path = Path(self.input_file_path).with_suffix('.pickle')
+    out = {}
+    assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(self.__f_path__)
+    with open(pickle_path, 'rb') as f:
+        while True:
+            try:
+                var_name, var = pickle.load(f)
+                out[var_name] = var
+            except (EOFError, UnpicklingError):
+                break
+    return out
+
+
 class OutP:
     def __init__(self, file_path):
         self.__f_path__ = Path(file_path)
@@ -434,16 +448,7 @@ class OutP:
 
     def get_globals(self):
         pickle_path = Path(self.input_file_path).with_suffix('.pickle')
-        out = {}
-        assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(self.__f_path__)
-        with open(pickle_path, 'rb') as f:
-            while True:
-                try:
-                    var_name, var = pickle.load(f)
-                    out[var_name] = var
-                except (EOFError, UnpicklingError):
-                    break
-        return out
+        return load_globals(pickle_path)
 
     def read_stopping_powers(self, particle, material_id=None, cell_num_4_density=None):
         particle = particle.lower()
