@@ -1,14 +1,15 @@
 from __future__ import annotations
 from typing import Union, List, Dict, Tuple, Sized, Iterable, Type
 from abc import ABC, abstractmethod
-from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import get_rotation_matrix, GeomSpecMixin, BinaryOperator,\
-    get_comment
+from JSB_tools.MCNP_helper.geometry import get_rotation_matrix, GeomSpecMixin, BinaryOperator,\
+    get_comment, MCNPNumberMapping
 from warnings import warn
 from numbers import Number
 import numpy as np
 from JSB_tools.MCNP_helper.materials import Material
-from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping
-from JSB_tools.MCNP_helper.input_deck import NDIGITS
+"""
+Base class definitions for geometry primitives defined in primitives.py
+"""
 
 
 class Surface(ABC, GeomSpecMixin):

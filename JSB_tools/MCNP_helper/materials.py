@@ -1,4 +1,4 @@
-from JSB_tools.MCNP_helper.geometry.__geom_helpers__ import MCNPNumberMapping, get_comment
+from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
 from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
@@ -234,7 +234,8 @@ class Material:
         elif isinstance(zaid_or_nuclide, Nuclide):
             zaid_or_nuclide = 1000*zaid_or_nuclide.Z + zaid_or_nuclide.A
         else:
-            assert False, 'Incorrect type, "{}", passed in `zaid_or_nuclide` argument.'.format(type(zaid_or_nuclide))
+            assert False, 'Incorrect type, "{}", passed in `zaid_or_nuclide` argument.\n' \
+                          'Must be zaid (int) or Nuclide'.format(type(zaid_or_nuclide))
 
         self.__zaids.append(zaid_or_nuclide)
         self.__zaid_proportions.append(fraction)

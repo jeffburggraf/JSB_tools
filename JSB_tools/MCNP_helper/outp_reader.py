@@ -389,7 +389,7 @@ class F4Tally(Tally):
 def load_globals(pickle_path):
     # pickle_path = Path(self.input_file_path).with_suffix('.pickle')
     out = {}
-    assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(self.__f_path__)
+    assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(pickle_path)
     with open(pickle_path, 'rb') as f:
         while True:
             try:

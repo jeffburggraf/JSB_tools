@@ -15,8 +15,7 @@ import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
 from types import ModuleType
 from abc import abstractmethod, ABC
-
-NDIGITS = 5  # the number of digits for rounding all evaluated numbers. Helps with round-off error
+from JSB_tools.MCNP_helper import NDIGITS
 
 
 def _split_line(line):
@@ -336,6 +335,7 @@ class InputDeck:
                 return False
         new_file_full_path = Path(new_file_full_path)
         new_f_path = new_file_full_path.with_suffix('.pickle')
+        print('Saved globals to {}'.format(new_f_path))
         with open(new_f_path, 'wb') as f:
             for k, var in dict_of_globals.items():
                 if check_type(var):
