@@ -675,6 +675,39 @@ class TH1F:
     def median(self):
         return binned_median(self.__bin_left_edges__, self.bin_values)
 
+    def quantiles(self, n_quantiles, bin_indicies=False) -> List[float]:
+        """
+        Returns the bin values which split the hist into sections of equal probabilities. e.g. n_quantiles = 2 gives
+         the median
+        Args:
+            n_quantiles:
+            bin_indicies: If True, returned list represents bin indicies. Otherwise, it represents interpolated points
+                on the x axis.
+
+        Returns: n_quantiles-1 length list
+        """
+        cumsum = np.concatenate(([0], np.cumsum(self.nominal_bin_values)))
+        sum_points = np.linspace(0, cumsum[-1], n_quantiles+2-1)[1:-1]
+
+        left_best_indicies = np.searchsorted(cumsum, sum_points) - 1
+        residue = sum_points - cumsum[left_best_indicies]
+        fractions = residue/self.nominal_bin_values[left_best_indicies]
+        dxs = fractions*self.bin_widths[left_best_indicies]
+        result = self.__bin_left_edges__[left_best_indicies] + dxs
+
+        if bin_indicies:
+            result = np.array(map(int, result))
+
+        return result
+
+    def quantiles_plot(self, n_quantiles, ax, label=None):
+        x_points = self.quantiles(n_quantiles)
+        if ax is plt:
+            _min, _max = ax.ylim()
+        else:
+            _min, _max = ax.get_ylim()
+        ax.vlines(x_points, _min, _max, label=label, ls='--')
+
     @property
     def rel_errors(self):
         return np.array([abs(e.std_dev / e.n) if e.n != 0 else 0 for e in self.bin_values ])
