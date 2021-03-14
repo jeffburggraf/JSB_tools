@@ -10,6 +10,11 @@ import time
 from numbers import Number
 from itertools import islice
 from sortedcontainers import SortedDict
+try:
+    import ROOT
+    root_exists = True
+except ModuleNotFoundError:
+    root_exists = False
 
 
 class ProgressReport:
@@ -60,9 +65,18 @@ def closest(sorted_dict: SortedDict, key):
     return min(keys, key=lambda k: abs(key - k))
 
 
+class TBrowser:
+    def __init__(self):
+        assert root_exists, 'Must install ROOT to use TBRowser'
+        tb = ROOT.TBrowser()
+        while type(tb.GetBrowserImp()) is not ROOT.TBrowserImp:
+            ROOT.gSystem.ProcessEvents()
+            time.sleep(0.02)
+        del tb
+
+
 def ROOT_loop():
     try:
-        import ROOT
         import time
         while True:
             ROOT.gSystem.ProcessEvents()

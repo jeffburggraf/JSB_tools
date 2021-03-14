@@ -76,7 +76,7 @@ class IdealGas:
             assert False, 'Invalid units for pressure: {}'.format(press_units)
         return temp, pressure
 
-    def get_density_from_mass_ratios(self, mass_ratios: List[Number], temperature=293, temp_units: str = 'K',
+    def get_density_from_mass_ratios(self, mass_ratios: List[Number], temperature=293.15, temp_units: str = 'K',
                                      pressure: float = 1, pressure_units: str = 'bars', n_sig_digits=4):
         temperature, pressure = self.__temp_and_pressure__(temperature, pressure, temp_units, pressure_units)
         mass_ratios = np.array(mass_ratios)
@@ -256,6 +256,9 @@ class Material:
     @property
     def name(self):
         return self.__name__
+
+    def __del__(self):
+        del Material.__all_materials[self.mat_number]
 
 
 class DepletedUranium(Material):

@@ -3,6 +3,7 @@ import re
 from typing import List, Dict
 import numpy as np
 
+
 class GCommand:
     def __init__(self, cmd: str, line_num, xyz_mode, extrusion_mode, goem_type=None, prev_cmd: GCommand = None):
         self.xyz_mode = xyz_mode

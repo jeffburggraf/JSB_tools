@@ -475,6 +475,10 @@ class CrossSection1D:
         out = "{0}:\nergs: {1}\nxs: {2}".format(self.__fig_label__, ergs, xss)
         return out
 
+    def cut_off(self, threshold=0.001):
+        i = np.searchsorted(self.xss, threshold)
+        return self.ergs[i]
+
 
 class DecayMode:
     """

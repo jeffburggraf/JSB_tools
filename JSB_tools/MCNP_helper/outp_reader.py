@@ -625,21 +625,37 @@ class StoppingPowerData:
                 y = self.ranges/density
 
         ax.set_xlabel("Energy [MeV]")
-        conversion, units = 1, 'cm'
+        unit_conversion, units = 1, 'cm'
 
         if density is None:
             ax.set_ylabel("range [g/cm2]")
         else:
-            if use_best_units:
-                y /= 100
-                mean_range_in_meters = np.max(y)
-                unit_converts = [(10**-3, 'km'), (10**1, 'm'), (10**2, 'cm'), (10**3, 'mm'), (10**6, 'μm'), (10**9, 'nm')]
-                conversion, units = \
-                    unit_converts[int(np.argmin([abs(mean_range_in_meters*c-1) for c, unit in unit_converts]))]
+            if max(y) < 1E-4:
+                units = 'um'
+                unit_conversion = 1E4
+            elif 0.1 <= max(y) < 1:
+                units = 'mm'
+                unit_conversion = 10
+            elif 1 <= max(y) < 100:
+                units = 'cm'
+                unit_conversion = 1
+            elif 100 <= max(y) <= 1000 * 100:
+                units = 'm'
+                unit_conversion = 1 / 100
+            else:
+                units = 'km'
+                unit_conversion = 1 / (100 * 1000)
+
+            # if use_best_units:
+            #     y /= 100
+            #     mean_range_in_meters = np.max(y)
+            #     unit_converts = [(10**-3, 'km'), (10**1, 'm'), (10**2, 'cm'), (10**3, 'mm'), (10**6, 'μm'), (10**9, 'nm')]
+            #     conversion, units = \
+            #         unit_converts[int(np.argmin([abs(mean_range_in_meters*c-1) for c, unit in unit_converts]))]
 
             ax.set_ylabel("range [{}]".format(units))
 
-        ax.plot(self.energies, y*conversion, label=label)
+        ax.plot(self.energies, y*unit_conversion, label=label)
 
         if label is not None:
             ax.legend()

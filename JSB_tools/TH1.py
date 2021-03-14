@@ -18,6 +18,7 @@ from matplotlib import pyplot as plt
 from typing import List, Union, Sequence
 import re
 import os
+import matplotlib.offsetbox as offsetbox
 from scipy.stats import norm
 
 
@@ -426,8 +427,19 @@ class TH1F:
 
         return fit_result, eval_fit
 
+    def get_stats_text(self):
+        counts = self.__ROOT_hist__.GetEntries()
+        quantiles = self.quantiles(4)
+        s = ["counts {:.2e}".format(counts)]
+        s += ["mean  {:.2e}".format(self.mean.n)]
+        s += ["std   {:.2e}".format(self.std.n)]
+        s += ["25%   {:.2e}".format(quantiles[0])]
+        s += ["50%   {:.2e}".format(quantiles[1])]
+        s += ["75%   {:.2e}".format(quantiles[2])]
+        return s
+
     def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
-             ylabel=None, **kwargs):
+             ylabel=None, show_stats=False, **kwargs):
         if ax is None:
             _, ax = plt.subplots()
         else:
@@ -454,6 +466,13 @@ class TH1F:
 
         ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
                     yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
+        if show_stats:
+            text = self.get_stats_text()
+            text = '\n'.join(text)
+            # ax.text(0.8, 0.95-0.03*h, text,  transform=ax.transAxes)
+            ob = offsetbox.AnchoredText(text, loc=1)
+            ax.add_artist(ob)
+
         return ax
 
     def convolve_median(self, window_width):
@@ -661,13 +680,15 @@ class TH1F:
         return unp.uarray(values, errors)
 
     @property
-    def mean(self):
+    def mean(self) -> UFloat:
         if np.sum(unp.nominal_values(self.bin_values)) == 0:
             if np.sum(unp.std_devs(self.bin_values)) == 0:
-                return np.nan
+                return ufloat(np.nan, np.nan)
             else:
-                return np.average(self.bin_centers,
+                out = np.average(self.bin_centers,
                                   weights=unp.uarray(self.bin_std_devs / 2., self.bin_std_devs / 2.))
+                out = ufloat(out, 0)
+                return out
 
         return np.average(self.bin_centers, weights=np.abs(self.bin_values))
 
@@ -723,7 +744,7 @@ class TH1F:
 
         if np.sum(unp.nominal_values(self.bin_values)) == 0:
             if np.sum(unp.std_devs(self.bin_values)) == 0:
-                return np.nan
+                return ufloat(np.nan, 0)
             else:
                 variance = np.average((self.bin_centers - self.mean) ** 2,
                                       weights=unp.uarray(self.bin_std_devs / 2., self.bin_std_devs / 2.))
@@ -1010,6 +1031,8 @@ def ttree_cut_range(min_max_tuplee, expression, greater_then_or_equal=True, weig
 
 def ttree_and(expressions):
     return " && ".join(expressions)
+
+
 
 
 if __name__ == "__main__":

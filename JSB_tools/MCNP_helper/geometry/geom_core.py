@@ -170,7 +170,6 @@ class Cell(GeomSpecMixin):
         Cell.all_cells = MCNPNumberMapping('Cell', 10)
 
     def __init__(self, material: Union[int, Material] = 0,
-                 density: Union[float, type(None)] = None,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
                  importance: Tuple[str, int] = None,
                  cell_number:  float = None,
@@ -182,7 +181,6 @@ class Cell(GeomSpecMixin):
         Args:
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
             material: MCNP material number
-            density:  Density in g/cm3
             cell_name:  Name tagging for use in outpreader.py for looking up cells, surfaces, and tallies by name.
             cell_number: Cell number. If None, automatically choose a cell number.
             cell_comment: Comment for cell
@@ -199,19 +197,11 @@ class Cell(GeomSpecMixin):
             self.importance = importance
 
         self.material = material
-        self.geometry = None
-        if isinstance(self.material, Material):
-            if density is not None:
-                warn('Material instances passed to `material` argument along with a `density`.\n'
-                     'Using density from the Material object, and ignoring the `density` argument.')
-            self.density = -abs(material.density)
-        else:
-            self.density = density
-        if self.density is not None and self.density > 0:
-            warn('Positive densities in MCNP are interpreted as atoms per barn cm. Use negative number for grams'
-                 'per cm3')
+        if not isinstance(self.material, Material):
+            assert material in ['0',0, None], "`material` argument must be either a Material instance, or a 0/None " \
+                                              "for void."
 
-        self.geometry = geometry
+        self.__geometry__ = geometry
         if cell_kwargs is not None:
             assert 'trcl' not in cell_kwargs and 'TRCL' not in cell_kwargs,\
                 'To use trcl, use pass a TRCL instance to the `trcl` argument'
@@ -270,6 +260,13 @@ class Cell(GeomSpecMixin):
         else:
             self.trcl.offset_vector += offset_vector
 
+    @property
+    def density(self):
+        if "RHO" in self.__like_but_kwargs__:
+            return self.__like_but_kwargs__["RHO"]
+        else:
+            return self.material.density
+
     def like_but(self, trcl: TRCL,
                  importance: Tuple[str, int] = None,
                  material: Union[int, Material] = None,
@@ -309,20 +306,19 @@ class Cell(GeomSpecMixin):
                     material = int(material)
                 like_but_kwargs['MAT'] = material
 
-        if density is None:
-            density = self.density
-        else:
+        if density is not None:
             like_but_kwargs['RHO'] = density
+            assert isinstance(material, Material), 'Attempted to change density using "like but" on a void cell.'
             if density > 0:
                 warn('Positive densities in MCNP are interpreted as atoms per barn cm. Use negative number for grams'
-                     'per cm3')
+                     ' per cm3')
 
         if importance is None:
             importance = self.importance
         else:
             like_but_kwargs['IMP'] = self.__get_imp_str__(importance)
 
-        new_cell = Cell(importance=importance, material=material, density=density, geometry=None,
+        new_cell = Cell(importance=importance, material=material, geometry=None,
                         cell_number=cell_number, cell_name=cell_name, cell_comment=cell_comment)
         new_cell.__like_but_kwargs__ = like_but_kwargs
         new_cell.__like_but_number__ = self.cell_number
@@ -337,7 +333,7 @@ class Cell(GeomSpecMixin):
         if self.trcl is not None:  # todo: this is ugly. Incorporate it differently
             kwargs += ['TRCL = {}'.format(self.trcl)]
         kwargs = ' '.join(kwargs)
-        return 'LIKE {} BUT {}'.format(self.__like_but_number__, kwargs)
+        return f'{self.cell_number} LIKE {self.__like_but_number__} BUT {kwargs}'
 
     def __get_imp_str__(self, imp=None):
 
@@ -350,23 +346,30 @@ class Cell(GeomSpecMixin):
 
         return 'imp:{}={}'.format(','.join(imp[0]), int(imp[1]))
 
-    def __build_cell_card__(self):
-        if isinstance(self.material, int):
-            mat = self.material
-        elif isinstance(self.material, Material):
-            mat = self.material.mat_number
+    @property
+    def geometry(self):
+        if self.__geometry__ is None:
+            if isinstance(self, Surface):
+                return -self
+            else:
+                warn(f'No geometry for cell {self.__name__ if self.__name__ is not None else self.cell_number}')
+                return None
         else:
-            assert False, 'Invalid material type, {}'.format(type(self.material))
+            return self.__geometry__
 
-        out = '{} {}'.format(self.cell_number, mat)
+    @geometry.setter
+    def geometry(self, value):
+        self.__geometry__ = value
 
-        if self.density is not None:
-            out += ' {}'.format(self.density)
+    def __build_cell_card__(self):
+        if isinstance(self.material, (int, type(None))):
+            out = f'{self.cell_number} 0'
+        else:
+            out = f'{self.cell_number} {self.material.mat_number} -{abs(self.material.density)}'
+
         imp = self.__get_imp_str__()
-        if self.geometry is None:
-            warn('\nCell card of cell {} was accessed with out specifying geometry.'
-                 .format(self.cell_name if self.cell_name is not None else self.cell_number))
-        out += ' {} {}'.format(self.geometry, imp)
+
+        out += f' {self.geometry} {imp}'
         for key, arg in self.cell_kwargs.items():
             out += ' {}={}'.format(key, arg)
         if self.trcl is not None:  # todo: this is ugly. Incorporate it differently
@@ -376,33 +379,10 @@ class Cell(GeomSpecMixin):
 
     @property
     def cell_card(self):
-
-        if self.density is None or self.density == 0:
-            assert (self.material in [0, None]), \
-                '`density` was not specified for cell with {} {}, therefore `material` must be ' \
-                'specified as 0, or left as the default (None)'\
-                .format('name' if self.cell_name is not None else 'number',
-                        self.cell_name if self.cell_name is not None else self.cell_number)
-            self.material = 0
-            if self.density == 0:
-                self.density = None
-        else:
-            assert self.material is not None, 'In cell {}, a density was specified but a material was not! This is not'\
-                                              ' allowed in MCNP'.format(self)
-            assert self.material != 0, 'Material of "0" not allowed for non-void cells'
-            self.material = self.material
         if len(self.__like_but_kwargs__) == 0:
             return self.__build_cell_card__()
         else:
             return self.__build_like_but_cell_card__()
-
-    def set_geometry(self, geom: Union[str, GeomSpecMixin, BinaryOperator]):
-        self.geometry = geom
-        # if isinstance(geom, (GeomSpecMixin, BinaryOperator)):
-        #     self.geometry = geom.__to_str__()
-        # else:
-        #     self.geometry = str(geom)
-        # return self.geometry
 
     def __str__(self):
         return self.cell_card

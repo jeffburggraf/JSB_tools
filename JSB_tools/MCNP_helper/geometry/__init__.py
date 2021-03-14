@@ -4,9 +4,6 @@ import numpy as np
 Define functions used thought MCNP related code.
 """
 
-
-
-
 class MCNPNumberMapping(dict):
     """Used for automatically assigning numbers to MCNP cells and surfaces. """
 
