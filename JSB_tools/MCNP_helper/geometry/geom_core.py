@@ -6,7 +6,7 @@ from JSB_tools.MCNP_helper.geometry import get_rotation_matrix, GeomSpecMixin, B
 from warnings import warn
 from numbers import Number
 import numpy as np
-from JSB_tools.MCNP_helper.materials import Material
+from JSB_tools.MCNP_helper.materials import Material, PHITSOuterVoid
 """
 Base class definitions for geometry primitives defined in primitives.py
 """
@@ -139,9 +139,10 @@ class F4Tally(Tally):
 class TRCL:
     def __init__(self, offset_vector=(0, 0, 0), rotation_theta=0., rotation_axis=(0, 0, 1), _round=3):
         """Creates TRCL cards for MCNP. rotation_theta is in degrees."""
-        assert hasattr(offset_vector, '__iter__'), 'Invalid offset vector, {}'.format(offset_vector)
-        assert len(offset_vector) == 3, 'Invalid offset vector, {}'.format(offset_vector)
-        assert isinstance(rotation_theta, Number), 'Invalid rotation_theta, {}'.format(rotation_theta)
+
+        assert hasattr(offset_vector, '__iter__'), '`offset_vector` must be an iterator, not "{}"'.format(offset_vector)
+        assert len(offset_vector) == 3, f'`offset_vector` length must be 3, not {len(offset_vector)}: "{offset_vector}"'
+        assert isinstance(rotation_theta, Number), f'`rotation_theta` must be a number, not "{rotation_theta}"'
         assert hasattr(rotation_axis, '__iter__'), 'Invalid rotation_axis, {}'.format(rotation_axis)
         assert len(rotation_axis) == 3, 'Invalid rotation_axis, {}'.format(rotation_axis)
         self.offset_vector = np.array(offset_vector)
@@ -169,7 +170,7 @@ class Cell(GeomSpecMixin):
     def clear():
         Cell.all_cells = MCNPNumberMapping('Cell', 10)
 
-    def __init__(self, material: Union[int, Material] = 0,
+    def __init__(self, material: Union[int, Material, PHITSOuterVoid] = 0,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
                  importance: Tuple[str, int] = None,
                  cell_number:  float = None,
@@ -197,9 +198,9 @@ class Cell(GeomSpecMixin):
             self.importance = importance
 
         self.material = material
-        if not isinstance(self.material, Material):
-            assert material in ['0',0, None], "`material` argument must be either a Material instance, or a 0/None " \
-                                              "for void."
+        if not isinstance(self.material, (Material, PHITSOuterVoid)):
+            assert material in ['0', 0, None], "`material` argument must be either a Material instance, or, a" \
+                                               " PHITSVoid instance or 0/None for void."
 
         self.__geometry__ = geometry
         if cell_kwargs is not None:
@@ -247,7 +248,6 @@ class Cell(GeomSpecMixin):
             offset_vector: Vector defining the translation.
 
         Returns: None
-
         """
 
         assert isinstance(offset_vector, Iterable)
@@ -352,7 +352,8 @@ class Cell(GeomSpecMixin):
             if isinstance(self, Surface):
                 return -self
             else:
-                warn(f'No geometry for cell {self.__name__ if self.__name__ is not None else self.cell_number}')
+                warn(f'No geometry for cell, {self.__name__ if self.__name__ is not None else self.cell_number}'
+                     ', returning None')
                 return None
         else:
             return self.__geometry__
@@ -362,7 +363,9 @@ class Cell(GeomSpecMixin):
         self.__geometry__ = value
 
     def __build_cell_card__(self):
-        if isinstance(self.material, (int, type(None))):
+        if isinstance(self.material, PHITSOuterVoid):
+            out = f'{self.cell_number} -1'
+        elif isinstance(self.material, (int, type(None))):
             out = f'{self.cell_number} 0'
         else:
             out = f'{self.cell_number} {self.material.mat_number} -{abs(self.material.density)}'

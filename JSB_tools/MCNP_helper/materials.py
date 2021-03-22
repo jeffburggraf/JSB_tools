@@ -261,6 +261,10 @@ class Material:
         del Material.__all_materials[self.mat_number]
 
 
+class PHITSOuterVoid:
+    pass
+
+
 class DepletedUranium(Material):
     def __init__(self, density=19.1, mat_number: int = None, mat_name: str = "DepletedUranium",
                  mat_kwargs: Dict[str, str] = None):
