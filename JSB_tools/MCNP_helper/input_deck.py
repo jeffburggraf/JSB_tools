@@ -345,7 +345,18 @@ class InputDeck:
                         pass
 
     def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
-                           **mcnp_or_phits_kwargs):
+                           **mcnp_or_phits_kwargs) -> Path:
+        """
+        Creates and fills an input deck according to a dictionary of values. Usually, just use globals()
+        Args:
+            dict_of_globals:
+            new_file_name: name of generateed input file
+            script_name: Name of script to obe created that runs (all) simulation(s) automatically.
+            **mcnp_or_phits_kwargs: Command line args for MCNP or PHITS
+
+        Returns: new_file_name
+
+        """
         self.__has_called_write_inp_in_scope__ = True
 
         assert len(self.__new_inp_lines__) == 0
@@ -386,6 +397,7 @@ class InputDeck:
         self.__pickle_globals__(new_file_full_path, dict_of_globals)
 
         self.__new_inp_lines__ = []
+        return new_file_full_path
 
     def __write_file__(self, new_file_full_path):
         assert len(self.__new_inp_lines__) > 0, "Must call 'write_inp_in_scope' before '__write_file__'"

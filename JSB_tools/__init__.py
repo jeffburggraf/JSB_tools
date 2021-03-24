@@ -1,15 +1,21 @@
 import os
 import sys
 # from .outp_reader import OutP
-from warnings import warn
+import warnings
 from openmc.data import atomic_weight
 import re
-from typing import List
+from typing import List, Dict
 import numpy as np
 import time
 from numbers import Number
 from itertools import islice
 from sortedcontainers import SortedDict
+from pathlib import Path
+from typing import Union
+import pickle
+from atexit import register
+from dataclasses import dataclass
+cwd = Path(__file__).parent
 try:
     import ROOT
     root_exists = True
@@ -82,7 +88,128 @@ def ROOT_loop():
             ROOT.gSystem.ProcessEvents()
             time.sleep(0.02)
     except ModuleNotFoundError:
-            warn('ROOT not installed. Cannot run ROOT_loop')
+        warnings.warn('ROOT not installed. Cannot run ROOT_loop')
 
 
+class FileManager:
+    def __init__(self, path_to_root_dir: Union[str, Path], recreate=False):
+        """
+        todo: Make it so files in the current/any sub dir are valid. The 'root_dir' is just the dir that containes the
+            __file_info__.pickle.
+            Make  "__file_info__.pickle" a hidden file
+            This is a good place to use doctests
+
+        Args:
+            path_to_root_dir:
+            recreate:
+        Examples:
+
+
+        """
+
+        self.root_directory = Path(path_to_root_dir)
+        assert self.root_directory.parent.exists() and self.root_directory.parent.is_dir(),\
+            f'Supplied root directory, "{self.root_directory}", is not a valid directory'
+        if not self.root_directory.exists():
+            print(f'Creating directory for FileContainer:\n{self.root_directory}')
+            self.root_directory.mkdir()
+        self.file_lookup_data: Dict[Path, dict] = {}
+
+        self.lookup_path = self.root_directory/"__file_lookup__.pickle"
+        try:
+            with open(self.lookup_path, 'rb') as f:
+                self.file_lookup_data = pickle.load(f)
+        except FileNotFoundError:
+            pass
+
+        if recreate:
+            self.file_lookup_data = {}
+
+        for path in self.file_lookup_data.copy():
+            if not path.exists():
+                warnings.warn(f'\nFile, "{path}", was expected, but is missing.')
+
+        register(self.__at_exit__)
+
+    def __save_lookup_data__(self):
+        with open(self.lookup_path, 'wb') as f:
+            pickle.dump(self.file_lookup_data, f)
+
+    def add_path(self, path, missing_ok=False, **lookup_attributes):
+        path = self.root_directory/Path(path)
+        if not missing_ok:
+            assert path.exists(), f'The path, "{path}", does not exist. Cannot add this path to FileManager'
+        assert not path.is_dir(), f'The path, "{path}", is a directory.'
+        assert path not in self.file_lookup_data, f'Cannot add path, "{path}", to FileManager twice.'
+        assert lookup_attributes not in self.file_lookup_data.values(),\
+            f'FileManger requires a unique set of attributes for each file added.\n' \
+            f'"{lookup_attributes}" has already been used.'
+        self.file_lookup_data[path] = lookup_attributes
+        self.__save_lookup_data__()
+
+    def get_path(self, **lookup_kwargs) -> Union[None, Path]:
+        for path, attribs in self.file_lookup_data.items():
+            if lookup_kwargs == attribs:
+                return path
+
+    def get_paths(self, **lookup_kwargs) -> Dict[Path, dict]:
+        """
+        Return list of all paths for which every key/value in lookup_kwargs appears in file's keys/values.
+        Args:
+            **lookup_kwargs: key/values
+
+        Returns:
+
+        """
+        lookup_kwargs = set(lookup_kwargs.items())
+        matches = {}
+        for path, attribs in self.file_lookup_data.items():
+            attribs_set = set(attribs.items())
+            if len(lookup_kwargs - attribs_set) == 0:
+                matches[path] = attribs
+        # assert len(matches) != 0, f'No file with matching lookup keys/values: {lookup_kwargs}\n' \
+        #                           f'Available files:\n{self.available_files}'
+        # assert len(matches) == 1, 'Multiple matching keys/values:\n{}' \
+        #     .format("\n".join(["{}   {}".format(self.file_lookup_data[p], Path(p).relative_to(self.root_directory))
+        #                        for p in matches]))
+        return matches
+
+    def pickle_data(self, data, path=None, **lookup_attributes):
+        if path is None:
+            i = 0
+            while path := (self.root_directory/f"file_{i}.pickle"):
+                i += 1
+                if path not in self.file_lookup_data:
+                    break
+        path = self.root_directory/path
+
+        with open(path, 'wb') as f:
+            pickle.dump(data, f)
+        self.add_path(path, **lookup_attributes)
+
+    def unpickle_data(self, **lookup_kwargs):
+        path = self.get_path(**lookup_kwargs)
+
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+
+    def __at_exit__(self):
+        self.__save_lookup_data__()
+
+    @property
+    def available_files(self):
+        outs = []
+        for path, keys_values in self.file_lookup_data.items():
+
+            outs.append(f'{keys_values}   {path}  [{"exists" if path.exists() else "missing"}]')
+        return '\n'.join(outs)
+
+    def __repr__(self):
+        return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
+
+    def clean(self):
+        for path in self.file_lookup_data.keys():
+            path = Path(path)
+            path.unlink(missing_ok=True)
+        self.lookup_path.unlink(missing_ok=True)
 

@@ -258,7 +258,8 @@ class Material:
         return self.__name__
 
     def __del__(self):
-        del Material.__all_materials[self.mat_number]
+        if self.mat_number in Material.__all_materials:
+            del Material.__all_materials[self.mat_number]
 
 
 class PHITSOuterVoid:

@@ -284,7 +284,7 @@ class FissionYields:
                  data_source=None,
                  independent_bool: bool = True):
         """
-        Retrieve fission yield data, if available. In some cases (e.g. gamma fiss), the ode will convert neutron yield
+        Retrieve fission yield data, if available. In some cases (e.g. gamma fiss), the code will convert neutron yield
         to the desired yield by adjusting the nucleaous
         Args:
             nuclide: Fissioning Nuclide.

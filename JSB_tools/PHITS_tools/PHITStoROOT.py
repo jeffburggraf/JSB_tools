@@ -510,7 +510,7 @@ class Container:
         else:
             new_file_name = self.output_file_name
 
-        if m := re.match(r"(^.+)\.root", new_file_name):
+        if m := re.match(r"(^.+)(?:\.root|\.txt)", new_file_name):
             new_file_name = m.groups()[0]
         if __rename_index__ > 0:
             new_file_name = "{0}_{1}".format(new_file_name, __rename_index__)
