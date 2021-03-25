@@ -194,6 +194,17 @@ class RightCylinderSurface(Surface):
         self.dz = dz
         self.radius = radius
 
+    @classmethod
+    def from_min_max_coords(cls, radius: float, x0: float = 0, y0: float = 0, z0: float = 0,
+                            x1: float = 0, y1: float = 0, z1: float = 0,
+                            surf_name: str = None, surf_num: Union[int, str] = None,
+                            comment: str = None):
+        dz = z1-z0
+        dy = y1-y0
+        dx = x1-x0
+        return cls(radius=radius, x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, surf_name=surf_name, surf_num=surf_num,
+                   comment=comment)
+
     @property
     def zmax(self):
         return self.z0 + self.dz

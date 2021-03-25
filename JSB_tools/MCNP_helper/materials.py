@@ -309,7 +309,7 @@ class Air(Material):
                  n_sig_digits=4, density=None,  mat_number: int = None, mat_name: str = "air",
                  mat_kwargs: Dict[str, str] = None):
         elements = ['C', 'N(2)', 'O(2)', 'Ar']
-        zaids = [6000, 7014, 8016, 180000]
+        zaids = [6000, 7014, 8016, 18000]
         fractions = [1.5E-4, 0.78, 0.21, 0.0047]
         if density is not None:
             assert temperature is pressure is None, "`density` was specified. `pressure` and `temperature` must be None"

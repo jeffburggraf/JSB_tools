@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 from openmc.data.endf import Evaluation
 from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
-from openmc.data import Reaction, Decay
+from openmc.data import Reaction, Decay, Product
 from matplotlib import pyplot as plt
 import re
 from pathlib import Path
@@ -51,7 +51,7 @@ PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lod
 
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
-PHOTON_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
+GAMMA_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
 
 FISS_YIELDS_PATH = pwd/'data'/'fiss_yields'
 SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
@@ -806,6 +806,10 @@ class Nuclide:
         return self.__Z_A_iso_state__['Z']
 
     @property
+    def N(self) -> int:
+        return self.A-self.Z
+
+    @property
     def isometric_state(self) -> int:
         """Meta stable excited state, starting with "0" as the ground state."""
         if not hasattr(self, '__Z_A_iso_state__'):
@@ -859,7 +863,7 @@ class Nuclide:
         simple_nuclide_name = self.atomic_symbol + str(self.A)
         if simple_nuclide_name not in PHOTON_INDUCED_FISSION_XS1D:
             try:
-                with open(PHOTON_PICKLE_DIR / 'fission' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                with open(GAMMA_PICKLE_DIR / 'fission' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
                     PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
             except FileNotFoundError:
                 assert False, 'No photon induced fission data for {0}.'
@@ -1085,40 +1089,30 @@ class Nuclide:
         return y
 
     def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
-        pickle_path = PROTON_PICKLE_DIR / (self.name + ".pickle")
-        return self.__get_parents__(pickle_path, 'proton', a_z_hl_cut, is_stable_only)
+        return self.__get_parents__('proton', a_z_hl_cut, is_stable_only)
 
     def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-        pickle_path = PROTON_PICKLE_DIR/(self.name + ".pickle")
-        return self.__get_daughters__(pickle_path, 'proton', a_z_hl_cut, is_stable_only)
+        return self.__get_daughters__('proton', a_z_hl_cut, is_stable_only)
 
-    def get_incident_photon_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-        pickle_path = PHOTON_PICKLE_DIR/(self.name + ".pickle")
-        return self.__get_daughters__(pickle_path, 'photon', a_z_hl_cut, is_stable_only)
+    def get_incident_gamma_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+        return self.__get_daughters__('gamma', a_z_hl_cut, is_stable_only)
 
-    def get_incident_photon_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
-        pickle_path = PHOTON_PICKLE_DIR/(self.name + ".pickle")
-        return self.__get_parents__(pickle_path, 'photon', a_z_hl_cut, is_stable_only)
+    def get_incident_gamma_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+        return self.__get_parents__('gamma', a_z_hl_cut, is_stable_only)
 
-    def __get_daughters__(self, data_path, incident_particle, a_z_hl_cut='', is_stable_only=False):
+    def __get_daughters__(self, projectile, a_z_hl_cut='', is_stable_only=False):
         """
         Get all product nuclides (and cross-sections, ect.) from a  reaction specified by the path to the nuclide's
         pickle file for the given reaction.
         Args:
-            data_path:
-            incident_particle: eg 'proton', 'photon', 'neutron'
+            projectile: eg 'proton', 'photon', 'neutron'
             a_z_hl_cut:
             is_stable_only:
 
         Returns:
 
         """
-        if not data_path.exists():
-            warn("No {}-induced data for {}".format(incident_particle, self.name))
-            return None
-
-        with open(data_path, "rb") as f:
-            reaction = CustomUnpickler(f).load()
+        reaction = ActivationReactionContainer.from_pickle(self.name, projectile)
 
         assert isinstance(reaction, ActivationReactionContainer)
         out: Dict[str, InducedDaughter] = {}
@@ -1126,30 +1120,21 @@ class Nuclide:
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
             a, z, hl = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life
             if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
-                daughter = InducedDaughter(daughter_nuclide, self, incident_particle)
+                daughter = InducedDaughter(daughter_nuclide, self, projectile)
                 daughter.xs = xs
                 out[daughter_name] = daughter
 
         return out
 
-    def __get_parents__(self, data_path, incident_particle, a_z_hl_cut='', is_stable_only=False):
-        if not data_path.exists():
-            warn("No {}-induced data for any parents of {}".format(incident_particle, self.name))
-            return {}
-
-        with open(data_path, "rb") as f:
-            daughter_reaction = CustomUnpickler(f).load()
-
+    def __get_parents__(self, projectile, a_z_hl_cut='', is_stable_only=False):
+        daughter_reaction = ActivationReactionContainer.from_pickle(self.name, projectile)
         assert isinstance(daughter_reaction, ActivationReactionContainer)
         out = {}
         parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
         daughter_nuclide = self
         for parent_nuclide in parent_nuclides:
-            parent_pickle_path = data_path.parent / (parent_nuclide.name + ".pickle")
-            with open(parent_pickle_path, "rb") as f:
-                parent_reaction = CustomUnpickler(f).load()
-                assert isinstance(parent_reaction, ActivationReactionContainer)
-            parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle=incident_particle)
+            parent_reaction = ActivationReactionContainer.from_pickle(parent_nuclide.name, projectile)
+            parent = InducedParent(daughter_nuclide, parent_nuclide, inducing_particle=projectile)
             a, z, hl = parent.A, parent.Z, parent.half_life
             if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
                 parent.xs = parent_reaction.product_nuclide_names_xss[daughter_nuclide.name]
@@ -1241,57 +1226,168 @@ class InducedParent(Nuclide):
         return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
 
+
+
 class ActivationReactionContainer:
     """
     Used for storing particle-induced data in pickle file. Imported in endf_to_pickle.py, and used in this module
-    for unpickling
+    for unpickling. There is only one of these created per target/projective pair.
+
+    Attributes:
+        self.name: The name of the target nuclide.
+
+        self.product_nuclide_names_xss: A dict mapping between target name and CrossSection1D objects for each of the
+            targets activation reaction products.
+
+        self.parent_nuclide_names: A list of strings corresponding to all targets that can produce this nuclide
+            (self.name) via activation. This allows traveling both directions in an activation chain.
     """
-    def __init__(self, name):
-        self.name = name
-        #  Dict with daughter nuclide names as keys as xs objects as values
+    all_instances: Dict[str, Dict[str, ActivationReactionContainer]] = {'gamma': {}, 'proton': {}}
+    directories: Dict[str, Path] = \
+        {'proton': PROTON_PICKLE_DIR,
+         'gamma': GAMMA_PICKLE_DIR}
+
+    def __init__(self, nuclide_name: str, projectile: str):
+        """
+
+        Args:
+            nuclide_name:
+            projectile:
+        """
+        self.projectile = projectile
+        self.nuclide_name = nuclide_name
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
 
+        ActivationReactionContainer.all_instances[projectile][nuclide_name] = self
+
+    @classmethod
+    def from_pickle(cls, nuclide_name, projectile):
+        try:
+            all_instances = ActivationReactionContainer.all_instances[projectile]
+        except KeyError:
+            assert False, f"No activation data for incident particle {projectile}"
+
+        try:  # check RAM for existing instance
+            existing_instance = all_instances[nuclide_name]
+        except KeyError:  # not in RAM
+            try:  # load existing pickle file
+                pickle_path = ActivationReactionContainer.directories[projectile] / (nuclide_name + ".pickle")
+                with open(str(pickle_path), "rb") as f:
+                    existing_instance = CustomUnpickler(f).load()
+            except FileNotFoundError:  # no existing pickle file. Raise erropr
+                raise FileNotFoundError(f'No {projectile} activation data for {nuclide_name}')
+        ActivationReactionContainer.all_instances[projectile][nuclide_name] = existing_instance
+        return existing_instance
+
     @staticmethod
-    def set(init_data_dict, nuclide_name, endf_file_path, incident_particle):
-        print('Reading data from {} for {}'.format(nuclide_name, incident_particle + 's'))
+    def __get_product_name__(n1, n2, projectile):
+        _1 = Nuclide.from_symbol(n1)
+        _2 = Nuclide.from_symbol(n2)
+        z1, n1 = _1.Z, _1.N
+        z2, n2 = _2.Z, _2.N
+        z = z1-z2
+        n = n1-n2
+        if projectile == 'proton':
+            z += 1
+        if projectile == 'neutron':
+            n += 1
+        if z == n == 2:
+            return 'a'
+        elif z == 1 == n:
+            return 'd'
+        elif z == 1 and n == 2:
+            return 't'
+        elif z == 1 and n == 0:
+            return 'p'
+        elif z == 0:
+            return f'{n}n'
 
-        if nuclide_name in init_data_dict:
-            reaction = init_data_dict[nuclide_name]
-        else:
-            reaction = ActivationReactionContainer(nuclide_name)
-            init_data_dict[nuclide_name] = reaction
+        return _2.name
 
-        e = Evaluation(endf_file_path)
-        for activation_product in Reaction.from_endf(e, 5).products:
-            activation_product_name = activation_product.particle
+    @classmethod
+    def from_endf(cls, endf_path, nuclide_name, projectile):
+        """
+        Build the instance from ENDF file using openmc. Instance is saved to ActivationReactionContainer.all_instances
+        Args:
+            endf_path: Path to relevant target nuclide endf file
+
+        Returns: None
+
+        """
+        endf_path = Path(endf_path)
+        assert endf_path.exists()
+        print('Reading data from {} for {}'.format(nuclide_name, projectile + 's'))
+        self = ActivationReactionContainer(nuclide_name, projectile)
+        all_instances = ActivationReactionContainer.all_instances[projectile]
+
+        e = Evaluation(endf_path)
+        openmc_reaction = Reaction.from_endf(e, 5)
+        for openmc_product in openmc_reaction.products:
+            activation_product_name = openmc_product.particle
+            ActivationReactionContainer.__bug_test__(openmc_reaction, openmc_product, nuclide_name, projectile)
+
             if activation_product_name == "photon":
                 continue
             if activation_product_name == "neutron":
                 activation_product_name = "Nn1"
+
             try:
-                par_id = {'proton': 'p', 'neutron': 'n', 'photon': 'G'}[incident_particle]
+                par_id = {'proton': 'p', 'neutron': 'n', 'gamma': 'G', 'electron': 'e'}[self.projectile]
             except KeyError:
-                assert False, 'Invalid incident particle: "{}"'.format(incident_particle)
-            xs_fig_label = "{0}({1},X){2}".format(nuclide_name, par_id, activation_product_name)
+                assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
+            _product_label = cls.__get_product_name__(nuclide_name, activation_product_name, projectile)
+
+            xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){activation_product_name}"
+            # ['Pu240', 'Np237', 'U235', 'Am241', 'U238', 'Pu239']
             try:
-                xs = CrossSection1D(activation_product.yield_.x / 1E6, activation_product.yield_.y, xs_fig_label,
-                                    incident_particle)
+                xs = CrossSection1D(openmc_product.yield_.x / 1E6, openmc_product.yield_.y, xs_fig_label,
+                                    self.projectile)
             except AttributeError as e:
                 continue
-            reaction.product_nuclide_names_xss[activation_product_name] = xs
-            if activation_product_name in init_data_dict:
-                daughter_reaction = init_data_dict[activation_product_name]
-            else:
-                daughter_reaction = ActivationReactionContainer(activation_product_name)
-                init_data_dict[activation_product_name] = daughter_reaction
-            daughter_reaction.parent_nuclide_names.append(nuclide_name)
+
+            self.product_nuclide_names_xss[activation_product_name] = xs
+            try:
+                daughter_reaction = all_instances[activation_product_name]
+            except KeyError:  # initialize fresh instance
+                daughter_reaction = ActivationReactionContainer(activation_product_name, self.projectile)
+            daughter_reaction.parent_nuclide_names.append(self.nuclide_name)
+
+        return self
+
+    @staticmethod
+    def __bug_test__(openmc_reaction: Reaction, openmc_product: Product, nuclide_name, incident_particle):
+        """When activation_product.yield_.y == [1, 1], it indicates what seems to be a bug for ( or at least for) G, 1n
+        reactions in fissionable nuclides. In this case (again, at least) the correct yield can be found by accessing the xs
+        on the Reaction instance itself. """
+        activation_product_name = openmc_product.particle
+        warn_other = False
+        try:
+            if len(openmc_product.yield_.y) == 2 and all(openmc_product.yield_.y == np.array([1, 1])):
+                one_less_n_name = Nuclide.from_symbol(nuclide_name).remove_neutron().name
+                warn_other = True
+                if activation_product_name == one_less_n_name:
+                    if incident_particle == 'gamma':
+                        try:
+                            yield_ = openmc_reaction.xs['0K']
+                            openmc_product.yield_.y = yield_.y
+                            openmc_product.yield_.x = yield_.x
+                            warn(f'Bad (G, 1n) yield (ie [1., 1.]) for {nuclide_name}. Correcting'
+                                 f' (see __bug_test__ in __init__.py)')
+                            return
+                        except KeyError:
+                            pass
+
+        except AttributeError:
+            pass
+        if warn_other:
+            warn(f'Bad yield (ie [1., 1.])  for {nuclide_name}({incident_particle}, X){activation_product_name}')
 
     def __len__(self):
         return len(self.parent_nuclide_names) + len(self.product_nuclide_names_xss)
 
     def __repr__(self):
-        return 'self: {0}, parents: {1}, daughters: {2}'.format(self.name, self.parent_nuclide_names,
+        return 'self: {0}, parents: {1}, daughters: {2}'.format(self.nuclide_name, self.parent_nuclide_names,
                                                                 self.product_nuclide_names_xss.keys())
 
 

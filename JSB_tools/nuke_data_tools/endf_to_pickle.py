@@ -7,16 +7,16 @@ from pathlib import Path
 import re
 import marshal
 from typing import Dict, List, TypedDict
-from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR,\
+from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR,\
     PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer,\
-     GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH
+     GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH, SF_YIELD_PICKLE_DIR
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
 import numpy as np
 
 
-for _directory in [DECAY_PICKLE_DIR, PHOTON_PICKLE_DIR, PROTON_PICKLE_DIR,FISS_YIELDS_PATH]:
+for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_YIELDS_PATH]:
     if not _directory.exists():
         print(_directory)
         _directory.mkdir()
@@ -39,7 +39,7 @@ proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
 proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
-photon_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
+gamma_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
 neutron_fission_yield_data_dir_endf = parent_data_dir / 'ENDF-B-VIII.0_nfy'
 
 #  Download SF yields (gefy model) from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
@@ -340,36 +340,12 @@ class ProtonENDFFile:
 
 def pickle_proton_activation_data():
     assert PROTON_PICKLE_DIR.exists()
-    all_reactions = {}
     files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
 
     for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
-        ActivationReactionContainer.set(all_reactions, nuclide_name, f_path, 'proton')
-        # print('Reading data from {}'.format(nuclide_name))
-        # if nuclide_name in all_reactions:
-        #     reaction = all_reactions[nuclide_name]
-        # else:
-        #     reaction = ActivationReactionContainer(nuclide_name)
-        #     all_reactions[nuclide_name] = reaction
-        #
-        # e = Evaluation(f_path)
-        # for heavy_product in Reaction.from_endf(e, 5).products:
-        #     heavy_product_name = heavy_product.particle
-        #     if heavy_product_name == "photon":
-        #         continue
-        #     if heavy_product_name == "neutron":
-        #         heavy_product_name = "Nn1"
-        #     xs_fig_label = "{0}(p,X){1}".format(nuclide_name, heavy_product_name)
-        #     xs = CrossSection1D(heavy_product.yield_.x / 1E6, heavy_product.yield_.y, xs_fig_label, 'proton')
-        #     reaction.product_nuclide_names_xss[heavy_product_name] = xs
-        #     if heavy_product_name in all_reactions:
-        #         daughter_reaction = all_reactions[heavy_product_name]
-        #     else:
-        #         daughter_reaction = ActivationReactionContainer(heavy_product_name)
-        #         all_reactions[heavy_product_name] = daughter_reaction
-        #     daughter_reaction.parent_nuclide_names.append(nuclide_name)
+        ActivationReactionContainer.from_endf(f_path, nuclide_name, 'proton')
 
-    for nuclide_name, reaction in all_reactions.items():
+    for nuclide_name, reaction in ActivationReactionContainer.all_instances.items():
         pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
         with open(pickle_file_name, "bw") as f:
             print('Creating and writing {}'.format(f.name))
@@ -422,7 +398,7 @@ def pickle_proton_fission_xs_data():
 
 def pickle_gamma_fission_xs_data():
     photo_fission_data = {}
-    for file in photon_enfd_b_data_dir.iterdir():
+    for file in gamma_enfd_b_data_dir.iterdir():
         _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file.name)
         if _m:
             a = _m.groups()[2]
@@ -439,25 +415,25 @@ def pickle_gamma_fission_xs_data():
                 continue
 
     for nuclide_name, xs in photo_fission_data.items():
-        with open(PHOTON_PICKLE_DIR/'fission'/'{0}.pickle'.format(nuclide_name), 'wb') as f:
+        with open(GAMMA_PICKLE_DIR / 'fission' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
             pickle.dump(xs, f)
 
 
 def pickle_gamma_activation_data():
-    assert PHOTON_PICKLE_DIR.exists()
+    assert GAMMA_PICKLE_DIR.exists()
 
     all_reactions = {}
 
-    for file_path in photon_enfd_b_data_dir.iterdir():
+    for file_path in gamma_enfd_b_data_dir.iterdir():
         _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
         if _m:
             a = int(_m.groups()[2])
             symbol = _m.groups()[1]
             nuclide_name = '{0}{1}'.format(symbol, a)
-            ActivationReactionContainer.set(all_reactions, nuclide_name, file_path, 'photon')
+            ActivationReactionContainer.from_endf(file_path, nuclide_name, 'gamma')
 
     for nuclide_name, reaction in all_reactions.items():
-        pickle_file_name = PHOTON_PICKLE_DIR/(nuclide_name + ".pickle")
+        pickle_file_name = GAMMA_PICKLE_DIR / (nuclide_name + ".pickle")
         if len(reaction) == 0:  # this is probably not needed
             continue
         with open(pickle_file_name, "bw") as f:
@@ -608,18 +584,29 @@ def pickle_fission_product_yields():
 def pickle_all_nuke_data():
     # pickle_gef_neutron_yields()
     # pickle_endf_neutron_yields()
-    pickle_decay_data()
+    # pickle_decay_data()
     # pickle_proton_activation_data()
     # pickle_proton_fission_data()  # pickle proton fission data in a special way due to compatibility issues with EDNF6
     # pickle_photon_fission_data()
-    # pickle_photon_activation_data()
+    # pickle_gamma_activation_data()
 
     pass
 
 
 if __name__ == '__main__':
-    pickle_fission_product_yields()
     import matplotlib.pyplot as plt
+
+    pickle_gamma_activation_data()
+    n = Nuclide.from_symbol('U238')
+    daughters = (n.get_incident_gamma_daughters())
+    print(daughters)
+    print(daughters['U237'])
+    daughters['U237'].xs.plot()
+    plt.show()
+
+
+
+    # pickle_fission_product_yields()
     # pickle_all_nuke_data()
     # print(Nuclide.from_symbol('N14').get_incident_photon_daughters().values())
     # for n in Nuclide.from_symbol('N14').get_incident_proton_daughters().values():

@@ -216,6 +216,13 @@ class Cell(GeomSpecMixin):
         self.__like_but_kwargs__ = {}
         self.__like_but_number__ = None
 
+    @property
+    def cell_mass(self):
+        if isinstance(self.density, Number) and hasattr(self, "volume"):
+            return self.density*self.volume
+        else:
+            return None
+
     def set_volume_kwarg(self, vol: float):
         """
         Set volume to be used internally by MCNP for this cell. Set to 1 to normalize volume out of
