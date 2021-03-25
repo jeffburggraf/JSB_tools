@@ -1325,7 +1325,8 @@ class ActivationReactionContainer:
         openmc_reaction = Reaction.from_endf(e, 5)
         for openmc_product in openmc_reaction.products:
             activation_product_name = openmc_product.particle
-            ActivationReactionContainer.__bug_test__(openmc_reaction, openmc_product, nuclide_name, projectile)
+            if ActivationReactionContainer.__bug_test__(openmc_reaction, openmc_product, nuclide_name, projectile):
+                print(openmc_product.yield_.y)
 
             if activation_product_name == "photon":
                 continue
@@ -1374,7 +1375,7 @@ class ActivationReactionContainer:
                             openmc_product.yield_.x = yield_.x
                             warn(f'Bad (G, 1n) yield (ie [1., 1.]) for {nuclide_name}. Correcting'
                                  f' (see __bug_test__ in __init__.py)')
-                            return
+                            return True
                         except KeyError:
                             pass
 

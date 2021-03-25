@@ -230,8 +230,6 @@ class F4Tally(Tally):
                 _flux = float(outp.__outp_lines__[index].split()[1])
                 _flux_error = _flux * float(outp.__outp_lines__[index].split()[2])
                 self.__flux__ = ufloat(_flux, _flux_error)  # total flux
-
-
             else:
                 assert False, "Tally modifiers {} not supported yet! (from tally {})"\
                     .format(self.tally_modifiers, self.tally_number)
@@ -245,6 +243,10 @@ class F4Tally(Tally):
         if 'fm' not in self.tally_modifiers:
             assert False, 'Tally {} does not have "FM" modifier. Tally is flux, not reaction rate.' \
                 .format(self.tally_number)
+
+    @property
+    def cell_mass(self):
+        return self.cell.volume*self.cell.density
 
     @property
     def cell(self) -> Cell:

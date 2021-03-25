@@ -338,20 +338,6 @@ class ProtonENDFFile:
         return symbol
 
 
-def pickle_proton_activation_data():
-    assert PROTON_PICKLE_DIR.exists()
-    files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
-
-    for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
-        ActivationReactionContainer.from_endf(f_path, nuclide_name, 'proton')
-
-    for nuclide_name, reaction in ActivationReactionContainer.all_instances.items():
-        pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
-        with open(pickle_file_name, "bw") as f:
-            print('Creating and writing {}'.format(f.name))
-            pickle.dump(reaction, f)
-
-
 #  Special case implemented in pickle_proton_fission_data() for proton induced fission cross-sections.
 #  As of now, they must be manually copy-pasted :(
 #  See 'JSB_tools/nuke_data_tools/endf_files/FissionXS/Proton/readme' for instructions.
@@ -419,10 +405,22 @@ def pickle_gamma_fission_xs_data():
             pickle.dump(xs, f)
 
 
+def pickle_proton_activation_data():
+    assert PROTON_PICKLE_DIR.exists()
+    files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
+
+    for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
+        ActivationReactionContainer.from_endf(f_path, nuclide_name, 'proton')
+
+    for nuclide_name, reaction in ActivationReactionContainer.all_instances['proton'].items():
+        pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
+        with open(pickle_file_name, "bw") as f:
+            print('Creating and writing {}'.format(f.name))
+            pickle.dump(reaction, f)
+
+
 def pickle_gamma_activation_data():
     assert GAMMA_PICKLE_DIR.exists()
-
-    all_reactions = {}
 
     for file_path in gamma_enfd_b_data_dir.iterdir():
         _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
@@ -432,7 +430,7 @@ def pickle_gamma_activation_data():
             nuclide_name = '{0}{1}'.format(symbol, a)
             ActivationReactionContainer.from_endf(file_path, nuclide_name, 'gamma')
 
-    for nuclide_name, reaction in all_reactions.items():
+    for nuclide_name, reaction in ActivationReactionContainer.all_instances['gamma'].items():
         pickle_file_name = GAMMA_PICKLE_DIR / (nuclide_name + ".pickle")
         if len(reaction) == 0:  # this is probably not needed
             continue
