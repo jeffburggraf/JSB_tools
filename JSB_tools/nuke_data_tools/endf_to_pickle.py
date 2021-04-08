@@ -8,18 +8,12 @@ import re
 import marshal
 from typing import Dict, List, TypedDict
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR,\
-    PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer,\
+     PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer,\
      GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH, SF_YIELD_PICKLE_DIR
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
 import numpy as np
-
-
-for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_YIELDS_PATH]:
-    if not _directory.exists():
-        print(_directory)
-        _directory.mkdir()
 
 cwd = Path(__file__).parent
 
@@ -289,9 +283,9 @@ def pickle_decay_data():
 
             except KeyError:
                 d[erg] = ([nuclide.name], [intensity], [hl])
-    for k, v in d.items():
-        print(k, v)
-    print('writing "__fast__gamma_dict__.marshal"')
+    # for k, v in d.items():
+    #     print(k, v)
+    # print('writing "__fast__gamma_dict__.marshal"')
 
     with open(DECAY_PICKLE_DIR / '__fast__gamma_dict__.marshal', 'wb') as f:
         marshal.dump(d, f)
@@ -338,7 +332,7 @@ class ProtonENDFFile:
         return symbol
 
 
-#  Special case implemented in pickle_proton_fission_data() for proton induced fission cross-sections.
+#  Special case implemented in pickle_proton_fission_xs_data() for proton induced fission cross-sections.
 #  As of now, they must be manually copy-pasted :(
 #  See 'JSB_tools/nuke_data_tools/endf_files/FissionXS/Proton/readme' for instructions.
 proton_fission_xs = {}
@@ -401,6 +395,8 @@ def pickle_gamma_fission_xs_data():
                 continue
 
     for nuclide_name, xs in photo_fission_data.items():
+        if not (GAMMA_PICKLE_DIR / 'fission').exists():
+            Path.mkdir(GAMMA_PICKLE_DIR / 'fission')
         with open(GAMMA_PICKLE_DIR / 'fission' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
             pickle.dump(xs, f)
 
@@ -538,7 +534,8 @@ def pickle_fission_product_yields():
     sf_yield_marshal_path_gef = FISS_YIELDS_PATH/'SF'/'gef'
     proton_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'proton'/'ukfy'
 
-    for _dir in [neutron_yield_marshal_path_endf, neutron_yield_marshal_path_gef, sf_yield_marshal_path_gef]:
+    for _dir in [neutron_yield_marshal_path_endf, neutron_yield_marshal_path_gef, sf_yield_marshal_path_gef,
+                 proton_yield_marshal_path_ukfy]:
         if not _dir.parent.exists():
             Path.mkdir(_dir.parent)
         if not _dir.exists():
@@ -555,7 +552,6 @@ def pickle_fission_product_yields():
                Helper(proton_fiss_yield_data,
                       proton_yield_marshal_path_ukfy,
                       lambda x: x)]
-    #
 
     for helper in helpers:
         for x in helper.get_valid():
@@ -579,28 +575,41 @@ def pickle_fission_product_yields():
                       .format(Path(f_path.parents[2].name)/f_path.parents[1].name/f_path.parent.name/f_path.name))
 
 
+for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_YIELDS_PATH]:
+    if _directory == DECAY_PICKLE_DIR:
+        if len(list(DECAY_PICKLE_DIR.iterdir())) == 0:
+            warn('Decay data directory empty.\n'
+                 'Cannot pickle nuclear data until pickle_decay_data() has been run.\n'
+                 'Running pickle_decay_data() now')
+            pickle_decay_data()
+    if not _directory.exists():
+        print(f'Creating {_directory}')
+        _directory.mkdir()
+
+
 def pickle_all_nuke_data():
-    # pickle_gef_neutron_yields()
-    # pickle_endf_neutron_yields()
+    # pickle_fission_product_yields()
     # pickle_decay_data()
     # pickle_proton_activation_data()
-    # pickle_proton_fission_data()  # pickle proton fission data in a special way due to compatibility issues with EDNF6
-    # pickle_photon_fission_data()
+    # pickle_proton_fission_xs_data()
+    # pickle_gamma_fission_xs_data()
     # pickle_gamma_activation_data()
 
     pass
 
 
 if __name__ == '__main__':
+    # pickle_fission_product_yields()
+    # pickle_gamma_fission_xs_data()
     import matplotlib.pyplot as plt
-
-    pickle_gamma_activation_data()
-    n = Nuclide.from_symbol('U238')
-    daughters = (n.get_incident_gamma_daughters())
-    print(daughters)
-    print(daughters['U237'])
-    daughters['U237'].xs.plot()
-    plt.show()
+    # pickle_gamma_activation_data()
+    # pickle_proton_activation_data()
+    # n = Nuclide.from_symbol('U238')
+    # daughters = (n.get_incident_gamma_daughters())
+    # print(daughters)
+    # print(daughters['U237'])
+    # daughters['U237'].xs.plot()
+    # plt.show()
 
 
 
