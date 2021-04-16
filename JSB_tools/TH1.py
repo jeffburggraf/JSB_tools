@@ -196,6 +196,23 @@ class TH1F:
         self.draw_weight = None
 
     @classmethod
+    def from_native_ROOT_hist(cls, hist: ROOT.TH1) -> TH1F:
+        assert isinstance(hist, ROOT.TH1)
+        bin_left_edges = []
+        bin_values_n = []
+        bin_values_err = []
+
+        for i in range(1, hist.GetNbinsX()+1):
+            bin_left_edges.append(hist.GetBinLowEdge(i))
+            bin_values_n.append(hist.GetBinContent(i))
+            bin_values_err.append(hist.GetBinError(i))
+        bin_left_edges.append(bin_left_edges[-1] + hist.GetBinWidth(hist.GetNbinsX()))
+        new_hist = cls(bin_left_edges=bin_left_edges)
+        cls.SetTitle(new_hist, hist.GetName())
+        new_hist += unp.uarray(bin_values_n, bin_values_err)
+        return new_hist
+
+    @classmethod
     def from_data_points(cls, data: Sequence[Number], bins=None, weights=None):
         if bins is None:
             bins = 'auto'
@@ -273,7 +290,6 @@ class TH1F:
     @title.setter
     def title(self, title: str):
         self.__ROOT_hist__.SetTitle(str(title))
-        return title
 
     @property
     def bin_width(self):

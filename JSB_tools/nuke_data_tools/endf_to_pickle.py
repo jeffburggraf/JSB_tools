@@ -8,16 +8,19 @@ import re
 import marshal
 from typing import Dict, List, TypedDict
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR,\
-     PROTON_PICKLE_DIR,CrossSection1D, ActivationReactionContainer,\
+     PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, CrossSection1D, ActivationReactionContainer,\
      GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH, SF_YIELD_PICKLE_DIR
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
 import numpy as np
+from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
+    gamma_enfd_b_data_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
+    proton_fiss_yield_data
 
 cwd = Path(__file__).parent
 
-parent_data_dir = cwd / 'endf_files'
+# parent_data_dir = cwd / 'endf_files'
 
 #  Below are instructions for downloading all the required data. As the names of the downloaded folders may change
 #  as libraries are updated, make sure the changes are reflected in the below directories.
@@ -26,22 +29,23 @@ parent_data_dir = cwd / 'endf_files'
 # 'general decay data' in the list.
 #  Second set of decay files (JEFF) can be found at  https://www.nndc.bnl.gov/endf/b8.0/download.html
 #  See endf_files/decay/readme for more information.
-decay_data_dir = parent_data_dir / 'decay'
+# decay_data_dir = parent_data_dir / 'decay'
 
 # Download Proton Activation Data File from: https://www-nds.iaea.org/padf/
-proton_padf_data_dir = parent_data_dir / 'PADF_2007'
+# proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
-proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
-gamma_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
-neutron_fission_yield_data_dir_endf = parent_data_dir / 'ENDF-B-VIII.0_nfy'
+# proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
+# gamma_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
+# neutron_fission_yield_data_dir_endf = parent_data_dir / 'ENDF-B-VIII.0_nfy'
 
 #  Download SF yields (gefy model) from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
-sf_yield_data_dir = parent_data_dir / 'gefy81_s'
-neutron_fission_yield_data_dir_gef = parent_data_dir / 'gefy81_n'
+# sf_yield_data_dir = parent_data_dir / 'gefy81_s'
+# neutron_fission_yield_data_dir_gef = parent_data_dir / 'gefy81_n'
 
 #  Download proton induced fission yields from https://fispact.ukaea.uk/nuclear-data/downloads/
-proton_fiss_yield_data = parent_data_dir/'UKFY41data'/'ukfy4_1p'
+# proton_fiss_yield_data = parent_data_dir/'UKFY41data'/'ukfy4_1p'
+#  ==============
 
 _seconds_in_day = 24*60**2
 _seconds_in_month = _seconds_in_day*30
@@ -169,6 +173,18 @@ def __set_data_from_open_mc__(self, open_mc_decay: Decay):
 
 
 def pickle_decay_data():
+    """
+    Pickles nuclide properties into ../data/nuclides/x.pickle
+    Writes   __fast__gamma_dict__.marshal, which can be used to quickly look up decays by decay energy.
+    data structure of __fast__gamma_dict__:
+        {
+         g_erg_1: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...]),
+         g_erg_2: (...)
+         }
+
+    Returns:
+
+    """
     directory_endf = decay_data_dir/'decay_ENDF'  # Path to downloaded ENDF decay data
     directory_jeff = decay_data_dir/'decay_JEFF'  # Path to downloaded ENDF decay data
 
@@ -283,9 +299,6 @@ def pickle_decay_data():
 
             except KeyError:
                 d[erg] = ([nuclide.name], [intensity], [hl])
-    # for k, v in d.items():
-    #     print(k, v)
-    # print('writing "__fast__gamma_dict__.marshal"')
 
     with open(DECAY_PICKLE_DIR / '__fast__gamma_dict__.marshal', 'wb') as f:
         marshal.dump(d, f)
@@ -575,7 +588,7 @@ def pickle_fission_product_yields():
                       .format(Path(f_path.parents[2].name)/f_path.parents[1].name/f_path.parent.name/f_path.name))
 
 
-for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_YIELDS_PATH]:
+for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_YIELDS_PATH, NEUTRON_PICKLE_DIR]:
     if _directory == DECAY_PICKLE_DIR:
         if len(list(DECAY_PICKLE_DIR.iterdir())) == 0:
             warn('Decay data directory empty.\n'
@@ -585,6 +598,9 @@ for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_Y
     if not _directory.exists():
         print(f'Creating {_directory}')
         _directory.mkdir()
+for _directory in [PROTON_PICKLE_DIR/'fission', GAMMA_PICKLE_DIR/'fission', NEUTRON_PICKLE_DIR/'fission']:
+    if not Path.exists(_directory):
+        Path.mkdir(_directory)
 
 
 def pickle_all_nuke_data():
@@ -599,30 +615,5 @@ def pickle_all_nuke_data():
 
 
 if __name__ == '__main__':
-    # pickle_fission_product_yields()
-    # pickle_gamma_fission_xs_data()
-    import matplotlib.pyplot as plt
-    # pickle_gamma_activation_data()
-    # pickle_proton_activation_data()
-    # n = Nuclide.from_symbol('U238')
-    # daughters = (n.get_incident_gamma_daughters())
-    # print(daughters)
-    # print(daughters['U237'])
-    # daughters['U237'].xs.plot()
-    # plt.show()
-
-
-
-    # pickle_fission_product_yields()
-    # pickle_all_nuke_data()
-    # print(Nuclide.from_symbol('N14').get_incident_photon_daughters().values())
-    # for n in Nuclide.from_symbol('N14').get_incident_proton_daughters().values():
-    #     if not n.is_stable:
-    #         n.plot_decay_gamma_spectrum(min_intensity=0)
-    #
-    # plt.show()
-    # e = Evaluation('/Users/jeffreyburggraf/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/decay/decay_2020/C010')
-    # d =Decay.from_endf(e)
-    # print(d.spectra)
-
+    pickle_proton_fission_xs_data()
 
