@@ -9,7 +9,7 @@ import marshal
 from typing import Dict, List, TypedDict
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR,\
      PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, CrossSection1D, ActivationReactionContainer,\
-     GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH, SF_YIELD_PICKLE_DIR
+     GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
@@ -448,35 +448,35 @@ def pickle_gamma_activation_data():
             pickle.dump(reaction, f)
 
 
-def pickle_sf_yields():
-    for f_path in sf_yield_data_dir.iterdir():
-        _m = re.match('GEFY_([0-9]+)_([0-9]+)_s.dat', f_path.name)
-        if _m:
-            z = int(_m.groups()[0])
-            a = int(_m.groups()[1])
-            e_symbol = ATOMIC_SYMBOL[z]
-            try:
-                print('Pickling SF data for {}, z={}, a={} from file {}'.format(e_symbol, z, a, f_path))
-                y = FissionProductYields(str(f_path))
-            except KeyError:
-                warn('Failed to load SF data from "{}" in "{}"'.format(e_symbol, f_path.name))
-                continue
-
-            nuclide_name = y.nuclide['name']
-
-            cumulative_dir = SF_YIELD_PICKLE_DIR/'cumulative'
-            independent_dir = SF_YIELD_PICKLE_DIR/'independent'
-
-            if not cumulative_dir.exists():
-                cumulative_dir.mkdir()
-
-            if not independent_dir.exists():
-                independent_dir.mkdir()
-
-            with open(cumulative_dir/'{}.pickle'.format(nuclide_name), 'wb') as f:
-                pickle.dump(y.cumulative[0], f)
-            with open(independent_dir/'{}.pickle'.format(nuclide_name), 'wb') as f:
-                pickle.dump(y.independent[0], f)
+# def pickle_sf_yields():
+#     for f_path in sf_yield_data_dir.iterdir():
+#         _m = re.match('GEFY_([0-9]+)_([0-9]+)_s.dat', f_path.name)
+#         if _m:
+#             z = int(_m.groups()[0])
+#             a = int(_m.groups()[1])
+#             e_symbol = ATOMIC_SYMBOL[z]
+#             try:
+#                 print('Pickling SF data for {}, z={}, a={} from file {}'.format(e_symbol, z, a, f_path))
+#                 y = FissionProductYields(str(f_path))
+#             except KeyError:
+#                 warn('Failed to load SF data from "{}" in "{}"'.format(e_symbol, f_path.name))
+#                 continue
+#
+#             nuclide_name = y.nuclide['name']
+#
+#             cumulative_dir = SF_YIELD_PICKLE_DIR/'cumulative'
+#             independent_dir = SF_YIELD_PICKLE_DIR/'independent'
+#
+#             if not cumulative_dir.exists():
+#                 cumulative_dir.mkdir()
+#
+#             if not independent_dir.exists():
+#                 independent_dir.mkdir()
+#
+#             with open(cumulative_dir/'{}.pickle'.format(nuclide_name), 'wb') as f:
+#                 pickle.dump(y.cumulative[0], f)
+#             with open(independent_dir/'{}.pickle'.format(nuclide_name), 'wb') as f:
+#                 pickle.dump(y.independent[0], f)
 
 
 class Helper:

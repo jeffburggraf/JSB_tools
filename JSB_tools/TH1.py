@@ -48,7 +48,7 @@ def binned_median(bin_left_edges, weights):
 
 def rolling_median(window_width, values):
     """
-    Rolling median over a uniform window. Window is clipped at the edges.
+    Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
     Args:
         window_width: Size of independent arrays for median calculations.
         values: array of values
@@ -184,6 +184,7 @@ class TH1F:
             self.n_bins = len(self.__bin_left_edges__) - 1
             self.__ROOT_hist__ = ROOT.TH1F(title, title, self.n_bins, self.__bin_left_edges__)
             self.title = title
+        self.is_density = False
 
         self.bin_centers = np.array(
             [0.5 * (b2 + b1) for b1, b2 in zip(self.__bin_left_edges__[:-1], self.__bin_left_edges__[1:])])
@@ -709,8 +710,13 @@ class TH1F:
         return np.average(self.bin_centers, weights=np.abs(self.bin_values))
 
     @property
-    def median(self):
+    def median_x(self):
+        """Returns the median bin. For median bin value, use median_y"""
         return binned_median(self.__bin_left_edges__, self.bin_values)
+    @property
+    def median_y(self):
+        """returns the median bin value."""
+        return np.median(self.bin_values)
 
     def quantiles(self, n_quantiles, bin_indicies=False) -> List[float]:
         """
@@ -803,7 +809,9 @@ class TH1F:
     def __copy__(self):
         new_ROOT_hist = self.__ROOT_hist__.Clone("hist{0}".format(TH1F.title_number))
         TH1F.title_number += 1
-        return TH1F(ROOT_hist=new_ROOT_hist)
+        out = TH1F(ROOT_hist=new_ROOT_hist)
+        out.is_density = self.is_density
+        return out
 
     def copy(self):
         return self.__copy__()
@@ -812,10 +820,13 @@ class TH1F:
         if hasattr(other, "__iter__"):
             assert len(other) == len(self), "Multiplying hist of len {0} by iterator of len {1}".format(len(self),
                                                                                                         len(other))
+
             assert len(other), "Cannot operate on array opf length zero"
-            if isinstance(other[0], Variable):
-                other = unp.uarray([v.n for v in other], [v.std_dev for v in other])
-            else:
+            if not isinstance(other, np.ndarray):
+                #  I think the below code is unnecessary . Commenting out for now
+                # if isinstance(other[0], Variable):
+                #     other = unp.uarray([v.n for v in other], [v.std_dev for v in other])
+                # else: other = np.array(other)
                 other = np.array(other)
         if isinstance(other, ROOT.TH1):
             other = self.__get_bin_values_from_ROOT_hist__(other)
@@ -888,6 +899,9 @@ class TH1F:
     def __itruediv__(self, other):
         other = self.__convert_other_for_operator__(other)
         result = self.bin_values / other
+        # assert False
+        if other is self.bin_widths:
+            self.is_density = True
         self.__set_bin_values__(result)
         return self
 

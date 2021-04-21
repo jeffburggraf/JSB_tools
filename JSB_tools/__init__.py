@@ -11,11 +11,18 @@ from numbers import Number
 from itertools import islice
 from sortedcontainers import SortedDict
 from pathlib import Path
-from typing import Union
+from typing import Union, Sequence
 import pickle
 from atexit import register
 from dataclasses import dataclass
 cwd = Path(__file__).parent
+from scipy.interpolate import interp1d
+from uncertainties import unumpy as unp
+from uncertainties import UFloat
+import time
+from matplotlib import pyplot as plt
+
+
 try:
     import ROOT
     root_exists = True
@@ -213,3 +220,54 @@ class FileManager:
             path.unlink(missing_ok=True)
         self.lookup_path.unlink(missing_ok=True)
 
+
+def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[float], order=2, n_samples=30):
+    orders = {0: 'zero', 1:'linear', 2: 'quadratic', 3: 'cubic'}
+    assert isinstance(order, int)
+    assert order in orders, f'Invalid order, "{order}". Valid are:\n\t{list(orders.keys())}'
+    order = orders[order]
+    assert hasattr(y, '__iter__')
+    assert hasattr(x, '__iter__')
+    x = np.array(x)
+    if all(x[np.argsort(x)] == x):
+        assume_sorted = True
+    else:
+        assume_sorted = False
+
+    assert hasattr(x_new, '__iter__')
+    if not isinstance(y[0], UFloat):
+        y = unp.uarray(y, np.zeros_like(y))
+    if isinstance(x[0], UFloat,):
+        raise NotImplementedError('Errors in x not implemented yet. Maybe someday')
+    y_errors = unp.std_devs(y)
+    y_nominal = unp.nominal_values(y)
+    new_nominal_ys = interp1d(x, y_nominal, kind=order, copy=False, assume_sorted=assume_sorted)(x_new)
+    new_stddev_ys = interp1d(x, y_errors, kind=order, copy=False, assume_sorted=assume_sorted)(x_new)
+    # plt.errorbar(x, y_nominal, y_errors, label='Actual', marker='o')
+    # plt.errorbar(x_new, new_nominal_ys, new_stddev_ys, label='Interped')
+    # plt.legend()
+    # plt.show()
+    return unp.uarray(new_nominal_ys, new_stddev_ys)
+
+
+
+
+    print(time.time() - t0)
+    print('len of y: ', len(y))
+    print(dys.shape, ys.shape)
+
+
+# ergs = np.array([0, 59.9, 88.4, 122, 166, 392, 514, 661, 898, 1173, 1332, 1835], dtype=np.float)
+# effs = np.array([0, 0.06, 0.1, 0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
+#
+# x = ergs
+#
+# rel_errors = np.arange(len(x))
+# rel_errors = rel_errors/max(rel_errors)
+# rel_errors *= 0.25
+# y = unp.uarray(effs, effs*rel_errors)
+#
+# # plt.plot(x, rel_errors)
+#
+# interp1d_errors(x, y, np.linspace(ergs[0], ergs[-1], 4*len(ergs)), order=1, n_samples=100)
+# plt.show()
