@@ -49,13 +49,16 @@ NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for pe
 PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
 PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
 
-DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuke data
-PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton activation data
-GAMMA_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon activation data
-
-FISS_YIELDS_PATH = pwd/'data'/'fiss_yields'
-SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
-NEUTRON_F_YIELD_PICKLE_DIR = pwd / 'data' / 'neutron_fiss_yields'
+from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR,\
+    FISS_YIELDS_PATH # SF_YIELD_PICKLE_DIR, NEUTRON_F_YIELD_PICKLE_DIR
+# DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuclide data (half lives, ect)
+# PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton/fission activation data
+# GAMMA_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon/fission activation data
+# NEUTRON_PICKLE_DIR = pwd / 'data' / 'incident_neutron'  # rel. dir. of pickled neutron activation/fission data
+#
+# FISS_YIELDS_PATH = pwd/'data'/'fiss_yields'
+# SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
+# NEUTRON_F_YIELD_PICKLE_DIR = pwd / 'data' / 'neutron_fiss_yields'
 
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
@@ -1037,16 +1040,16 @@ class Nuclide:
 
         return out
 
-    def __get_sf_yield__(self, independent_bool) -> Dict[str, UFloat]:
-        sub_dir = ('independent' if independent_bool else 'cumulative')
-        f_path = SF_YIELD_PICKLE_DIR/sub_dir/'{}.marshal'.format(self.name)
-        assert f_path.exists(), 'No SF fission yield data for {}'.format(self.name)
-        with open(f_path, 'rb') as f:
-            yield_data: yield_data_type = marshal.load(f)
-        result = {}
-        for n_name, data in yield_data[0.].items():
-            result[n_name]: UFloat = ufloat(data['yield'], data['yield_err'])
-        return result
+    # def __get_sf_yield__(self, independent_bool) -> Dict[str, UFloat]:
+    #     sub_dir = ('independent' if independent_bool else 'cumulative')
+    #     f_path = SF_YIELD_PICKLE_DIR/sub_dir/'{}.marshal'.format(self.name)
+    #     assert f_path.exists(), 'No SF fission yield data for {}'.format(self.name)
+    #     with open(f_path, 'rb') as f:
+    #         yield_data: yield_data_type = marshal.load(f)
+    #     result = {}
+    #     for n_name, data in yield_data[0.].items():
+    #         result[n_name]: UFloat = ufloat(data['yield'], data['yield_err'])
+    #     return result
 
     def independent_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
         y = FissionYields(nuclide=self, inducing_particle='gamma', eval_ergs=ergs, data_source=data_source,
@@ -1358,9 +1361,9 @@ class ActivationReactionContainer:
 
     @staticmethod
     def __bug_test__(openmc_reaction: Reaction, openmc_product: Product, nuclide_name, incident_particle):
-        """When activation_product.yield_.y == [1, 1], it indicates what seems to be a bug for ( or at least for) G, 1n
-        reactions in fissionable nuclides. In this case (again, at least) the correct yield can be found by accessing the xs
-        on the Reaction instance itself. """
+        """When activation_product.yield_.y == [1, 1], it indicates what seems to be a bug for ( or at least for)
+        (G, 1n) reactions in fissionable nuclides. In this case (again, at least) the correct yield can be found
+         by accessing the xs attribute on the openmc.Reaction instance itself."""
         activation_product_name = openmc_product.particle
         warn_other = False
         try:
@@ -1392,14 +1395,10 @@ class ActivationReactionContainer:
                                                                 self.product_nuclide_names_xss.keys())
 
 
-decay_data_dir = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay"
-dir_old = "/Users/jeffreyburggraf/PycharmProjects/PHELIX/Xs/decay/"
-dir_new = "/Users/jeffreyburggraf/Desktop/nukeData/ENDF-B-VIII.0_decay/"
-
-
 if __name__ == "__main__":
-    # s = Nuclide.from_symbol('U238')
+    s = Nuclide.from_symbol('U238')
+    print(s.cumulative_sf_fission_yield())
     # print(__get_fiss_yield_path__('U238',"photon", 'GEF', False))
-    FissionYields(Nuclide.from_symbol('Ac223'), inducing_particle='proton', data_source=None)
+    # FissionYields(Nuclide.from_symbol('Ac223'), inducing_particle='proton', data_source=None)
 
 
