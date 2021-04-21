@@ -228,6 +228,23 @@ class LogPolyFit:
     # ROOT_loop()
 
 
+class PeakResult:
+    def __init__(self, amp, center, sigma, bg, x, y, hist):
+        self.center = center
+        self.sigma = sigma
+        self.gb = bg
+        self.x = x
+        self.y = y
+        self.amplitude = amp
+        self.hist = hist
+
+    def plot(self, ax=None):
+        if ax is None:
+            ax = plt.gca()
+        self.hist.plot(ax)
+        ax.plot(self.x, self.y, label='Fit')
+        return ax
+
 def peak_fit(hist: TH1F, center_guess, min_x=None, max_x=None, method='ROOT',
              sigma_guess=1, ):
     """
@@ -252,11 +269,13 @@ def peak_fit(hist: TH1F, center_guess, min_x=None, max_x=None, method='ROOT',
         if min_x is None:
             min_x = bins[0]
 
-        select = np.where((bins >= min_x) & (bins <= max_x ))
-        new_bins = bins[select]
+        max_bin = np.searchsorted(hist.__bin_left_edges__, max_x) + 1
+        min_bin = np.searchsorted(hist.__bin_left_edges__, min_x) + 1
+        # select = np.where((bins >= min_x) & (bins <= max_x ))
+        new_bins = bins[min_bin: max_bin]
         old_hist = hist
         hist = TH1F(bin_left_edges=new_bins)
-        hist += old_hist.bin_values[select]
+        hist += old_hist.bin_values[min_bin: max_bin-1]
 
     if method == 'ROOT':
         func = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
@@ -270,87 +289,162 @@ def peak_fit(hist: TH1F, center_guess, min_x=None, max_x=None, method='ROOT',
         func.SetParameter(2, sigma_guess)
         func.SetParameter(3, bg_guess)
         hist.__ROOT_hist__.Fit('peak_fit')
+        amp = ufloat(func.GetParameter(0), func.GetParError(0))
+        center = ufloat(func.GetParameter(1), func.GetParError(1))
+        sigma = ufloat(func.GetParameter(2), func.GetParError(2))
+        bg = ufloat(func.GetParameter(3), func.GetParError(3))
+        xs = hist.bin_centers
+        ys = np.array([func.Eval(x) for x in xs])
+        out = PeakResult(amp, center, sigma, bg, xs, ys, hist)
+        return out
 
 
 
-from GlobalValues import shot_groups
-from Shot_data_analysis.PHELIXDataTTree import get_global_energy_bins
-from JSB_tools import ROOT_loop
 
-def erg_efficiency(erg):
-    a = ufloat(45.6, 1.5)                           # From Pascal's thesis
-    b = ufloat(3.63E-3, 0.13E-3)                    # From Pascal's thesis
-    c = ufloat(2.43, 0.12)                        # From Pascal's thesis
-    return (a*np.e**(-b*erg)+c)/100.           # From Pascal's thesis
 
-ergs_all = np.array(get_global_energy_bins(200))
-selector =  list(map(int, (len(ergs_all)-1)*np.linspace(0.2, 1, 10)))
-ergs = ergs_all[selector]
-effs = erg_efficiency(ergs)
-# print(effs)
-g = LogPolyFit(ergs, effs)
-plt.plot(ergs_all, unp.nominal_values(erg_efficiency(ergs_all)), label='Actual')
-# y = g.predict(ergs_all, False)
-# plt.errorbar(ergs_all, unp.nominal_values(y), unp.std_devs(y))
-plt.legend()
-plt.show()
-# g.Draw()
-# ROOT_loop()
-# plt.show()
-# tree = shot_groups['He+Ar'].tree
-# center = 297
-# dx = 10
-# _min, _max = center-dx, center+dx
-# hist = TH1F(bin_left_edges=get_global_energy_bins(_min, _max))
-# hist.Project(tree, 'erg', '(t<300)*(1.0/eff)')
-# hist /= hist.bin_widths
-#
-# peak_fit(hist, center, )
-# hist.Draw()
-# ROOT_loop()
+
+
+class MakeROOTSpectrum:
+    data_dir = cwd/"Spectra_data"
+
+    def __init__(self, path_name, n_channels, ch_2_erg_coefficients=None, fwhm_coefficients=None):
+        path_name = Path(path_name)
+        self.n_channels = n_channels
+        assert path_name.parent.exists()
+        if not MakeROOTSpectrum.data_dir.exists():
+            MakeROOTSpectrum.data_dir.mkdir()
+        path = MakeROOTSpectrum.data_dir/path_name
+        self.root_file = ROOT.TFile(str(path), 'recreate')
+        self.tree = ROOT.TTree('spectrum', 'spectrum')
+        self.ch_2_erg_coefficients = ch_2_erg_coefficients
+        self.fwhm_coefficients = fwhm_coefficients
+
+    def do_erg_calibratrion(self, counts_array, channels_to_ergs: List[Tuple], window_size=15,
+                            order=1):
+        """
+
+        Args:
+            counts_array:
+            channels_to_ergs:
+            window_size: int or array of ints. Size of window for gaus fit.
+
+        Returns:
+
+        """
+        counts_array = np.array(counts_array)
+        hist = TH1F(bin_left_edges=(np.arange(self.n_channels+1) + 0.5))
+        hist += unp.uarray(counts_array, np.sqrt(counts_array))
+        hist /= hist.bin_widths
+
+        if not hasattr(window_size, '__iter__'):
+            window_size = [window_size]*len(channels_to_ergs)
+        fit_xs = []
+        fit_ys = []
+        for index, (ch, erg) in enumerate(channels_to_ergs):
+            w = window_size[index]
+            fit = peak_fit(hist, ch, min_x=ch-w//2, max_x=ch+w//2,)
+            fit_xs.append(fit.center)
+            if not isinstance(erg, UFloat):
+                erg = ufloat(erg, 0)
+            fit_ys.append(erg)
+            plt.figure()
+            ax = fit.plot()
+            ax.set_title(f'Given erg: {erg}KeV;  Resulting channel: {fit.center}')
+        fit_xs_errors = np.array([x.std_dev for x in fit_xs])
+        fit_xs = np.array([x.n for x in fit_xs])
+        fit_ys_errors = np.array([y.std_dev for y in fit_ys])
+        fit_ys = np.array([y.n for y in fit_ys])
+        tgraph = ROOT.TGraphErrors(len(fit_xs), fit_xs, fit_ys, fit_xs_errors, fit_ys_errors)
+        tgraph.Fit('pol1')
+        tf1 = tgraph.GetListOfFunctions().FindObject('pol1')
+
+        # poly coeffs to convert from ch + 0.5 (starting fom ch=0) to energy, in KeV
+        coeffs = [tf1.GetParameter(i) for i in range(order+1)]
+
+        coeffs_error = [tf1.GetParError(i) for i in range(order+1)]
+        erg_bins = np.sum([coeffs[i]*hist.__bin_left_edges__**i for i in range(order+1)], axis=0)
+        erg_sigmas = np.sum([coeffs_error[i]*channels**i for i in range(order+1)], axis=0)
+        # coeffs = [ufloat(tf1.GetParameter(0), tf1.GetParError(0)), ufloat(tf1.GetParameter(1), tf1.GetParError(2))]
+        print('erg coeffs', unp.nominal_values(coeffs))
+        print('sigma eerg coeffs', unp.std_devs(coeffs))
+        plt.figure()
+        plt.plot(erg_bins[:-1], erg_sigmas)
+
+        plt.show()
+
+
+
+import re
+if __name__ == '__main__':
+
+    p_name = '7_Loop_26s_150s_000.Spe'
+    counts = np.zeros(8192)
+    channels = np.arange(len(counts), dtype=np.float) + 0.5
+
+    for path in Path('/Users/jeffreyburggraf/PycharmProjects/PHELIX/PHELIX_data/data').iterdir():
+        if __name__ == '__main__':
+            if m := re.match('([0-9]+)_Shot', path.name):
+                shot_num = int(m.groups()[0])
+                if 42 <= shot_num <= 52:
+                    paths = [p.name for p in path.iterdir()]
+                    assert p_name in paths
+                    with open(path/p_name) as f:
+                        lines = f.readlines()
+                        index_start = lines.index('$DATA:\n') + 2
+                        index_stop = lines.index('$ROI:\n')
+                        data_lines = lines[index_start: index_stop]
+                        _new_counts = np.array([int(s.split()[0]) for s in data_lines])
+                        print(_new_counts)
+                        counts += np.array([int(s.split()[0]) for s in data_lines])
+                        # a = np.array([int(s.split()[0]) for s in data_lines])
+                        # print(a.shape)
+    ch_2_erg = [(393.0, 218), (917.6, 511)]  # ch -> actual energy
+    m = MakeROOTSpectrum('test',len(channels))
+    m.do_erg_calibratrion(counts, ch_2_erg)
+
+    # plt.plot(channels, counts)
+    # plt.figure()
+    # plt.plot(.566061 + channels*0.556273, counts)
+    # plt.show()
+
+
+
+                        # print(lines[lines.index("$MEAS_TIM:\n")+1])
+
+    # with open()
+
+
+
+
+
+
 
 #
-# class MakeROOTSpectrum:
-#     data_dir = cwd/"Spectra_data"
 #
-#     def __init__(self, path, channels, ch_2_erg_coefficients, fwhm_coefficients):
-#         path = Path(path)
-#         assert path.parent.exists()
-#         if not MakeROOTSpectrum.data_dir.exists():
-#             MakeROOTSpectrum.data_dir.mkdir()
-#         self.root_file = ROOT.TFile(path, 'recreate')
-#         self.tree = ROOT.TTree('spectrum', 'spectrum')
-#         self.ch_2_erg_coefficients = ch_2_erg_coefficients
-#         self.fwhm_coefficients = fwhm_coefficients
-#         # self.
-#
-#
-#
-#
-#
-# class ROOTSpectrum:
-#     """
-#     For analysis of spectra that are stored in a ROOT file in a standardized manner.
-#     Instances can be built from either a path_to_root_file (using __init__), or from a TTree/TChain
-#     (using cls.from_tree).
-#
-#     ROOT file format standard:
-#         The tree, named 'spectrum', must have the following branches:
-#             'ch': Channel
-#             't': time of gamma detection
-#             'eff' efficiency of detector at energy erg.
-#         The associated ROOT file may contain the following two histograms:
-#             "ch_2_erg":  TH1, quadratic polynomial mapping channel to gamma energy. Parameters are coeffs and par errors
-#                 are energy uncertainties.
-#             "erg_2_eff_hist": Bin left edges are energies, bin values are efficiency and sigma efficiency
-#             "channels": sorted TArrayI of all channels.
-#                 Example creation:
-#                     np_arr = np.array(channels, dtype=np.int)
-#                     arr = ROOT.TArrayI(len(a))
-#                     for i in range(np_arr):
-#                         arr[i] = np_arr[i]
-#                     arr.WriteObject(arr, 'channels')
-#         It's fine if these arent there. In this case, ROOTSpec
+
+class ROOTSpectrum:
+    """
+    For analysis of spectra that are stored in a ROOT file in a standardized manner.
+    Instances can be built from either a path_to_root_file (using __init__), or from a TTree/TChain
+    (using cls.from_tree).
+
+    ROOT file format standard:
+        The tree, named 'spectrum', must have the following branches:
+            'ch': Channel
+            't': time of gamma detection
+            'eff' efficiency of detector at energy erg.
+        The associated ROOT file may contain the following two histograms:
+            "ch_2_erg":  TH1, quadratic polynomial mapping channel to gamma energy. Parameters are coeffs and par errors
+                are energy uncertainties.
+            "erg_2_eff_hist": Bin left edges are energies, bin values are efficiency and sigma efficiency
+            "channels": sorted TArrayI of all channels.
+                Example creation:
+                    np_arr = np.array(channels, dtype=np.int)
+                    arr = ROOT.TArrayI(len(a))
+                    for i in range(np_arr):
+                        arr[i] = np_arr[i]
+                    arr.WriteObject(arr, 'channels')
+        It's fine if these arent there. In this case, ROOTSpec
 #
 #     Todo:
 #         -Make ch_to_erg a TF1.
