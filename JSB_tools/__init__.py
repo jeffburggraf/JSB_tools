@@ -252,8 +252,9 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
         raise NotImplementedError('Errors in x not implemented yet. Maybe someday')
     y_errors = unp.std_devs(y)
     y_nominal = unp.nominal_values(y)
-    new_nominal_ys = interp1d(x, y_nominal, kind=order, copy=False, assume_sorted=assume_sorted)(x_new)
-    new_stddev_ys = interp1d(x, y_errors, kind=order, copy=False, assume_sorted=assume_sorted)(x_new)
+    print(x, x_new)
+    new_nominal_ys = interp1d(x, y_nominal, kind=order, copy=False, bounds_error=False, fill_value=(0, 0), assume_sorted=assume_sorted)(x_new)
+    new_stddev_ys = interp1d(x, y_errors, kind=order, copy=False, bounds_error=False,  fill_value=(0, 0), assume_sorted=assume_sorted)(x_new)
     return unp.uarray(new_nominal_ys, new_stddev_ys)
 
 
@@ -291,16 +292,17 @@ class ROOTFitBase:
         """
         assert hasattr(self, '__tf1__'), 'Subclass must have a __tf1__ attribute'
         assert hasattr(self, '__ROOT_fit_result__'), 'Subclass must have a __ROOT_fit_result__ attribute'
+        if x is None:
+            x = self.x
+        if not hasattr(x, '__iter__'):
+            x = [x]
 
-        out_nominal = np.array([self.__tf1__.Eval(_x) for _x in self.x])
-        out_error = np.array(self.__ROOT_fit_result__.GetConfidenceIntervals(0.68, False))
-        if hasattr(x, '__iter__'):
-            out_error = np.interp(x, self.x, out_error)
-            out_nominal = np.interp(x, self.x, out_nominal)
-        elif isinstance(x, Number):
-            out_error = np.interp([x], self.x, out_error)[0]
-            out_nominal = np.interp([x], self.x, out_nominal)[0]
-
+        out_nominal = np.array([self.__tf1__.Eval(_x) for _x in x])
+        _x = np.array(x, dtype=np.float)
+        out_error = np.zeros_like(_x)
+        self.__ROOT_fit_result__.GetConfidenceIntervals(len(_x), 1, 1, _x, out_error, 0.68, False)
+        if len(out_error) == 1:
+            return ufloat(out_nominal[0], out_error[0])
         return unp.uarray(out_nominal, out_error)
 
     def plot_fit(self, ax=None, title=None):
