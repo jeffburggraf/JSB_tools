@@ -321,128 +321,37 @@ class TH1F:
         return _new_hist
 
     def set_min_bin_value(self, y=0):
+        """ Set a minimum bin value. All bins with values below `y` will be set equal to `y`"""
         bin_values_n = np.where(self.bin_values >= y, unp.nominal_values(self.bin_values), y)
         new_bin_values = unp.uarray(bin_values_n, self.bin_std_devs)
         self.__set_bin_values__(new_bin_values)
 
+    def remove_bins_outside_range(self, min_x=None, max_x=None) -> TH1F:
+        """
+        Return a new hist with only bins in range min_x <= bin_center <= max_x
+        Args:
+            min_x:
+            max_x:
+
+        Returns:
+
+        """
+        assert min_x is not max_x is not None, "Must specify either a min or a max"
+        if max_x is None:
+            max_x = self.__bin_left_edges__[-1]
+        if min_x is None:
+            min_x = self.__bin_left_edges__[0]
+
+        max_bin = np.searchsorted(self.__bin_left_edges__, max_x) + 1
+        min_bin = np.searchsorted(self.__bin_left_edges__, min_x)
+        new_bins = self.__bin_left_edges__[min_bin: max_bin]
+        hist = TH1F(bin_left_edges=new_bins)
+        hist += self.bin_values[min_bin: max_bin - 1]
+        return hist
+
     def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None, amplitude_fix=None, c_fix=None,
                  divide_by_bin_width=False, full_range=None):
-        if isinstance(background, str):
-            background = background.lower()
-        if divide_by_bin_width:
-            self /= self.bin_widths
-
-        def lin_func(x, slope, intercept):
-            return intercept + slope * (x - peak_center)
-
-        if background is None:
-            model = GaussianModel()
-        elif isinstance(background, str):
-            if background == "constant":
-                model = GaussianModel() + Model(lin_func)
-            if background == "linear":
-                model = GaussianModel() + Model(lin_func)
-        else:
-            assert False, "Invalid background. Must be None, 'linear', or 'constant'. "
-
-        if full_range is False:
-            peaks_ix, peak_infos = find_peaks(unp.nominal_values(self.bin_values),
-                                              prominence=unp.std_devs(self.bin_values),
-                                              width=0, height=0)
-            prominences = peak_infos["prominences"]
-
-            widths = peak_infos["widths"]
-
-            if peak_center is None:
-                assert len(prominences) != 0, "No peaks found to fit"
-                peak_info_ix = np.argmax(prominences)
-            else:
-                peak_info_ix = np.abs(self.bin_centers[peaks_ix] - peak_center).argmin()
-            best_peak_ix = peaks_ix[peak_info_ix]
-            peak_center = self.bin_centers[best_peak_ix]
-            peak_width_ix = int(round(widths[peak_info_ix]))
-            peak_width = widths[peak_info_ix]*self.bin_widths[best_peak_ix]
-            peak_height = prominences[peak_info_ix]
-
-            valleys_ix, _ = find_peaks(-unp.nominal_values(self.bin_values) + max(unp.nominal_values(self.bin_values)),
-                                    prominence=np.abs(peak_height*0.2-2*unp.std_devs(self.bin_values)),
-                                              width=0, height=0)
-            if len(np.where(valleys_ix < best_peak_ix)[0]):
-                min_x_ix = valleys_ix[np.where(valleys_ix < best_peak_ix)[0][-1]]
-                if min_x_ix > best_peak_ix - peak_width_ix:
-                    min_x_ix = best_peak_ix - peak_width_ix
-
-            else:
-                min_x_ix = best_peak_ix - peak_width_ix
-
-            if len(np.where(valleys_ix > best_peak_ix)[0]):
-                max_x_ix = valleys_ix[np.where(valleys_ix > best_peak_ix)[0][0]]
-                if max_x_ix < best_peak_ix + peak_width_ix:
-                    max_x_ix = best_peak_ix + peak_width_ix
-            else:
-                max_x_ix = best_peak_ix + peak_width_ix
-            diff_ix = max_x_ix - min_x_ix
-
-            if diff_ix < 7:
-                max_x_ix += diff_ix//2
-                min_x_ix -= diff_ix//2
-                max_x_ix += diff_ix%2
-
-            max_x_ix = min([len(self) - 1, max_x_ix])
-            min_x_ix = max([0, min_x_ix])
-            min_x = self.bin_centers[min_x_ix]
-            max_x = self.bin_centers[max_x_ix]
-
-            fit_selector = np.where((self.bin_centers >= min_x) &
-                                    (self.bin_centers <= max_x))
-
-            _x = self.bin_centers[fit_selector]
-            _y = unp.nominal_values(self.bin_values[fit_selector])
-            _y_err = unp.std_devs(self.bin_values[fit_selector])
-
-            model_params = model.make_params()
-            sigma_guess = peak_width / 2.
-            amplitude_guess = peak_height / 0.3989423 / sigma_guess
-            c0_guess = unp.nominal_values(self.bin_values)[peaks_ix[peak_info_ix]] - peak_height
-            model_params["amplitude"].set(value=amplitude_guess)
-            model_params["sigma"].set(value=sigma_guess, min=1)
-            if background == "constant":
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=0, vary=False)
-            if background == "linear":
-                dx = self.bin_centers[fit_selector][-1] - self.bin_centers[fit_selector][0]
-                dy = unp.nominal_values(self.bin_values[fit_selector[0][-1]]) - \
-                     unp.nominal_values(self.bin_values[fit_selector[0][0]])
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=dy / dx)
-            model_params["center"].set(value=peak_center)
-        else:
-            model_params = model.make_params()
-            sigma_guess = 2
-            amplitude_guess = np.max(self.nominal_bin_values)
-            c0_guess = 0
-            model_params["amplitude"].set(value=amplitude_guess)
-            model_params["sigma"].set(value=sigma_guess, min=1)
-            if background == "constant":
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=0, vary=False)
-            if background == "linear":
-
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=0)
-            model_params["center"].set(value=peak_center, min=peak_center - 3.5, max=peak_center + 3.5)
-            _x = self.bin_centers
-            _y = unp.nominal_values(self.bin_values)
-            _y_err = unp.std_devs(self.bin_values)
-
-        weights = 1.0/np.where(abs(_y_err)>0, abs(_y_err),  1)
-        fit_result = model.fit(_y, x=_x, weights=weights,
-                               params=model_params)
-        eval_fit = lambda xs: model.eval(fit_result.params, x=xs)
-        if divide_by_bin_width:
-            self *= self.bin_widths
-
-        return fit_result, eval_fit
+        pass
 
     def get_stats_text(self):
         counts = self.__ROOT_hist__.GetEntries()
@@ -713,6 +622,7 @@ class TH1F:
     def median_x(self):
         """Returns the median bin. For median bin value, use median_y"""
         return binned_median(self.__bin_left_edges__, self.bin_values)
+
     @property
     def median_y(self):
         """returns the median bin value."""

@@ -19,6 +19,8 @@ import warnings
 import uncertainties.unumpy as unp
 from uncertainties import ufloat, UFloat
 import uncertainties.umath as umath
+from JSB_tools import PolyFit, PeakFit
+import re
 
 data_dir = DECAY_PICKLE_DIR/'__fast__gamma_dict__.marshal'
 
@@ -149,165 +151,111 @@ def gamma_search(erg_center: float,
     return out
 
 
-required_spec_attribs = ['erg', 't', 'eff', 'ch']
-from sklearn.linear_model import LinearRegression
-class LogPolyFit:
-    def __init__(self, x, y, order=2):
-        assert isinstance(order, int)
-        if not isinstance(x[0], UFloat):
-            x = unp.uarray(x, np.zeros_like(x))
-        self.x = x
-        self.y = y
+# class PeakResult:
+#     """
+#     Return value from peak_fit
+#
+#     """
+#     def __init__(self, amp, center, sigma, bg, y_fit_result, hist: TH1F):
+#         """
+#
+#         Args:
+#             amp: Gauss amplitude, i.e. number of events in peak
+#             center: peak center
+#             sigma: peak sigma
+#             bg: bg parameter
+#             y_fit_result: Fiy function evalueated at xs
+#             hist: Histogram that contained fitted peak.
+#         """
+#         self.center = center
+#         self.sigma = sigma
+#         self.gb = bg
+#         self.y = y_fit_result
+#         self.amplitude = amp
+#         self.hist = hist
+#
+#     def plot(self, ax=None):
+#         if ax is None:
+#             ax = plt.gca()
+#         self.hist.plot(ax)
+#         ax.plot(self.hist.bin_centers, self.y, label='Fit')
+#         return ax
 
-        # x = unp.nominal_values(x)
-        x_log = unp.log(x)
-        x_err_log = np.array(unp.std_devs(x_log), dtype=np.float)
-        x_log = np.array(unp.nominal_values(x_log), dtype=np.float)
-        # y = np.array(unp.nominal_values(y), dtype=np.float)
-        y_log = unp.log(y)
-        y_err_log = np.array(unp.std_devs(y_log), dtype=np.float)
-        y_log = np.array(unp.nominal_values(y_log), dtype=np.float)
-
-        log_tgraph = ROOT.TGraphErrors(len(x), x_log, y_log, x_err_log, y_err_log)
-
-        f_name = f'pol{order}'
-        log_tgraph.Fit(f_name)
-        __log_tf1__ = log_tgraph.GetListOfFunctions().FindObject(f_name)
-        log_parameters = [ufloat(__log_tf1__.GetParameter(i), __log_tf1__.GetParError(i))
-                           for i in range(order+1)]
-        sum_terms = ['[0]'] + [f"TMath::Log(x)*[{i}]" for i in range(1, order+1)]
-        func_str = f"{round(np.e, 4)}**({'+'.join(sum_terms)})"
-        final_tf1 = ROOT.TF1('log_fit', func_str)
-        for i in range(order+1):
-            final_tf1.SetParameter(i, log_parameters[i].n)
-
-        tgraph = ROOT.TGraphErrors(len(x), unp.nominal_values(x), unp.nominal_values(y), unp.std_devs(x), unp.std_devs(y))
-        tgraph.Fit("log_fit")
-        tgraph.Draw()
-        ROOT_loop()
-        print(func_str)
-
-    def predict(self, x, nominal_values=False):
-        return_array = True
-        if not hasattr(x, '__iter__'):
-            x = [x]
-            return_array = False
-
-        pred = np.zeros_like(x)
-        pred = unp.uarray(pred, pred)
-        for i, c in enumerate(self.parameters):
-            pred += unp.log(x)**i*c
-        out = np.e**pred
-        if nominal_values:
-            out = unp.nominal_values(out)
-        if not return_array:
-            assert len(out) == 1
-            return out[0]
-        else:
-            return out
-        #
-        #
-        # def predict(_x):
-        #     pred = np.zeros_like(_x)
-        #     for i in range(order+1):
-        #         print(self.__log_tf1__.GetParameter(i))
-        #         pred += self.__log_tf1__.GetParameter(i)*np.log(_x)**i
-        #     return np.e**pred
-        # sum_terms = ['[0]'] + [f"TMath::Log(x)^{i}*[{i}]" for i in range(1, order + 1)]
-        # tf1_string = f'{round(np.e,4)}**({"+".join(sum_terms)})'
-        # final_tf1 = ROOT.TF1('log_fit', tf1_string)
-        # for i in range(order+1):
-        #     print(i, self.__log_tf1__.GetParameter(i),  self.__log_tf1__.GetParError(i))
-        #     final_tf1.SetParameter(i, self.__log_tf1__.GetParameter(i))
-        #     final_tf1.SetParError(i, self.__log_tf1__.GetParError(i))
-        #
-        # plt.plot(ergs_all, predict(ergs_all), label='MOdel')
-        #
-        # plt.errorbar(ergs_all, [final_tf1.Eval(_x) for _x in ergs_all], label='test_model')
-    # plt.plot(ergs_all, predict(ergs_all), label='MOdel')
-    # ROOT_loop()
-
-
-class PeakResult:
-    def __init__(self, amp, center, sigma, bg, x, y, hist):
-        self.center = center
-        self.sigma = sigma
-        self.gb = bg
-        self.x = x
-        self.y = y
-        self.amplitude = amp
-        self.hist = hist
-
-    def plot(self, ax=None):
-        if ax is None:
-            ax = plt.gca()
-        self.hist.plot(ax)
-        ax.plot(self.x, self.y, label='Fit')
-        return ax
-
-def peak_fit(hist: TH1F, center_guess, min_x=None, max_x=None, method='ROOT',
-             sigma_guess=1, ):
-    """
-    Fits a peak.
-    """
-    assert method in ['ROOT']
-
-    if isinstance(center_guess, UFloat):
-        center_guess = center_guess.n
-    assert isinstance(center_guess, (float, int))
-    if not hist.is_density:
-        warnings.warn('Histogram passed to fit_peak may not have density as bin values!'
-                      ' To fix this, do hist /= hist.binvalues before passing to peak_fit')
-    # Set background guess before range cut is applied. This could be useful when one wants the background estimate to
-    # be over a larger range that may include other interfering peaks
-    bg_guess = hist.median_y.n
-
-    if min_x is not None or max_x is not None:
-        bins = hist.__bin_left_edges__
-        if max_x is None:
-            max_x = bins[-1]
-        if min_x is None:
-            min_x = bins[0]
-
-        max_bin = np.searchsorted(hist.__bin_left_edges__, max_x) + 1
-        min_bin = np.searchsorted(hist.__bin_left_edges__, min_x) + 1
-        # select = np.where((bins >= min_x) & (bins <= max_x ))
-        new_bins = bins[min_bin: max_bin]
-        old_hist = hist
-        hist = TH1F(bin_left_edges=new_bins)
-        hist += old_hist.bin_values[min_bin: max_bin-1]
-
-    if method == 'ROOT':
-        func = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
-        amp_guess = np.sum(hist.bin_widths*(hist.bin_values-hist.median_y)).n
-        func.SetParameter(0, amp_guess)
-        print('amp_guess', amp_guess)
-        print('center_guess', center_guess)
-        print('sigma_guess', sigma_guess)
-        print('bg_guess',bg_guess)
-        func.SetParameter(1, center_guess)
-        func.SetParameter(2, sigma_guess)
-        func.SetParameter(3, bg_guess)
-        hist.__ROOT_hist__.Fit('peak_fit')
-        amp = ufloat(func.GetParameter(0), func.GetParError(0))
-        center = ufloat(func.GetParameter(1), func.GetParError(1))
-        sigma = ufloat(func.GetParameter(2), func.GetParError(2))
-        bg = ufloat(func.GetParameter(3), func.GetParError(3))
-        xs = hist.bin_centers
-        ys = np.array([func.Eval(x) for x in xs])
-        out = PeakResult(amp, center, sigma, bg, xs, ys, hist)
-        return out
-
-
-
-
-
+#
+# def peak_fit(hist: TH1F, center_guess, min_x=None, max_x=None, method='ROOT',
+#              sigma_guess=1) -> PeakResult:
+#     """
+#     Fits a peak within a histogram.
+#     Args:
+#        hist:
+#        center_guess:
+#        min_x:
+#        max_x:
+#        method:
+#        sigma_guess:
+#
+#     Returns:
+#
+#     """
+#
+#     assert method in ['ROOT']
+#
+#     if isinstance(center_guess, UFloat):
+#         center_guess = center_guess.n
+#     assert isinstance(center_guess, (float, int))
+#     if not hist.is_density:
+#         warnings.warn('Histogram passed to fit_peak may not have density as bin values!'
+#                       ' To fix this, do hist /= hist.binvalues before passing to peak_fit')
+#     # Set background guess before range cut is applied. This could be useful when one wants the background estimate to
+#     # be over a larger range that may include other interfering peaks
+#     bg_guess = hist.median_y.n
+#
+#     if min_x is not None or max_x is not None:  # if limits are used, make new histogram cut to range.
+#         bins = hist.__bin_left_edges__
+#         if max_x is None:
+#             max_x = bins[-1]
+#         if min_x is None:
+#             min_x = bins[0]
+#
+#         max_bin = np.searchsorted(hist.__bin_left_edges__, max_x) + 1
+#         min_bin = np.searchsorted(hist.__bin_left_edges__, min_x)
+#         new_bins = bins[min_bin: max_bin]
+#         old_hist = hist
+#         hist = TH1F(bin_left_edges=new_bins)
+#         hist += old_hist.bin_values[min_bin: max_bin-1]
+#
+#     if method == 'ROOT':
+#         func = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
+#         amp_guess = np.sum(hist.bin_widths*(hist.bin_values-hist.median_y)).n
+#         func.SetParameter(0, amp_guess)
+#
+#         func.SetParameter(1, center_guess)
+#         func.SetParameter(2, sigma_guess)
+#         func.SetParameter(3, bg_guess)
+#         hist.__ROOT_hist__.Fit('peak_fit')
+#         amp = ufloat(func.GetParameter(0), func.GetParError(0))
+#         center = ufloat(func.GetParameter(1), func.GetParError(1))
+#         sigma = ufloat(func.GetParameter(2), func.GetParError(2))
+#         bg = ufloat(func.GetParameter(3), func.GetParError(3))
+#         xs = hist.bin_centers
+#         ys = np.array([func.Eval(x) for x in xs])
+#         out = PeakResult(amp, center, sigma, bg, ys, hist)
+#         return out
 
 
 class MakeROOTSpectrum:
+
     data_dir = cwd/"Spectra_data"
 
     def __init__(self, path_name, n_channels, ch_2_erg_coefficients=None, fwhm_coefficients=None):
+        """
+        Used to create spectra in the standardized format.
+        Args:
+            path_name: Name of the specrum to be saved to file.
+            n_channels: Number of channels.
+            ch_2_erg_coefficients: ch_2_erg coeffs. If None, they can be determined using methods.
+            fwhm_coefficients:
+        """
         path_name = Path(path_name)
         self.n_channels = n_channels
         assert path_name.parent.exists()
@@ -318,70 +266,86 @@ class MakeROOTSpectrum:
         self.tree = ROOT.TTree('spectrum', 'spectrum')
         self.ch_2_erg_coefficients = ch_2_erg_coefficients
         self.fwhm_coefficients = fwhm_coefficients
+        self.erg_bins = None
 
     def do_erg_calibratrion(self, counts_array, channels_to_ergs: List[Tuple], window_size=15,
-                            order=1):
+                            order=1, plot=True):
         """
-
         Args:
-            counts_array:
+            counts_array: An array of counts for each channel
             channels_to_ergs:
-            window_size: int or array of ints. Size of window for gaus fit.
+            window_size: int or array of ints. Size of window (in channels) for gaus fits.
+            order: Order of PolyFit
+            plot: whether or not to plot
 
         Returns:
 
         """
         counts_array = np.array(counts_array)
-        hist = TH1F(bin_left_edges=(np.arange(self.n_channels+1) + 0.5))
+        assert len(counts_array) == self.n_channels
+        try:
+            assert hasattr(channels_to_ergs, '__iter__')
+            for _ in channels_to_ergs:
+                assert hasattr(_, '__len__')
+                assert len(_) == 2
+        except AssertionError:
+            raise AssertionError('`channels_to_ergs` not of the correct format. Example:'
+                                 '\n[(approx_ch_1, actual_erg_1),...,approx_ch_n, actual_erg_n)]')
+
+        # the "- 0.5" so that bin centers are on whole numbers, starting with 0
+        hist = TH1F(bin_left_edges=(np.arange(self.n_channels+1) - 0.5))
         hist += unp.uarray(counts_array, np.sqrt(counts_array))
         hist /= hist.bin_widths
 
         if not hasattr(window_size, '__iter__'):
             window_size = [window_size]*len(channels_to_ergs)
-        fit_xs = []
-        fit_ys = []
-        for index, (ch, erg) in enumerate(channels_to_ergs):
+
+        channels = []
+        ergs = []
+        fit_peak_sigmas = []
+
+        for index, (ch_center_guess, erg) in enumerate(channels_to_ergs):
             w = window_size[index]
-            fit = peak_fit(hist, ch, min_x=ch-w//2, max_x=ch+w//2,)
-            fit_xs.append(fit.center)
+            fit = PeakFit(hist, ch_center_guess, min_x=ch_center_guess-w//2, max_x=ch_center_guess+w//2,)
+            channels.append(fit.center)
             if not isinstance(erg, UFloat):
                 erg = ufloat(erg, 0)
-            fit_ys.append(erg)
-            plt.figure()
-            ax = fit.plot()
-            ax.set_title(f'Given erg: {erg}KeV;  Resulting channel: {fit.center}')
-        fit_xs_errors = np.array([x.std_dev for x in fit_xs])
-        fit_xs = np.array([x.n for x in fit_xs])
-        fit_ys_errors = np.array([y.std_dev for y in fit_ys])
-        fit_ys = np.array([y.n for y in fit_ys])
-        tgraph = ROOT.TGraphErrors(len(fit_xs), fit_xs, fit_ys, fit_xs_errors, fit_ys_errors)
-        tgraph.Fit('pol1')
-        tf1 = tgraph.GetListOfFunctions().FindObject('pol1')
+            ergs.append(erg)
+            fit_peak_sigmas.append(fit.sigma)
+            print(fit.sigma, 'sigma')
 
-        # poly coeffs to convert from ch + 0.5 (starting fom ch=0) to energy, in KeV
-        coeffs = [tf1.GetParameter(i) for i in range(order+1)]
+            if plot:
+                ax = fit.plot_fit()
+                ax.set_title(f'Given erg: {erg}KeV;  Resulting channel: {fit.center}')
 
-        coeffs_error = [tf1.GetParError(i) for i in range(order+1)]
-        erg_bins = np.sum([coeffs[i]*hist.__bin_left_edges__**i for i in range(order+1)], axis=0)
-        erg_sigmas = np.sum([coeffs_error[i]*channels**i for i in range(order+1)], axis=0)
-        # coeffs = [ufloat(tf1.GetParameter(0), tf1.GetParError(0)), ufloat(tf1.GetParameter(1), tf1.GetParError(2))]
-        print('erg coeffs', unp.nominal_values(coeffs))
-        print('sigma eerg coeffs', unp.std_devs(coeffs))
-        plt.figure()
-        plt.plot(erg_bins[:-1], erg_sigmas)
+        channels_errors = np.array([x.std_dev for x in channels])
+        channels = np.array([x.n for x in channels])
+        ergs_errors = np.array([y.std_dev for y in ergs])
+        ergs = np.array([y.n for y in ergs])
 
-        plt.show()
+        fit_shape_ys = np.array([y.n for y in fit_peak_sigmas])
+        fit_shape_errors_ys = np.array([y.std_dev for y in fit_peak_sigmas])
+
+        erg_fit = PolyFit(channels, ergs, channels_errors, ergs_errors)
+        sigma_fit = PolyFit(ergs, fit_shape_ys)
+        erg_fit.plot_fit(title="ch to erg")
+        sigma_fit.plot_fit(title="erg to Shape")
 
 
 
-import re
+# from GlobalValues import shot_groups
+# tree = shot_groups['He+Ar'].tree
+# s = ROOTSpectrum.from_tree(tree)
+# s2 = ROOTSpectrum.from_path('/Users/burggraf1/PycharmProjects/PHELIX/Shot_data_analysis/PHELIX2019ROOT_TREES/_shot42.root')
+# print(s.erg_fwhm(50))
+
 if __name__ == '__main__':
 
     p_name = '7_Loop_26s_150s_000.Spe'
     counts = np.zeros(8192)
     channels = np.arange(len(counts), dtype=np.float) + 0.5
 
-    for path in Path('/Users/jeffreyburggraf/PycharmProjects/PHELIX/PHELIX_data/data').iterdir():
+    for path in Path('/Users/burggraf1/PycharmProjects/PHELIX/PHELIX_data/data').iterdir():
         if __name__ == '__main__':
             if m := re.match('([0-9]+)_Shot', path.name):
                 shot_num = int(m.groups()[0])
@@ -394,208 +358,132 @@ if __name__ == '__main__':
                         index_stop = lines.index('$ROI:\n')
                         data_lines = lines[index_start: index_stop]
                         _new_counts = np.array([int(s.split()[0]) for s in data_lines])
-                        print(_new_counts)
                         counts += np.array([int(s.split()[0]) for s in data_lines])
                         # a = np.array([int(s.split()[0]) for s in data_lines])
                         # print(a.shape)
     ch_2_erg = [(393.0, 218), (917.6, 511)]  # ch -> actual energy
     m = MakeROOTSpectrum('test',len(channels))
     m.do_erg_calibratrion(counts, ch_2_erg)
-
-    # plt.plot(channels, counts)
-    # plt.figure()
-    # plt.plot(.566061 + channels*0.556273, counts)
-    # plt.show()
+    plt.show()
 
 
 
-                        # print(lines[lines.index("$MEAS_TIM:\n")+1])
-
-    # with open()
-
-
-
-
-
-
-
+# #
+# #
 #
-#
-
-class ROOTSpectrum:
-    """
-    For analysis of spectra that are stored in a ROOT file in a standardized manner.
-    Instances can be built from either a path_to_root_file (using __init__), or from a TTree/TChain
-    (using cls.from_tree).
-
-    ROOT file format standard:
-        The tree, named 'spectrum', must have the following branches:
-            'ch': Channel
-            't': time of gamma detection
-            'eff' efficiency of detector at energy erg.
-        The associated ROOT file may contain the following two histograms:
-            "ch_2_erg":  TH1, quadratic polynomial mapping channel to gamma energy. Parameters are coeffs and par errors
-                are energy uncertainties.
-            "erg_2_eff_hist": Bin left edges are energies, bin values are efficiency and sigma efficiency
-            "channels": sorted TArrayI of all channels.
-                Example creation:
-                    np_arr = np.array(channels, dtype=np.int)
-                    arr = ROOT.TArrayI(len(a))
-                    for i in range(np_arr):
-                        arr[i] = np_arr[i]
-                    arr.WriteObject(arr, 'channels')
-        It's fine if these arent there. In this case, ROOTSpec
-#
-#     Todo:
-#         -Make ch_to_erg a TF1.
-#         -Implement a way to change the coeffs of the TF1 in the file (all files in the case of a TChain)
-#         -A function that accepts a cut (str) and returns a UFloat equal to the efficiency of the selection plus
-#             uncertainties
-#         -Plot time dependence of peak/multiple peaks simultaneously. Maybe options for several methods of background
-#             subtraction.
-#             --Make it easy to overlay two spectra in a ROOT TCanvas
-#             --Auto / manual selection of non-uniform time bins
-#         -Area under peak calculations
-#         -Energy spectrum plotting – overlaying of multiple ROOTSpecrtrum instances
-#         -Energy calibration tool
-#         -Efficiency calibration tool. Option for no erg/eff data saved to ROOT files.
+# class ROOTSpectrum:
 #     """
-#     def __init__(self, root_file_path, overwrite=False):
-#         self.erg_coeffs = [0, 1, 0]
-#         self.shape_cal_coeffs = [1,0, 0]
+#     For analysis of spectra that are stored in a ROOT file in a standardized manner.
+#     Instances can be built from either a path_to_root_file (using __init__), or from a TTree/TChain
+#     (using cls.from_tree).
 #
+#     ROOT file format standard:
+#         The tree, named 'spectrum', must have the following branches:
+#             'ch': Channel
+#             't': time of gamma detection
+#             'eff' efficiency of detector at energy erg.
+#         The associated ROOT file may contain the following two histograms:
+#             "ch_2_erg":  TH1, quadratic polynomial mapping channel to gamma energy. Parameters are coeffs and par errors
+#                 are energy uncertainties.
+#             "erg_2_eff_hist": Bin left edges are energies, bin values are efficiency and sigma efficiency
+#             "channels": sorted TArrayI of all channels.
+#                 Example creation:
+#                     np_arr = np.array(channels, dtype=np.int)
+#                     arr = ROOT.TArrayI(len(a))
+#                     for i in range(np_arr):
+#                         arr[i] = np_arr[i]
+#                     arr.WriteObject(arr, 'channels')
+#         It's fine if these arent there. In this case, ROOTSpec
+# #
+# #     Todo:
+# #         -Make ch_to_erg a TF1.
+# #         -Implement a way to change the coeffs of the TF1 in the file (all files in the case of a TChain)
+# #         -A function that accepts a cut (str) and returns a UFloat equal to the efficiency of the selection plus
+# #             uncertainties
+# #         -Plot time dependence of peak/multiple peaks simultaneously. Maybe options for several methods of background
+# #             subtraction.
+# #             --Make it easy to overlay two spectra in a ROOT TCanvas
+# #             --Auto / manual selection of non-uniform time bins
+# #         -Area under peak calculations
+# #         -Energy spectrum plotting – overlaying of multiple ROOTSpecrtrum instances
+# #         -Energy calibration tool
+# #         -Efficiency calibration tool. Option for no erg/eff data saved to ROOT files.
+# #     """
+# #     def __init__(self, root_file_path, overwrite=False):
+# #         self.erg_coeffs = [0, 1, 0]
+# #         self.shape_cal_coeffs = [1,0, 0]
+# #
+# #
+# #     #
+# #     # def __init__(self, root_file):
+# #     #     assert isinstance(root_file, ROOT.TFile)
+# #     #     self.root_file = root_file
+# #     #     # root_file = ROOT.TFile(str(path_to_root_file))
+# #     #     self.tree = root_file.Get('tree')
+# #     #     self.erg_2_eff_hist = self.__load_erg_2_eff_hist__()
+# #     #     self.energy_coeffs: List[UFloat] = self.__load_erg_calibration__()
+# #     #
+# #     # def __load_erg_calibration__(self) -> List[UFloat]:
+# #     #     keys = self.root_file.GetListOfKeys()
+# #     #     assert 'ch_2_erg' in [k.GetName() for k in keys], 'No energy calibration available. '
+# #     #     tf1 = self.root_file.Get('ch_2_erg')
+# #     #     # print([(tf1.GetParameter(i), (tf1.GetParError(i))) for i in range(3)])
+# #     #     coeffs = [ufloat(tf1.GetParameter(i), tf1.GetParError(i)) for i in range(3)]
+# #     #     return coeffs
+# #     #
+# #     # def __load_erg_2_eff_hist__(self) ->TH1F:
+# #     #     """Used to check for ch_2_erg_hist and erg_2_eff_hist histograms in the root file."""
+# #     #
+# #     #     keys = [k.GetName() for k in self.root_file.GetListOfKeys()]
+# #     #     assert 'erg_2_eff_hist' in keys, f'ROOT file does not contain "ch_2_erg_hist" histogram, a histogram channel vs' \
+# #     #                                     f' gamma energy + uncertainty. Available keys:\n{keys}'
+# #     #     # assert 'erg_2_eff_hist' in keys, 'ROOT file does not contain "erg_2_eff_hist" histogram,' \
+# #     #     #                                  ' a histogram of gamma energy vs efficiency + uncertainty.'
+# #     #     erg_2_eff_hist = TH1F.from_native_ROOT_hist(self.root_file.Get('erg_2_eff_hist'))
+# #     #     return erg_2_eff_hist
+# #     #
+# #     # @classmethod
+# #     # def from_path(cls, path):
+# #     #     return cls(ROOT.TFile(str(path)))
+# #     #
+# #     # @classmethod
+# #     # def from_tree(cls, tree):
+# #     #     if isinstance(tree, ROOT.TChain):
+# #     #         file = tree.GetFile()
+# #     #     elif isinstance(tree, ROOT.TTree):
+# #     #         file = tree.GetCurrentFile()
+# #     #     else:
+# #     #         assert False, '`tree` is not a ROOT.TTree or ROOT.TChain instance'
+# #     #
+# #     #     return cls(root_file=file)
+# #     #
+# #     # @property
+# #     # def ergs(self):
+# #     #     return unp.nominal_values(self.erg_2_eff_hist.bin_values)
+# #     #
+# #     # @property
+# #     # def __erg_sigmas(self):
+# #     #     return unp.std_devs(self.ch_2_erg_hist.bin_values)
+# #     #
+# #     # @property
+# #     # def __erg_fwhms(self):
+# #     #     return unp.std_devs(self.ch_2_erg_hist.bin_values)*2.355
+# #     #
+# #     # def erg_fwhm(self, erg):
+# #     #     i = np.searchsorted(self.ergs, erg)
+# #     #     s = slice(i-5, i+5)
+# #     #     return np.interp(erg, self.ergs[s], self.__erg_fwhms[s])
+# #     #
+# #
+# #
+# #
+# #
+# #
+# #
+# # if __name__ == '__main__':
+# #     # from GlobalValues import shot_groups
+# #     # tree = shot_groups['He+Ar'].tree
+# #     # # s = ROOTSpectrum.from_tree(tree)
+# #     # s2 = ROOTSpectrum.from_path('/Users/burggraf1/PycharmProjects/PHELIX/Shot_data_analysis/PHELIX2019ROOT_TREES/_shot42.root')
+# #     # # print(s.erg_fwhm(50))
 #
-#     #
-#     # def __init__(self, root_file):
-#     #     assert isinstance(root_file, ROOT.TFile)
-#     #     self.root_file = root_file
-#     #     # root_file = ROOT.TFile(str(path_to_root_file))
-#     #     self.tree = root_file.Get('tree')
-#     #     self.erg_2_eff_hist = self.__load_erg_2_eff_hist__()
-#     #     self.energy_coeffs: List[UFloat] = self.__load_erg_calibration__()
-#     #
-#     # def __load_erg_calibration__(self) -> List[UFloat]:
-#     #     keys = self.root_file.GetListOfKeys()
-#     #     assert 'ch_2_erg' in [k.GetName() for k in keys], 'No energy calibration available. '
-#     #     tf1 = self.root_file.Get('ch_2_erg')
-#     #     # print([(tf1.GetParameter(i), (tf1.GetParError(i))) for i in range(3)])
-#     #     coeffs = [ufloat(tf1.GetParameter(i), tf1.GetParError(i)) for i in range(3)]
-#     #     return coeffs
-#     #
-#     # def __load_erg_2_eff_hist__(self) ->TH1F:
-#     #     """Used to check for ch_2_erg_hist and erg_2_eff_hist histograms in the root file."""
-#     #
-#     #     keys = [k.GetName() for k in self.root_file.GetListOfKeys()]
-#     #     assert 'erg_2_eff_hist' in keys, f'ROOT file does not contain "ch_2_erg_hist" histogram, a histogram channel vs' \
-#     #                                     f' gamma energy + uncertainty. Available keys:\n{keys}'
-#     #     # assert 'erg_2_eff_hist' in keys, 'ROOT file does not contain "erg_2_eff_hist" histogram,' \
-#     #     #                                  ' a histogram of gamma energy vs efficiency + uncertainty.'
-#     #     erg_2_eff_hist = TH1F.from_native_ROOT_hist(self.root_file.Get('erg_2_eff_hist'))
-#     #     return erg_2_eff_hist
-#     #
-#     # @classmethod
-#     # def from_path(cls, path):
-#     #     return cls(ROOT.TFile(str(path)))
-#     #
-#     # @classmethod
-#     # def from_tree(cls, tree):
-#     #     if isinstance(tree, ROOT.TChain):
-#     #         file = tree.GetFile()
-#     #     elif isinstance(tree, ROOT.TTree):
-#     #         file = tree.GetCurrentFile()
-#     #     else:
-#     #         assert False, '`tree` is not a ROOT.TTree or ROOT.TChain instance'
-#     #
-#     #     return cls(root_file=file)
-#     #
-#     # @property
-#     # def ergs(self):
-#     #     return unp.nominal_values(self.erg_2_eff_hist.bin_values)
-#     #
-#     # @property
-#     # def __erg_sigmas(self):
-#     #     return unp.std_devs(self.ch_2_erg_hist.bin_values)
-#     #
-#     # @property
-#     # def __erg_fwhms(self):
-#     #     return unp.std_devs(self.ch_2_erg_hist.bin_values)*2.355
-#     #
-#     # def erg_fwhm(self, erg):
-#     #     i = np.searchsorted(self.ergs, erg)
-#     #     s = slice(i-5, i+5)
-#     #     return np.interp(erg, self.ergs[s], self.__erg_fwhms[s])
-#     #
-#
-#
-#
-#
-#
-#
-# if __name__ == '__main__':
-#     # from GlobalValues import shot_groups
-#     # tree = shot_groups['He+Ar'].tree
-#     # # s = ROOTSpectrum.from_tree(tree)
-#     # s2 = ROOTSpectrum.from_path('/Users/burggraf1/PycharmProjects/PHELIX/Shot_data_analysis/PHELIX2019ROOT_TREES/_shot42.root')
-#     # # print(s.erg_fwhm(50))
-#     # print (s2.energy_coeffs)
-#     # s2.erg_2_eff_hist.plot()
-#     #
-#     # def erg_efficiency(erg):
-#     #     a = ufloat(45.6, 1.5)  # From Pascal's thesis
-#     #     b = ufloat(3.63E-3, 0.13E-3)  # From Pascal's thesis
-#     #     c = ufloat(2.43, 0.12)  # From Pascal's thesis
-#     #     return (a * np.e ** (-b * erg) + c) / 100.  # From Pascal's thesis
-#     #
-#     # x = np.linspace(0, 4000, 300)
-#     # plt.figure()
-#     # plt.plot(x, unp.nominal_values(erg_efficiency(x)))
-#
-#     # @ROOT.Numba.Declare(['float'], 'float')
-#     # def func(x):
-#     #     return x**2
-#     # tree.Draw("Numba::func(erg)")
-#
-#     tfile = ROOT.TFile(str(cwd/'del'), 'recreate')
-#     a = np.array([1,2,3,4,5], dtype=np.int)
-#     aR = ROOT.TArrayI(len(a))
-#     for i in range(len(a)):
-#         aR[i] = a[i]
-#     for i in aR:
-#         print(i)
-#     tfile.WriteObject(aR, 'omhomhomh')
-#     for k in tfile.GetListOfKeys():
-#         print('key', k)
-#     # print(aR)
-#     #
-#     # tree.Draw('ch_2erg(ch)')
-#     #
-#     # for k in file.GetListOfKeys():
-#     #     print(k.GetName(), (k.GetCycle()))
-#     #     if k.GetCycle() == 2:
-#     #         print('Deleting')
-#     #         del k
-#     # for k in file.GetListOfKeys():
-#     #     print(k.GetName(), k.GetCycle())
-#     # n = Nuclide.from_symbol('U238')
-#     # fiss_yields = n.independent_gamma_fission_yield()
-#     #
-#     # def weighting(name):
-#     #     try:
-#     #         return fiss_yields.yields[name]
-#     #     except KeyError:
-#     #         return 0
-#     #
-#     # print(gamma_search(218, 2, 20, 60*3, nuclide_weighting_function=weighting))
-#     # Gdelta_t = get_time_bins()[-1]
-#     # data_dir = DECAY_PICKLE_DIR / '__fast__gamma_dict__.marshal'
-#     #
-#     # tree = shot_groups['He+Ar'].tree
-#     # hist = TH1F(bin_left_edges=get_global_energy_bins())
-#     # hist.Project(tree, 'erg', weight='1.0/eff')
-#     # hist.plot()
-#     # print(Nuclide.from_symbol('U238').independent_gamma_fission_yield_gef()[1])
-#     # # for n, yield_ in Nuclide.from_symbol('U238').independent_gamma_fission_yield_gef().items():
-#     # #     print(n, yield_)
-#     # for i in gamma_search(2612, e_sigma=4, delta_t=Gdelta_t):
-#     #     print(i)
-#     # plt.show()

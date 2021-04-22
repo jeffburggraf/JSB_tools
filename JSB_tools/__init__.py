@@ -1,7 +1,11 @@
+"""
+Core functions like ROOT_Loop, as well as functions that I didn't know where else to put
+"""
 import os
 import sys
 # from .outp_reader import OutP
 import warnings
+from abc import abstractmethod, ABCMeta
 from openmc.data import atomic_weight
 import re
 from typing import List, Dict
@@ -18,9 +22,10 @@ from dataclasses import dataclass
 cwd = Path(__file__).parent
 from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
-from uncertainties import UFloat
+from uncertainties import UFloat, ufloat
 import time
 from matplotlib import pyplot as plt
+from JSB_tools.TH1 import TH1F
 
 
 try:
@@ -174,11 +179,6 @@ class FileManager:
             attribs_set = set(attribs.items())
             if len(lookup_kwargs - attribs_set) == 0:
                 matches[path] = attribs
-        # assert len(matches) != 0, f'No file with matching lookup keys/values: {lookup_kwargs}\n' \
-        #                           f'Available files:\n{self.available_files}'
-        # assert len(matches) == 1, 'Multiple matching keys/values:\n{}' \
-        #     .format("\n".join(["{}   {}".format(self.file_lookup_data[p], Path(p).relative_to(self.root_directory))
-        #                        for p in matches]))
         return matches
 
     def pickle_data(self, data, path=None, **lookup_attributes):
@@ -221,7 +221,18 @@ class FileManager:
         self.lookup_path.unlink(missing_ok=True)
 
 
-def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[float], order=2, n_samples=30):
+def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[float], order=2):
+    """
+    Extends interpolation to data with errors
+    Args:
+        x:
+        y: uncertain array
+        x_new: Values to interpolate.
+        order:
+
+    Returns: unp.uarray
+
+    """
     orders = {0: 'zero', 1:'linear', 2: 'quadratic', 3: 'cubic'}
     assert isinstance(order, int)
     assert order in orders, f'Invalid order, "{order}". Valid are:\n\t{list(orders.keys())}'
@@ -243,31 +254,110 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
     y_nominal = unp.nominal_values(y)
     new_nominal_ys = interp1d(x, y_nominal, kind=order, copy=False, assume_sorted=assume_sorted)(x_new)
     new_stddev_ys = interp1d(x, y_errors, kind=order, copy=False, assume_sorted=assume_sorted)(x_new)
-    # plt.errorbar(x, y_nominal, y_errors, label='Actual', marker='o')
-    # plt.errorbar(x_new, new_nominal_ys, new_stddev_ys, label='Interped')
-    # plt.legend()
-    # plt.show()
     return unp.uarray(new_nominal_ys, new_stddev_ys)
 
 
+class ROOTFitBase:
+    def __init__(self, x, y, x_err, y_err):
+        assert hasattr(x, '__iter__')
+        assert hasattr(y, '__iter__')
+
+        if isinstance(x[0], UFloat):
+            assert x_err is not None
+            x_err = np.array([i.std_dev for i in x])
+            x = np.array([i.n for i in x])
+        if isinstance(y[0], UFloat):
+            assert y_err is not None
+            y_err = np.array([i.std_dev for i in y])
+            y = np.array([i.n for i in y])
+
+        if x_err is None:
+            x_err = np.zeros_like(x)
+        if y_err is None:
+            y_err = np.zeros_like(x)
+
+        self.x = np.array(x, dtype=np.float)
+        self.y = np.array(y, dtype=np.float)
+        self.x_err = np.array(x_err, dtype=np.float)
+        self.y_err = np.array(y_err, dtype=np.float)
+
+    def eval_fit(self, x: Union[None, Number, Sequence] = None) -> Sequence[UFloat]:
+        """
+        Eval the fit result at x.
+        Args:
+            x:
+
+        Returns:unp.uarray
+        """
+        assert hasattr(self, '__tf1__'), 'Subclass must have a __tf1__ attribute'
+        assert hasattr(self, '__ROOT_fit_result__'), 'Subclass must have a __ROOT_fit_result__ attribute'
+
+        out_nominal = np.array([self.__tf1__.Eval(_x) for _x in self.x])
+        out_error = np.array(self.__ROOT_fit_result__.GetConfidenceIntervals(0.68, False))
+        if hasattr(x, '__iter__'):
+            out_error = np.interp(x, self.x, out_error)
+            out_nominal = np.interp(x, self.x, out_nominal)
+        elif isinstance(x, Number):
+            out_error = np.interp([x], self.x, out_error)[0]
+            out_nominal = np.interp([x], self.x, out_nominal)[0]
+
+        return unp.uarray(out_nominal, out_error)
+
+    def plot_fit(self, ax=None, title=None):
+        if ax is None:
+            ax = plt.gca()
+            plt.figure()
+        ax.errorbar(self.x, self.y, yerr=self.y_err, xerr=self.x_err, label="Data", ls='None', marker='o', zorder=0)
+        fit_errs = unp.std_devs(self.eval_fit())
+        fit_ys = unp.nominal_values(self.eval_fit())
+        ax.fill_between(self.x, fit_ys-fit_errs, fit_ys+fit_errs, color='grey', alpha=0.5, label='Fit error')
+        ax.plot(self.x, unp.nominal_values(self.eval_fit()), label='Fit', ls='--')
+        ax.legend()
+        if title is not None:
+            ax.set_title(title)
+        return ax
 
 
-    print(time.time() - t0)
-    print('len of y: ', len(y))
-    print(dys.shape, ys.shape)
+class PeakFit(ROOTFitBase):
+    def __init__(self, hist: TH1F, center_guess, min_x=None, max_x=None, sigma_guess=1):
+        if isinstance(center_guess, UFloat):
+            center_guess = center_guess.n
+        assert isinstance(center_guess, (float, int))
+        if not hist.is_density:
+            warnings.warn('Histogram passed to fit_peak may not have density as bin values!'
+                          ' To fix this, do hist /= hist.binvalues before passing to peak_fit')
+        # Set background guess before range cut is applied. This could be useful when one wants the background
+        # estimate to be over a larger range that may include other interfering peaks
+        bg_guess = hist.median_y.n
+
+        if min_x is not None or max_x is not None:
+            # cut hist
+            hist = hist.remove_bins_outside_range(min_x, max_x)
+        super(PeakFit, self).__init__(hist.bin_centers, unp.nominal_values(hist.bin_values), hist.bin_widths,
+                                      unp.std_devs(hist.bin_values))
+
+        func = self.__tf1__ = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
+        amp_guess = np.sum(unp.nominal_values(hist.bin_widths * (hist.bin_values - hist.median_y)))
+        func.SetParameter(0, amp_guess)
+
+        func.SetParameter(1, center_guess)
+        func.SetParameter(2, sigma_guess)
+        func.SetParameter(3, bg_guess)
+        self.__ROOT_fit_result__ = hist.__ROOT_hist__.Fit('peak_fit', "SN")
+        self.amp = ufloat(func.GetParameter(0), func.GetParError(0))
+        self.center = ufloat(func.GetParameter(1), func.GetParError(1))
+        self.sigma = ufloat(func.GetParameter(2), func.GetParError(2))
+        self.bg = ufloat(func.GetParameter(3), func.GetParError(3))
 
 
-# ergs = np.array([0, 59.9, 88.4, 122, 166, 392, 514, 661, 898, 1173, 1332, 1835], dtype=np.float)
-# effs = np.array([0, 0.06, 0.1, 0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
-#
-# x = ergs
-#
-# rel_errors = np.arange(len(x))
-# rel_errors = rel_errors/max(rel_errors)
-# rel_errors *= 0.25
-# y = unp.uarray(effs, effs*rel_errors)
-#
-# # plt.plot(x, rel_errors)
-#
-# interp1d_errors(x, y, np.linspace(ergs[0], ergs[-1], 4*len(ergs)), order=1, n_samples=100)
-# plt.show()
+class PolyFit(ROOTFitBase):
+    def __init__(self, x, y, x_err=None, y_err=None, order=1):
+        super(PolyFit, self).__init__(x, y, x_err, y_err)
+        self.tgraph = ROOT.TGraphErrors(len(x), self.x, self.y, self.x_err, self.y_err)
+
+        f_name = f"pol{order}"
+        # self.__tf1__ = ROOT.TF1(f_name, f_name)
+        self.__ROOT_fit_result__ = self.tgraph.Fit(f_name, "S")
+        self.__tf1__ = self.tgraph.GetListOfFunctions().FindObject(f_name)
+        self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
+
