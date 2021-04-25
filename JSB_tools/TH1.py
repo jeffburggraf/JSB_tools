@@ -15,7 +15,7 @@ from lmfit import Model, fit_report
 from scipy.signal import find_peaks
 from pathlib import Path
 from matplotlib import pyplot as plt
-from typing import List, Union, Sequence
+from typing import List, Union, Sequence, Collection
 import re
 import os
 import matplotlib.offsetbox as offsetbox
@@ -46,7 +46,7 @@ def binned_median(bin_left_edges, weights):
     return x[index] + dx
 
 
-def rolling_median(window_width, values):
+def rolling_median(window_width, values, interpolate=False):
     """
     Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
     Args:
@@ -56,12 +56,13 @@ def rolling_median(window_width, values):
     Returns:
 
     """
+    window_width = int(window_width)
     n = min([window_width, len(values)])
     if not isinstance(values, np.ndarray):
         values = np.array(values)
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
 
-    medians = np.array([np.median(values[idx]) for idx in window_indicies], dtype=np.ndarray)
+    medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
 
     return medians
 
@@ -141,6 +142,14 @@ class TH1F:
     ROOT_histos = []
     __histo_pad_dict__ = {}
 
+    # @classmethod
+    # def points_to_bins(cls, points):
+    #     bin_edges = [0.5 * (points[i - 1] + points[i]) for i in range(1, len(points))]
+    #     w_0 = bin_edges[0] - points[0]
+    #     w_1 = points[-1] - bin_edges[-1]
+    #     bin_edges = [points[0] - w_0] + bin_edges + [points[-1] + w_1]
+    #     return cls(bin_left_edges=bin_edges)
+
     def __init__(self, min_bin=None, max_bin=None, nbins=None, bin_left_edges=None, bin_width=None, title=None, ROOT_hist=None):
         if ROOT_hist is not None:
             self.__ROOT_hist__ = ROOT_hist
@@ -164,8 +173,8 @@ class TH1F:
                     self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=np.float)
             else:
                 assert len(bin_left_edges) >= 2, "`bin_left_edges` argument must be iterable of length greater than 1"
-                assert all([isinstance(x, Number) for x in bin_left_edges]), 'All values of `bin_left_edges` must be a'\
-                                                                             ' number'
+                assert all([isinstance(x, Number) for x in bin_left_edges]), f'All values of `bin_left_edges` must be a'\
+                                                                             f' number, not {set(map(type, bin_left_edges))}'
                 assert all([x is None for x in [bin_width, min_bin, max_bin, nbins]]), '`bin_left_edges` was passed to'\
                                                                                        ' TH1F. Bins are fullly' \
                                                                                        ' specified.'\
@@ -214,40 +223,69 @@ class TH1F:
         return new_hist
 
     @classmethod
-    def from_data_points(cls, data: Sequence[Number], bins=None, weights=None):
+    def from_raw_data(cls, data: Sequence[Number], bins: Union[int, Sequence] = None,
+                      weights: Union[None, Sequence] = None) -> TH1F:
+        """
+        Generate a histogram from raw data, e.g. like np.histogram.
+        Args:
+            data: raw data points
+            bins: either the number of bins, are an array of bin left edges.
+            weights: Weights of each data point.
+
+        Returns:
+
+        """
+        assert isinstance(data, Collection)
         if bins is None:
             bins = 'auto'
-        bin_values, bin_lef_edges = np.histogram(data, bins=bins, weights=weights)
-        hist = cls(bin_left_edges=bin_lef_edges)
-        bin_errors = np.sqrt(bin_values)
-        bin_values = unp.uarray(bin_values, bin_errors)
-        hist.__set_bin_values__(bin_values)
+        bin_values, bin_left_edges = np.histogram(data, bins=bins)
+        if weights is None:
+            weights = np.ones_like(data)
+        else:
+            assert hasattr(weights, '__len__')
+            assert len(weights) == len(data)
+        hist = cls(bin_left_edges=bin_left_edges)
+
+        for w, value in zip(weights, data):
+            hist.Fill(value, w)
         return hist
 
     @classmethod
-    def from_x_and_y(cls, x: Sequence[float], y: Sequence[Union[UFloat, float]]) -> TH1F:
+    def points_to_bins(cls, x_points):
+        assert isinstance(x_points, Collection) and len(x_points) >= 2, f'`x` must be a collection with minimum length of 2, not {x}'
+        assert not isinstance(x_points[0], UFloat), 'x bust be a Number, not UFloat'
+        bin_left_edges = [x_points[0] - (x_points[1] - x_points[0]) / 2]
+        for xi in x_points:
+            bin_left_edges.append(-bin_left_edges[-1] + 2 * xi)
+        assert all([x1 - x0 > 0 for x0, x1 in zip(bin_left_edges[:-1], bin_left_edges[1:])]), \
+            'Provided bins are not increasing monotonically!'
+        return cls(bin_left_edges=bin_left_edges)
+
+    @classmethod
+    def from_x_and_y(cls, x: Collection[float], y: Collection[Union[UFloat, float]], y_err) -> TH1F:
         """
         Generate a histogram from x and y points. This generally shouldn't be used.
 
         Args:
             x: bin centers
             y: bin values (can be floats or UFloats)
+            y_err: Errors in y
 
         Returns: histogram.
 
         """
-        assert isinstance(x, Sequence) and len(x) >= 2, '`x` must be a collection with minimum length of 2'
-        assert not isinstance(x[0], UFloat), 'x bust be a Number, not UFloat'
-        y = [i.n if isinstance(i, UFloat) else i for i in y]
-        y_err = [i.std_dev if isinstance(i, UFloat) else 0 for i in y]
-        bin_left_edges = [x[0] - (x[1]-x[0])/2]
-        for xi in x:
-            bin_left_edges.append(-bin_left_edges[-1] + 2*xi)
-        assert all([x1-x0 > 0 for x0, x1 in zip(bin_left_edges[:-1], bin_left_edges[1:])]),\
-            'Provided bins are not increasing monotonically!'
 
+
+        y = [i.n if isinstance(i, UFloat) else i for i in y]
+        if y_err is not None:
+            assert isinstance(y_err, Collection)
+        else:
+            y_err = [i.std_dev if isinstance(i, UFloat) else 0 for i in y]
+
+        hist = cls.points_to_bins(x)
         bin_values = unp.uarray(y, y_err)
-        hist = cls(bin_left_edges=bin_left_edges)
+        assert all(hist.bin_centers == np.array(x))
+
         hist.__set_bin_values__(bin_values)
         return hist
 
@@ -347,6 +385,7 @@ class TH1F:
         new_bins = self.__bin_left_edges__[min_bin: max_bin]
         hist = TH1F(bin_left_edges=new_bins)
         hist += self.bin_values[min_bin: max_bin - 1]
+        hist.is_density = self.is_density
         return hist
 
     def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None, amplitude_fix=None, c_fix=None,

@@ -1,7 +1,7 @@
 # from JSB_tools.nuke_data_tools.gamma_spec import exp_decay_maximum_likely_hood
 from __future__ import annotations
 import numpy as np
-from JSB_tools.TH1 import TH1F
+from JSB_tools.TH1 import TH1F, rolling_median
 from matplotlib import pyplot as plt
 from JSB_tools.nuke_data_tools import Nuclide
 from JSB_tools.nuke_data_tools.__init__ import DECAY_PICKLE_DIR
@@ -19,10 +19,9 @@ from typing import List, Dict, Callable
 import warnings
 import uncertainties.unumpy as unp
 from uncertainties import ufloat, UFloat
-import uncertainties.umath as umath
-from JSB_tools import PolyFit, PeakFit
+from JSB_tools import PolyFit, PeakFit, LogPolyFit
 import re
-
+from scipy.signal import find_peaks, peak_widths
 data_dir = DECAY_PICKLE_DIR/'__fast__gamma_dict__.marshal'
 
 cwd = Path(__file__).parent
@@ -65,7 +64,7 @@ class _CommonDecayNuclides:
         return outs
 
     def __repr__(self):
-        return f"{self.name}: erg: {self.erg}, intensity: {self.intensity}, hl: {self.hl} rel. # of events: {self.__rank__}"
+        return f"{self.name}: erg: {self.erg}, intensity: {self.intensity}, hl: {self.hl}, rel. # of gammas: {self.__rank__}"
 
 
 def gamma_search(erg_center: float,
@@ -152,118 +151,25 @@ def gamma_search(erg_center: float,
     return out
 
 
-# class PeakResult:
-#     """
-#     Return value from peak_fit
-#
-#     """
-#     def __init__(self, amp, center, sigma, bg, y_fit_result, hist: TH1F):
-#         """
-#
-#         Args:
-#             amp: Gauss amplitude, i.e. number of events in peak
-#             center: peak center
-#             sigma: peak sigma
-#             bg: bg parameter
-#             y_fit_result: Fiy function evalueated at xs
-#             hist: Histogram that contained fitted peak.
-#         """
-#         self.center = center
-#         self.sigma = sigma
-#         self.gb = bg
-#         self.y = y_fit_result
-#         self.amplitude = amp
-#         self.hist = hist
-#
-#     def plot(self, ax=None):
-#         if ax is None:
-#             ax = plt.gca()
-#         self.hist.plot(ax)
-#         ax.plot(self.hist.bin_centers, self.y, label='Fit')
-#         return ax
-
-#
-# def peak_fit(hist: TH1F, center_guess, min_x=None, max_x=None, method='ROOT',
-#              sigma_guess=1) -> PeakResult:
-#     """
-#     Fits a peak within a histogram.
-#     Args:
-#        hist:
-#        center_guess:
-#        min_x:
-#        max_x:
-#        method:
-#        sigma_guess:
-#
-#     Returns:
-#
-#     """
-#
-#     assert method in ['ROOT']
-#
-#     if isinstance(center_guess, UFloat):
-#         center_guess = center_guess.n
-#     assert isinstance(center_guess, (float, int))
-#     if not hist.is_density:
-#         warnings.warn('Histogram passed to fit_peak may not have density as bin values!'
-#                       ' To fix this, do hist /= hist.binvalues before passing to peak_fit')
-#     # Set background guess before range cut is applied. This could be useful when one wants the background estimate to
-#     # be over a larger range that may include other interfering peaks
-#     bg_guess = hist.median_y.n
-#
-#     if min_x is not None or max_x is not None:  # if limits are used, make new histogram cut to range.
-#         bins = hist.__bin_left_edges__
-#         if max_x is None:
-#             max_x = bins[-1]
-#         if min_x is None:
-#             min_x = bins[0]
-#
-#         max_bin = np.searchsorted(hist.__bin_left_edges__, max_x) + 1
-#         min_bin = np.searchsorted(hist.__bin_left_edges__, min_x)
-#         new_bins = bins[min_bin: max_bin]
-#         old_hist = hist
-#         hist = TH1F(bin_left_edges=new_bins)
-#         hist += old_hist.bin_values[min_bin: max_bin-1]
-#
-#     if method == 'ROOT':
-#         func = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
-#         amp_guess = np.sum(hist.bin_widths*(hist.bin_values-hist.median_y)).n
-#         func.SetParameter(0, amp_guess)
-#
-#         func.SetParameter(1, center_guess)
-#         func.SetParameter(2, sigma_guess)
-#         func.SetParameter(3, bg_guess)
-#         hist.__ROOT_hist__.Fit('peak_fit')
-#         amp = ufloat(func.GetParameter(0), func.GetParError(0))
-#         center = ufloat(func.GetParameter(1), func.GetParError(1))
-#         sigma = ufloat(func.GetParameter(2), func.GetParError(2))
-#         bg = ufloat(func.GetParameter(3), func.GetParError(3))
-#         xs = hist.bin_centers
-#         ys = np.array([func.Eval(x) for x in xs])
-#         out = PeakResult(amp, center, sigma, bg, ys, hist)
-#         return out
-
-
-class MakeROOTSpectrum:
+class PrepareGammaSpec:
 
     data_dir = cwd/"Spectra_data"
 
-    def __init__(self, path_name):
+    def __init__(self, path_name, counts_array):
         """
         Used to create spectra in the standardized format.
         Args:
             path_name: Name of the specrum to be saved to file.
-            n_channels: Number of channels.
-            ch_2_erg_coefficients: ch_2_erg coeffs. If None, they can be determined using methods.
-            fwhm_coefficients:
         """
         path_name = Path(path_name)
         assert path_name.parent.exists()
-        if not MakeROOTSpectrum.data_dir.exists():
-            MakeROOTSpectrum.data_dir.mkdir()
-        path = MakeROOTSpectrum.data_dir/path_name
+        if not PrepareGammaSpec.data_dir.exists():
+            PrepareGammaSpec.data_dir.mkdir()
+        path = PrepareGammaSpec.data_dir / path_name
+        assert hasattr(counts_array, '__iter__')
+        assert all(isinstance(i, Number) for i in counts_array)
 
-        self.n_channels = None
+        self.__n_counts_array__ = np.array(counts_array)  # Array of counts integrated over all time
         self.root_file = ROOT.TFile(str(path), 'recreate')
         self.tree = ROOT.TTree('spectrum', 'spectrum')
         self.erg_br = np.array([0], dtype=np.float)
@@ -281,13 +187,30 @@ class MakeROOTSpectrum:
         self.efficiencies = None
         self.efficiency_errors = None
 
+        self.__channel_bins__ = np.arange(self.n_channels+1) - 0.5  # for use in specifying histogram with bin centers
+        #                                                              equal to channels, starting at 0
+
         self.erg_bin_centers = None
 
-    def do_erg_calibration(self, counts_array, channels_to_ergs: List[Tuple], window_size=15,
+    def plot_channel_spectrum(self):
+        hist = TH1F(bin_left_edges=self.__channel_bins__)
+        hist += self.n_counts_array
+        return hist.plot()
+
+    @property
+    def n_channels(self):
+        assert hasattr(self.__n_counts_array__, '__iter__')
+        return len(self.__n_counts_array__)
+
+    @property
+    def n_counts_array(self):
+        assert self.__n_counts_array__ is not None
+        return unp.uarray(self.__n_counts_array__, np.sqrt(self.__n_counts_array__))
+
+    def do_erg_calibration(self, channels_to_ergs: List[Tuple], window_size=20,
                            order=1, plot=True, background_counts=None):
         """
         Args:
-            counts_array: An array of counts for each channel
             channels_to_ergs:
             window_size: int or array of ints. Size of window (in channels) for gaus fits.
             order: Order of PolyFit for energy calibration
@@ -297,8 +220,7 @@ class MakeROOTSpectrum:
         Returns:
 
         """
-        counts_array = np.array(counts_array)
-        self.n_channels = len(counts_array)
+
         try:
             assert hasattr(channels_to_ergs, '__iter__')
             for _ in channels_to_ergs:
@@ -307,10 +229,15 @@ class MakeROOTSpectrum:
         except AssertionError:
             raise AssertionError('`channels_to_ergs` not of the correct format. Example:'
                                  '\n[(approx_ch_1, actual_erg_1),...,approx_ch_n, actual_erg_n)]')
+        __ergs__ = [_[1] for _ in channels_to_ergs]
+        if 1460.83 not in __ergs__:
+            warnings.warn("Don't forget to look for the common K-40 line at 1460.83 KeV. ")
+        if 511 not in __ergs__:
+            warnings.warn("Don't forget to look for the 511 KeV annihilation line")
 
         # the "- 0.5" so that bin centers are on whole numbers, starting with 0
-        channel_hist = TH1F(bin_left_edges=(np.arange(self.n_channels+1) - 0.5))
-        channel_hist += unp.uarray(counts_array, np.sqrt(counts_array))
+        channel_hist = TH1F(bin_left_edges=self.__channel_bins__ )
+        channel_hist += self.n_counts_array
         channel_hist /= channel_hist.bin_widths
         if background_counts is not None:
             assert len(background_counts) == len(channel_hist)
@@ -319,64 +246,109 @@ class MakeROOTSpectrum:
         if not hasattr(window_size, '__iter__'):
             window_size = [window_size]*len(channels_to_ergs)
 
-        fit_channels = []
-        fit_ergs = []
-        fit_peak_sigmas = []
+        fit_channels = []  # peak channel center
+        fit_ergs = []  # peak center with errors
+        fit_fwhms = []  # peak shape (gaussian sigma), with errors
 
-        for index, (ch_center_guess, erg) in enumerate(channels_to_ergs):
+        peak_fits = []
+
+        for index, (ch_center_guess, erg_true) in enumerate(channels_to_ergs):
+            ch_index = channel_hist.find_bin_index(ch_center_guess)
+
             w = window_size[index]
-            fit = PeakFit(channel_hist, ch_center_guess, min_x=ch_center_guess-w//2, max_x=ch_center_guess+w//2)
+            # make sure to cover the whole peak plus some for bg guess
+            large_window_hist = channel_hist.remove_bins_outside_range(ch_index-2*w, ch_index+2*w)
+            # ch_center_guess = large_window_hist.find_bin_index(ch_center_guess)
+            fit = PeakFit(large_window_hist, ch_center_guess, min_x=ch_center_guess-w//2, max_x=ch_center_guess+w//2)
+            peak_fits.append(fit)
             fit_channels.append(fit.center)
-            if not isinstance(erg, UFloat):
-                erg = ufloat(erg, 0)
-            fit_ergs.append(erg)
-            fit_peak_sigmas.append(fit.sigma)
+            if not isinstance(erg_true, UFloat):
+                erg_true = ufloat(erg_true, 0)
+            fit_ergs.append(erg_true)
+            if erg_true != 511:
+                fit_fwhms.append(2.355*fit.sigma)
 
             if plot:
-                ax = fit.plot_fit()
-                ax.set_title(f'Given erg: {erg}KeV;  Resulting channel: {fit.center}')
+                ax = fit.plot_fit(x_label='channel', y_label="counts")
+                ax.set_title(f'Given erg: {erg_true}KeV;  fit channel: {fit.center};\ngaus sigma: {fit.sigma}')
 
         channels_errors = np.array([x.std_dev for x in fit_channels])
         fit_channels = np.array([x.n for x in fit_channels])
+
         ergs_errors = np.array([y.std_dev for y in fit_ergs])
         fit_ergs = np.array([y.n for y in fit_ergs])
 
-        fit_shape_ys = np.array([y.n for y in fit_peak_sigmas])
-        # fit_shape_errors_ys = np.array([y.std_dev for y in fit_peak_sigmas])
+        fit_fwhms_errors = [y.std_dev for y in fit_fwhms]
+        fit_fwhms = [y.n for y in fit_fwhms]
 
         erg_fit = PolyFit(fit_channels, fit_ergs, channels_errors, ergs_errors, order=order)
-        shape_fit = PolyFit(fit_ergs, fit_shape_ys, order=order)  # shape coeffs are a function of energy
-        erg_fit.plot_fit(title="ch to erg")
-        shape_fit.plot_fit(title="erg to Shape")
 
-        self.ch_2_erg_coeffs = [i.n for i in erg_fit.coeffs]
-        self.shape_coefficients = [i.n for i in shape_fit.coeffs]
-        self.erg_bins = erg_fit.eval_fit(channel_hist.__bin_left_edges__)
+        shape_fit = PolyFit(list(filter(lambda x: x != 511, fit_ergs)), fit_fwhms, y_err=fit_fwhms_errors, order=order)
+        """
+            "erg_bins":List[float] An array to be used to specify the bins of a histogram. Length = n_channels + 1
+            "ch_2_erg_coeffs": List[float], coeffs for converting channel to energy, i.e. a*np.arange(n_channels) + b
+            "erg_2_eff_coeffs": List[UFloat], PolyFit coeffs (UFloat instances),
+                                e.g. e^(c0 + c1*log(x) + c2*log(x)^2 + c3*log(x)^3 ... cn*log(x)^n)
+            "shape_coefficients": List[UFloat], Polynomial coeffs mapping energy to peak FWHM, length = n_channels
+            """
+        self.erg_bins = unp.nominal_values(erg_fit.eval_fit(channel_hist.__bin_left_edges__))
+        self.ch_2_erg_coeffs = erg_fit.coeffs
+        self.shape_coefficients = shape_fit.coeffs
         self.erg_bin_centers = unp.nominal_values(erg_fit.eval_fit(channel_hist.bin_centers))
-        print(self.erg_bin_centers)
-        print(channel_hist.bin_centers)
 
-    def do_efficiency_calibration(self, ergs, n_counts_meas, n_count_true):
+        if plot:
+            erg_fit.plot_fit(x=np.arange(self.n_channels), title="ch to erg", x_label="channel", y_label='energy [KeV]')
+            shape_fit.plot_fit(x=self.erg_bin_centers, title="erg to shape",  x_label="energy [KeV]",
+                               y_label='counts')
+
+    def do_efficiency_calibration(self, ergs, n_counts_meas, n_count_true, order=3):
+        """
+
+        Args:
+            ergs: Energies of measures gamma line
+            n_counts_meas: Measured counts of gamma lines
+            n_count_true: Theoretical counts of gamma lines
+            order: Order of LogPolyFit. 3 is a good number.
+
+        Returns:
+
+        """
         assert all([hasattr(s, '__iter__') for s in [ergs, n_counts_meas, n_count_true]])
         assert len(ergs) == len(n_count_true) == len(n_counts_meas)
-        assert self.n_channels is not None, "Do energy calibration before doing eff. calibration"
+        assert self.erg_bins is not None, "Do energy calibration before doing eff. calibration"
         assert not isinstance(n_counts_meas[0], UFloat),\
             "Don't include errors in measured counts. This is done automatically"
-        ergs = [0] + list(ergs) + [ergs[-1]*3]
-        # n_count_true = np.array(n_count_true)
-        # n_counts_meas = [0] + list(n_counts_meas)
-        effs_n = np.array(n_counts_meas)/np.array(n_count_true)
-        effs_std = np.sqrt(n_counts_meas) / np.array(n_count_true)
-        effs = unp.uarray([0] + list(effs_n) + [0], [0] + list(effs_std)+ [0])
-        interp = interp1d_errors(ergs, effs, self.erg_bin_centers, order=2)
-        self.efficiencies = unp.nominal_values(interp)
-        self.efficiency_errors = unp.std_devs(interp)
-        plt.figure()
-        plt.errorbar(self.erg_bin_centers, self.efficiencies, yerr=self.efficiency_errors,
-                     label="efficiency calibration")
-        plt.errorbar(ergs[:-1], unp.nominal_values(effs[:-1]), yerr= unp.std_devs(effs[:-1]),
-                     label="Data points")
-        plt.legend()
+        # appending an anchor point (x=y=0) below
+        ergs = [1E-10] + list(ergs)
+        effs_n = [1E-10] + list(np.array(n_counts_meas)/np.array(n_count_true))
+        effs_std = [0] + list(np.sqrt(n_counts_meas) / np.array(n_count_true))
+        fit = LogPolyFit(ergs, effs_n, y_err=effs_std, order=order, fix_coeffs_to_guess=[order])
+        fit.plot_fit(title="Efficiency calibration")
+        efficiencies = fit.eval_fit(self.erg_bin_centers)
+        self.efficiencies = unp.nominal_values(efficiencies)
+        self.efficiency_errors = unp.std_devs(efficiencies)
+
+    def plot_erg_spectrum(self, min_erg=None, max_erg=None, eff_correction=False):
+
+        assert self.__n_counts_array__ is not None, "Do energy calibration before calling obj.plot_erg_spectrum() !"
+        hist = TH1F(bin_left_edges=self.erg_bins)
+        hist += self.n_counts_array
+        if eff_correction:
+            if self.efficiencies is None:
+                warnings.warn("No efficiency calibration. Setting `eff_correction` to False ")
+            else:
+                hist /= self.efficiencies
+        ax = hist.plot(xmax=max_erg, xmin=min_erg)
+
+        def ch_2_erg(chs):
+            return np.interp(chs, np.arange(self.n_channels), self.erg_bin_centers)
+
+        def erg_2_ch(ergs):
+            return np.interp(ergs, self.erg_bin_centers, np.arange(self.n_channels))
+        ax.secondary_xaxis('top', functions=(erg_2_ch, ch_2_erg)).set_xlabel("channel")
+        ax.set_xlabel("energy [KeV]")
+
+        return ax
 
 
 class ROOTSpectrum:
@@ -391,14 +363,15 @@ class ROOTSpectrum:
             't': time of gamma detection
             'eff' efficiency of detector at energy erg.
             'erg': Energy
-        As well as an associated pickle file with the following:
-            "ch_2_erg":  Array of length n_channels and values equal to energies
-            "erg_bins": An array to be used to specify the bins of a histogram. Length = n_channels + 1
-            "efficiencies": an array of efficiencies with length equal to n_channels
-            "efficiency_errors": an array of efficiency errors with length equal to n_channels
-            "ch_2_erg_coeffs": coeffs for converting channel to energy, i.e. a*np.arange(n_channels) + b
-            "shape_coefficients": coefffs of fit for peak sigmas as a function of energy (NOT CHANNEL!).  Length = n_channels
+
+        As well as an associated pickle file with the following keys:
+            "erg_bins": List[float] An array to be used to specify the bins of a histogram. Length = n_channels + 1
+            "ch_2_erg_coeffs": List[float], coeffs for converting channel to energy, i.e. a*np.arange(n_channels) + b
+            "erg_2_eff_coeffs": List[UFloat], PolyFit coeffs (UFloat instances),
+                                e.g. e^(c0 + c1*log(x) + c2*log(x)^2 + c3*log(x)^3 ... cn*log(x)^n)
+            "shape_coefficients": List[UFloat], Polynomial coeffs mapping energy to peak FWHM, length = n_channels
     """
+
     @staticmethod
     def __load_pickle_data__(name):
         a = ["ch_2_erg", "erg_bins", "efficiencies", "efficiency_errors", "ch_2_erg_coeffs", "shape_coefficients"]
@@ -428,7 +401,7 @@ class ROOTSpectrum:
 
 if __name__ == '__main__':
 
-    p_name = '7_Loop_26s_150s_000.Spe'
+    p_name = '10_Loop_596s_2400s_000.Spe'
     counts = np.zeros(8192)
     channels = np.arange(len(counts), dtype=np.float) + 0.5
 
@@ -438,7 +411,8 @@ if __name__ == '__main__':
                 shot_num = int(m.groups()[0])
                 if 42 <= shot_num <= 52:
                     paths = [p.name for p in path.iterdir()]
-                    assert p_name in paths
+                    if p_name not in paths:
+                        continue
                     with open(path/p_name) as f:
                         lines = f.readlines()
                         index_start = lines.index('$DATA:\n') + 2
@@ -448,134 +422,21 @@ if __name__ == '__main__':
                         counts += np.array([int(s.split()[0]) for s in data_lines])
                         # a = np.array([int(s.split()[0]) for s in data_lines])
                         # print(a.shape)
-    ch_2_erg = [(393.0, 218), (917.6, 511)]  # ch -> actual energy
-    m = MakeROOTSpectrum('test')
-    m.do_erg_calibration(counts, ch_2_erg)
+
+    ch_2_erg = [(393.0, 218.6), (315, 175), (532, 296.5), (917.6, 511), (2623, 1460.83)]  # ch -> actual energy
     ergs = np.array([59.9, 88.4, 122, 166, 392, 514, 661, 898, 1173, 1332, 1835], dtype=np.float)
     effs = np.array([0.06, 0.1, 0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
-    counts_true = 10000*np.ones_like(effs)
-    counts_measured = effs*counts_true
-    m.do_efficiency_calibration(ergs,counts_measured, counts_true)
+    counts_true = 10000 * np.ones_like(effs)
+    counts_measured = effs * counts_true
+    m = PrepareGammaSpec('test', counts)
+    m.do_erg_calibration(ch_2_erg)
+    m.plot_erg_spectrum(100)
+    #
+    m.do_efficiency_calibration(ergs,counts_measured, counts_true, order=3)
+    m.plot_erg_spectrum(100, eff_correction=True)
+    # from JSB_tools.nuke_data_tools import Nuclide
+    print(Nuclide.from_symbol('Xe139').decay_gamma_lines)
+    #
+
+    #
     plt.show()
-
-
-
-# #
-# #
-#
-# class ROOTSpectrum:
-#     """
-#     For analysis of spectra that are stored in a ROOT file in a standardized manner.
-#     Instances can be built from either a path_to_root_file (using __init__), or from a TTree/TChain
-#     (using cls.from_tree).
-#
-#     ROOT file format standard:
-#         The tree, named 'spectrum', must have the following branches:
-#             'ch': Channel
-#             't': time of gamma detection
-#             'eff' efficiency of detector at energy erg.
-#         The associated ROOT file may contain the following two histograms:
-#             "ch_2_erg":  TH1, quadratic polynomial mapping channel to gamma energy. Parameters are coeffs and par errors
-#                 are energy uncertainties.
-#             "erg_2_eff_hist": Bin left edges are energies, bin values are efficiency and sigma efficiency
-#             "channels": sorted TArrayI of all channels.
-#                 Example creation:
-#                     np_arr = np.array(channels, dtype=np.int)
-#                     arr = ROOT.TArrayI(len(a))
-#                     for i in range(np_arr):
-#                         arr[i] = np_arr[i]
-#                     arr.WriteObject(arr, 'channels')
-#         It's fine if these arent there. In this case, ROOTSpec
-# #
-# #     Todo:
-# #         -Make ch_to_erg a TF1.
-# #         -Implement a way to change the coeffs of the TF1 in the file (all files in the case of a TChain)
-# #         -A function that accepts a cut (str) and returns a UFloat equal to the efficiency of the selection plus
-# #             uncertainties
-# #         -Plot time dependence of peak/multiple peaks simultaneously. Maybe options for several methods of background
-# #             subtraction.
-# #             --Make it easy to overlay two spectra in a ROOT TCanvas
-# #             --Auto / manual selection of non-uniform time bins
-# #         -Area under peak calculations
-# #         -Energy spectrum plotting – overlaying of multiple ROOTSpecrtrum instances
-# #         -Energy calibration tool
-# #         -Efficiency calibration tool. Option for no erg/eff data saved to ROOT files.
-# #     """
-# #     def __init__(self, root_file_path, overwrite=False):
-# #         self.erg_coeffs = [0, 1, 0]
-# #         self.shape_cal_coeffs = [1,0, 0]
-# #
-# #
-# #     #
-# #     # def __init__(self, root_file):
-# #     #     assert isinstance(root_file, ROOT.TFile)
-# #     #     self.root_file = root_file
-# #     #     # root_file = ROOT.TFile(str(path_to_root_file))
-# #     #     self.tree = root_file.Get('tree')
-# #     #     self.erg_2_eff_hist = self.__load_erg_2_eff_hist__()
-# #     #     self.energy_coeffs: List[UFloat] = self.__load_erg_calibration__()
-# #     #
-# #     # def __load_erg_calibration__(self) -> List[UFloat]:
-# #     #     keys = self.root_file.GetListOfKeys()
-# #     #     assert 'ch_2_erg' in [k.GetName() for k in keys], 'No energy calibration available. '
-# #     #     tf1 = self.root_file.Get('ch_2_erg')
-# #     #     # print([(tf1.GetParameter(i), (tf1.GetParError(i))) for i in range(3)])
-# #     #     coeffs = [ufloat(tf1.GetParameter(i), tf1.GetParError(i)) for i in range(3)]
-# #     #     return coeffs
-# #     #
-# #     # def __load_erg_2_eff_hist__(self) ->TH1F:
-# #     #     """Used to check for ch_2_erg_hist and erg_2_eff_hist histograms in the root file."""
-# #     #
-# #     #     keys = [k.GetName() for k in self.root_file.GetListOfKeys()]
-# #     #     assert 'erg_2_eff_hist' in keys, f'ROOT file does not contain "ch_2_erg_hist" histogram, a histogram channel vs' \
-# #     #                                     f' gamma energy + uncertainty. Available keys:\n{keys}'
-# #     #     # assert 'erg_2_eff_hist' in keys, 'ROOT file does not contain "erg_2_eff_hist" histogram,' \
-# #     #     #                                  ' a histogram of gamma energy vs efficiency + uncertainty.'
-# #     #     erg_2_eff_hist = TH1F.from_native_ROOT_hist(self.root_file.Get('erg_2_eff_hist'))
-# #     #     return erg_2_eff_hist
-# #     #
-# #     # @classmethod
-# #     # def from_path(cls, path):
-# #     #     return cls(ROOT.TFile(str(path)))
-# #     #
-# #     # @classmethod
-# #     # def from_tree(cls, tree):
-# #     #     if isinstance(tree, ROOT.TChain):
-# #     #         file = tree.GetFile()
-# #     #     elif isinstance(tree, ROOT.TTree):
-# #     #         file = tree.GetCurrentFile()
-# #     #     else:
-# #     #         assert False, '`tree` is not a ROOT.TTree or ROOT.TChain instance'
-# #     #
-# #     #     return cls(root_file=file)
-# #     #
-# #     # @property
-# #     # def ergs(self):
-# #     #     return unp.nominal_values(self.erg_2_eff_hist.bin_values)
-# #     #
-# #     # @property
-# #     # def __erg_sigmas(self):
-# #     #     return unp.std_devs(self.ch_2_erg_hist.bin_values)
-# #     #
-# #     # @property
-# #     # def __erg_fwhms(self):
-# #     #     return unp.std_devs(self.ch_2_erg_hist.bin_values)*2.355
-# #     #
-# #     # def erg_fwhm(self, erg):
-# #     #     i = np.searchsorted(self.ergs, erg)
-# #     #     s = slice(i-5, i+5)
-# #     #     return np.interp(erg, self.ergs[s], self.__erg_fwhms[s])
-# #     #
-# #
-# #
-# #
-# #
-# #
-# #
-# # if __name__ == '__main__':
-# #     # from GlobalValues import shot_groups
-# #     # tree = shot_groups['He+Ar'].tree
-# #     # # s = ROOTSpectrum.from_tree(tree)
-# #     # s2 = ROOTSpectrum.from_path('/Users/burggraf1/PycharmProjects/PHELIX/Shot_data_analysis/PHELIX2019ROOT_TREES/_shot42.root')
-# #     # # print(s.erg_fwhm(50))
-#
