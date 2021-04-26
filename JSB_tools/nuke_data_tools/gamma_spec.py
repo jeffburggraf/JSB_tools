@@ -15,7 +15,7 @@ from numbers import Number
 # from GlobalValues import shot_groups
 from typing import Collection, Union, Tuple
 from pathlib import Path
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Any, Optional
 import warnings
 import uncertainties.unumpy as unp
 from uncertainties import ufloat, UFloat
@@ -155,7 +155,7 @@ class PrepareGammaSpec:
 
     data_dir = cwd/"Spectra_data"
 
-    def __init__(self, path_name, counts_array):
+    def __init__(self, path_name, n_channels):
         """
         Used to create spectra in the standardized format.
         Args:
@@ -166,10 +166,7 @@ class PrepareGammaSpec:
         if not PrepareGammaSpec.data_dir.exists():
             PrepareGammaSpec.data_dir.mkdir()
         path = PrepareGammaSpec.data_dir / path_name
-        assert hasattr(counts_array, '__iter__')
-        assert all(isinstance(i, Number) for i in counts_array)
 
-        self.__n_counts_array__ = np.array(counts_array)  # Array of counts integrated over all time
         self.root_file = ROOT.TFile(str(path), 'recreate')
         self.tree = ROOT.TTree('spectrum', 'spectrum')
         self.erg_br = np.array([0], dtype=np.float)
@@ -180,6 +177,9 @@ class PrepareGammaSpec:
         self.tree.Branch('eff', self.eff_br, 'eff/F')
         self.tree.Branch('ch', self.ch_br, 'ch/F')
         self.tree.Branch('t', self.t_br, 't/F')
+
+        self.calibration_spectra = []  # various count spectra for energy calibration.
+        self.calibration_points: List[Dict[str, Union[List, Tuple]]] = []  # Calibration points.
 
         self.ch_2_erg_coeffs = None
         self.shape_coefficients = None
@@ -192,20 +192,60 @@ class PrepareGammaSpec:
 
         self.erg_bin_centers = None
 
-    def plot_channel_spectrum(self):
-        hist = TH1F(bin_left_edges=self.__channel_bins__)
-        hist += self.n_counts_array
-        return hist.plot()
+    def plot_channel_spectrum(self):pass
+        # hist = TH1F(bin_left_edges=self.__channel_bins__)
+        # hist += self.n_counts_array
+        # return hist.plot()
 
     @property
     def n_channels(self):
-        assert hasattr(self.__n_counts_array__, '__iter__')
-        return len(self.__n_counts_array__)
+        # assert hasattr(self.__n_counts_array__, '__iter__')
+        # return len(self.__n_counts_array__)
+        return  len(self.__channel_bins__) - 1
 
-    @property
-    def n_counts_array(self):
-        assert self.__n_counts_array__ is not None
-        return unp.uarray(self.__n_counts_array__, np.sqrt(self.__n_counts_array__))
+    # @property
+    # def n_counts_array(self):
+    #     assert self.__n_counts_array__ is not None
+    #     return unp.uarray(self.__n_counts_array__, np.sqrt(self.__n_counts_array__))
+
+    def add_peaks_4_calibration(self, counts_array: Collection,
+                                ch_erg_TrueCounts: List[Tuple[int, float, Optional[float]]]):
+        """
+        Add a observed peak(s) as seen in the spectrum specified by`counts_array`.
+        You must provide the true energy and approx location of the peak in the channel spectrum (aka `counts_array`).
+        Each peak will be used for energy calibration, and optionally, the efficiency calibration.
+
+        Args:
+            counts_array: An array of length n_channels, and is the number of counts in each channel.
+            ch_erg_TrueCounts: Each entry in the list has the form:
+                    (channel_peak_estimate, true_energy, true_counts)]
+                 where,
+                    "channel_peak_estimate" is your estimate of which channel the peak center lies in;
+                    "true_energy" is the known energy of the peak;
+                    "true_counts" is optional, and if provided, will be used for efficiency calibration as well.
+        """
+        assert len(counts_array) == self.n_channels
+        self.calibration_points.append({'counts': counts_array, 'points': []})
+        data_dict = self.calibration_points[-1]
+        format_msg = 'Incorrect format for `ch_erg_TrueCounts`. `ch_erg_TrueCounts` is a list of 3-tuples' \
+                     ', with the form\n\t (channel_peak_estimate, true_energy, <true_counts>)],\n where ' \
+                     '\n\t channel_peak_estimate is your estimate of which channel the peak center lies is.' \
+                     '\n\t true_energy is the known energy of the peak' \
+                     '\n\t true_counts is optional, and if provided will be used for efficiency calibration. '
+
+        try:
+            for _ in ch_erg_TrueCounts:
+                assert isinstance(_, tuple)
+                assert len(_) >= 2
+                assert isinstance(_[0], int)
+                point = list(_[:2])
+                try:
+                    point.append(_[2])
+                except IndexError:
+                    point.append(None)
+                data_dict['points'].append(point)
+        except AssertionError:
+            assert False, format_msg
 
     def do_erg_calibration(self, channels_to_ergs: List[Tuple], window_size=20,
                            order=1, plot=True, background_counts=None):
