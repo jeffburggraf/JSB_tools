@@ -43,7 +43,7 @@ cwd = Path(__file__).parent
 # sf_yield_data_dir = parent_data_dir / 'gefy81_s'
 # neutron_fission_yield_data_dir_gef = parent_data_dir / 'gefy81_n'
 
-#  Download proton induced fission yields from https://fispact.ukaea.uk/nuclear-data/downloads/
+#  Download proton induced fissionXS yields from https://fispact.ukaea.uk/nuclear-data/downloads/
 # proton_fiss_yield_data = parent_data_dir/'UKFY41data'/'ukfy4_1p'
 #  ==============
 
@@ -369,7 +369,7 @@ def pickle_proton_fission_xs_data():
                         assert False, 'Invalid units of energy. Edit code to scale tlo MeV'
                     break
             else:
-                assert False, 'Invalid file "{}" for induced fission. Did not find line matching "# +([A-z])eV +"'\
+                assert False, 'Invalid file "{}" for induced fissionXS. Did not find line matching "# +([A-z])eV +"'\
                     .format(file.name)
             ergs = []
             xss = []
@@ -384,8 +384,9 @@ def pickle_proton_fission_xs_data():
             proton_fission_xs[nuclide_name] = xs_obj
 
     if len(proton_fission_xs):
+        assert (PROTON_PICKLE_DIR / 'fissionXS').exists()
         for n_name, data in proton_fission_xs.items():
-            with open(PROTON_PICKLE_DIR/'fission'/'{}.pickle'.format(n_name), 'wb') as f:
+            with open(PROTON_PICKLE_DIR/'fissionXS'/'{}.pickle'.format(n_name), 'wb') as f:
                 pickle.dump(data, f)
 
 
@@ -408,9 +409,8 @@ def pickle_gamma_fission_xs_data():
                 continue
 
     for nuclide_name, xs in photo_fission_data.items():
-        if not (GAMMA_PICKLE_DIR / 'fission').exists():
-            Path.mkdir(GAMMA_PICKLE_DIR / 'fission')
-        with open(GAMMA_PICKLE_DIR / 'fission' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
+        assert (GAMMA_PICKLE_DIR / 'fissionXS').exists()
+        with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
             pickle.dump(xs, f)
 
 
@@ -446,37 +446,6 @@ def pickle_gamma_activation_data():
         with open(pickle_file_name, "bw") as f:
             print('Creating and writing {}'.format(f.name))
             pickle.dump(reaction, f)
-
-
-# def pickle_sf_yields():
-#     for f_path in sf_yield_data_dir.iterdir():
-#         _m = re.match('GEFY_([0-9]+)_([0-9]+)_s.dat', f_path.name)
-#         if _m:
-#             z = int(_m.groups()[0])
-#             a = int(_m.groups()[1])
-#             e_symbol = ATOMIC_SYMBOL[z]
-#             try:
-#                 print('Pickling SF data for {}, z={}, a={} from file {}'.format(e_symbol, z, a, f_path))
-#                 y = FissionProductYields(str(f_path))
-#             except KeyError:
-#                 warn('Failed to load SF data from "{}" in "{}"'.format(e_symbol, f_path.name))
-#                 continue
-#
-#             nuclide_name = y.nuclide['name']
-#
-#             cumulative_dir = SF_YIELD_PICKLE_DIR/'cumulative'
-#             independent_dir = SF_YIELD_PICKLE_DIR/'independent'
-#
-#             if not cumulative_dir.exists():
-#                 cumulative_dir.mkdir()
-#
-#             if not independent_dir.exists():
-#                 independent_dir.mkdir()
-#
-#             with open(cumulative_dir/'{}.pickle'.format(nuclide_name), 'wb') as f:
-#                 pickle.dump(y.cumulative[0], f)
-#             with open(independent_dir/'{}.pickle'.format(nuclide_name), 'wb') as f:
-#                 pickle.dump(y.independent[0], f)
 
 
 class Helper:
@@ -540,7 +509,7 @@ def pickle_fission_product_yields():
                     data[attrib][energy][n_name] = {'yield': float(yield_), "yield_err": float(yield_err)}
         return data
 
-    #   To add more fission yield source, add the data source directory, write directory,
+    #   To add more fissionXS yield source, add the data source directory, write directory,
     #   and the regex to extract Z,A and M (All is done via a Helper instance)
     neutron_yield_marshal_path_endf = FISS_YIELDS_PATH/'neutron'/'endf'
     neutron_yield_marshal_path_gef = FISS_YIELDS_PATH/'neutron'/'gef'
@@ -573,7 +542,7 @@ def pickle_fission_product_yields():
             try:
                 openmc_yield = FissionProductYields(f_path)
             except KeyError:
-                warn('Unable to load fission yield from file {}'.format(f_path))
+                warn('Unable to load fissionXS yield from file {}'.format(f_path))
                 continue
 
             data = build_data(openmc_yield)
@@ -598,7 +567,7 @@ for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_Y
     if not _directory.exists():
         print(f'Creating {_directory}')
         _directory.mkdir()
-for _directory in [PROTON_PICKLE_DIR/'fission', GAMMA_PICKLE_DIR/'fission', NEUTRON_PICKLE_DIR/'fission']:
+for _directory in [PROTON_PICKLE_DIR/'fissionXS', GAMMA_PICKLE_DIR/'fissionXS', NEUTRON_PICKLE_DIR/'fissionXS']:
     if not Path.exists(_directory):
         Path.mkdir(_directory)
 

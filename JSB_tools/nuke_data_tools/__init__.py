@@ -17,7 +17,8 @@ from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOG
 from typing import Union, List, Dict, Collection, Tuple, TypedDict
 from numbers import Number
 pwd = Path(__file__).parent
-
+from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
+    NEUTRON_PICKLE_DIR,FISS_YIELDS_PATH
 
 __all__ = ['Nuclide', 'avogadros_number']
 
@@ -46,19 +47,8 @@ yield_data_type = Dict[float, Dict[str, TypedDict('YieldDict', {'yield': float, 
 
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
-PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
-PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fission xs. lodaed only when needed.
-
-from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR,\
-    FISS_YIELDS_PATH # SF_YIELD_PICKLE_DIR, NEUTRON_F_YIELD_PICKLE_DIR
-# DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuclide data (half lives, ect)
-# PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton/fission activation data
-# GAMMA_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon/fission activation data
-# NEUTRON_PICKLE_DIR = pwd / 'data' / 'incident_neutron'  # rel. dir. of pickled neutron activation/fission data
-#
-# FISS_YIELDS_PATH = pwd/'data'/'fiss_yields'
-# SF_YIELD_PICKLE_DIR = pwd/'data'/'SF_yields'
-# NEUTRON_F_YIELD_PICKLE_DIR = pwd / 'data' / 'neutron_fiss_yields'
+PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fissionXS xs. lodaed only when needed.
+PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fissionXS xs. lodaed only when needed.
 
 NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
 
@@ -208,7 +198,8 @@ class GammaLine:
 def __get_fiss_yield_path__(nuclide_symbol: str, inducing_particle4path: str, data_source4path: str,
                             independent_bool: bool) -> Path:
     """
-    Get path fission yield data.
+    Get path fission yield data from nuclide name, inducing particle, data library,
+        and yield type (independent/cumulative)
     Raises:
         FileNotFoundError if data file can't be found.
     Args:
@@ -252,30 +243,93 @@ def __get_fiss_yield_path__(nuclide_symbol: str, inducing_particle4path: str, da
     return path
 
 
-AVAILABLE_INDUCING_PARTICLES = ['neutron', 'proton', 'sf', 'gamma']
+def rest_mass(z=None, a=None, n=None):
+    """
+    return the rest mass of nucleus with atomic numbers Z and n
+    Args:
+        z: proton number
+        a: mass number (z + a)
+        n: neutron number
+
+    Returns:
+
+    """
+    if z is None:
+        assert not (a is n is None), 'Incomplete nucleon number specification'
+        z = a-n
+    elif a is None:
+        assert not (z is n is None), 'Incomplete nucleon number specification'
+        a = z + n
+    elif n is None:
+        assert (z is not a is not None), 'Incomplete nucleon number specification'
+        n = a-z
+    assert z + n == a, 'Invalid nucleon number specification'
+
+    c = 931.494102  # 1 AMU = 931.494102 MeV/c^2
+    try:
+        if z == 0 and n == 1:
+            return neutron_mass
+        else:
+            symbol = ATOMIC_SYMBOL[z] + str(a)
+            return atomic_mass(symbol)*c
+    except KeyError:
+        raise KeyError(f'No atomic mass data for Z={z} A={a}')
+
+
+# data_sources: For fission yields, this is a mapping from inducing particle to data directory name. Directories are
+#   named after the source of the data, e.g. endf, gef
+# A value of None tells the code to try to derive non-neutron-induced yield from neutron induced fission yields
+#    with adjusted energy and pre-fission nucleus.
+FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': [None], 'alpha': [],
+                         'electron': [], 'sf': ['gef']}
+
+proton_mass = 938.272  # MeV/c^2
+neutron_mass = 939.565
+alpha_mass = 3727.37
 
 
 class FissionYields:
-    def __search_path__(self, _inducing_particle, data_sources, independent_bool, nuclide_symbol):
+    def __search_path_auto__(self, _inducing_particle: str, independent_bool,
+                             nuclide_symbol) -> Union[Path, None]:
         """
+        If no data library (eg gef, endf) is specified, search for one containing data for `nuclide_symbol`. Return
+            first match (should be highest quality data, e.g. experiment not model). In some cases, code will derive
+            yield from n-induced fission.
         Searches for the data path. If data_source is None, Loop through the respective values in the `data_sources`
         dict above and return the first one that can be found. If none found, return None.
-        A data_source of None is picked, then attempt to convert neutron yields to desired yield.
-        Returns:
+        If a data_source of None is picked, then attempt to convert neutron yields to desired yield.
+
+        Args:
+            _inducing_particle: "proton", "electron", etc.
+            independent_bool: For each `yield_subdir_name`, there should be two sub-dirs,
+                'independent' and 'cumulative'.
+            nuclide_symbol: e.g. U238
+
+        Returns: Path to marshal'd data file.
 
         """
         try:
-            for _d in data_sources[_inducing_particle]:
+            for data_source_sub_dir_name in FISSION_YIELD_SUBDIRS[_inducing_particle]:
                 try:
-                    if _d is None:
-                        self.converted_from_neutron_fission = True
+                    if data_source_sub_dir_name is None:
+                        assert _inducing_particle != 'neutron', '*BUG detected* Data source dir name of value None ' \
+                                                                'tells code to derive (non-neutron)induced-fission ' \
+                                                                'yields from neutron-induced yields. So, we cannot have'\
+                                                                'None value for neutron-yields. Check code.'
+                        self.converted_from_neutron_fission = True  # inform downstream code to do energy conversion
                         if _inducing_particle == 'gamma':
                             nuclide_symbol = Nuclide.from_symbol(nuclide_symbol).remove_neutron().name
                         elif _inducing_particle == 'proton':
                             nuclide_symbol = Nuclide.from_symbol(nuclide_symbol).remove_proton().name
-                        return self.__search_path__('neutron', data_sources, independent_bool, nuclide_symbol)
-                    out = __get_fiss_yield_path__(nuclide_symbol, _inducing_particle, _d, independent_bool)
-                    return out
+                        else:
+                            raise NotImplementedError(f'Attempted to derive "{_inducing_particle}"-induced fission '
+                                                      f'yields from neutron fission yield. To implement, '
+                                                      f'change code here. ')
+                        out = self.__search_path_auto__('neutron', independent_bool, nuclide_symbol)
+                        return out
+                    else:
+                        out = __get_fiss_yield_path__(nuclide_symbol, _inducing_particle, data_source_sub_dir_name, independent_bool)
+                        return out
                 except FileNotFoundError:
                     pass
         except KeyError:
@@ -288,10 +342,10 @@ class FissionYields:
                  independent_bool: bool = True):
         """
         Retrieve fission yield data, if available. In some cases (e.g. gamma fiss), the code will convert neutron yield
-        to the desired yield by adjusting the nucleaous
+        to the desired yield by adjusting the nucleus
         Args:
-            nuclide: Fissioning Nuclide.
-            inducing_particle: Use 'sf' or None for spontaneous fission
+            nuclide: Fissioning Nuclide instance.
+            inducing_particle: Use 'sf' or None for spontaneous fissionXS
             eval_ergs: Iterable, Number, or None. Energies to evaluate (and interpolate ) yields at.
              If None, use the energies from data source.
             data_source: Several data sources are available depending on the inducing particle.
@@ -307,27 +361,23 @@ class FissionYields:
         assert isinstance(inducing_particle, str)
         inducing_particle = inducing_particle.lower()
         inducing_particle = inducing_particle.replace('photon', 'gamma')
-        assert inducing_particle in AVAILABLE_INDUCING_PARTICLES,\
+        inducing_particle = inducing_particle.replace('e', 'electron')
+        inducing_particle = inducing_particle.replace('n', 'neutron')
+        assert inducing_particle in FISSION_YIELD_SUBDIRS.keys(),\
             'No data for inducing particle "{}". Your options are: {}'.format(inducing_particle,
-                                                                              AVAILABLE_INDUCING_PARTICLES)
+                                                                              list(FISSION_YIELD_SUBDIRS.keys()))
         nuclide_symbol = nuclide.name
 
         self.converted_from_neutron_fission = False
 
-        # data_sources: Mapping from fission type to data source/directory name.
-        #  None signifies to try to convert energy to equivalent for neutron induced fission, and use
-        #  n-induced fission yields.
-        data_sources = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': [None], 'alpha': [],
-                        'electron': [], 'sf': ['gef']}
-
         if data_source is None:
-            fiss_yield_path = self.__search_path__(inducing_particle, data_sources, independent_bool, nuclide_symbol)
+            fiss_yield_path = self.__search_path_auto__(inducing_particle, independent_bool, nuclide_symbol)
         else:
             fiss_yield_path = __get_fiss_yield_path__(nuclide_symbol, inducing_particle, data_source, independent_bool)
 
         if fiss_yield_path is None:
-            raise FileNotFoundError(f"Cannot find {inducing_particle}-induced fission data for {nuclide_symbol}"
-                                    f"{' from ' + data_source + ' library' if data_source else ''}")
+            raise FileNotFoundError(f"Cannot get {inducing_particle}-induced fissionXS data for {nuclide_symbol}"
+                                    f" from '{data_source} 'library' ")
 
         with open(fiss_yield_path, 'rb') as f:
             fiss_data = marshal.load(f)
@@ -351,7 +401,7 @@ class FissionYields:
                     assert all(isinstance(e, Number) for e in eval_ergs), _msg
                 eval_ergs = np.array(eval_ergs)
                 if inducing_particle == 'gamma':
-                    self.energies = GammaFissionErgConverter.gamma2neutron(nuclide, data_ergs)
+                    self.energies = self.gamma2neutron(nuclide, data_ergs)
                 elif inducing_particle == 'proton':
                     self.energies = ProtonFissionErgConverter.proton2neutron(nuclide, data_ergs)
                 else:
@@ -367,6 +417,63 @@ class FissionYields:
 
         self.yields = {k: unp.uarray(np.interp(eval_ergs, data_ergs, v[0]), np.interp(eval_ergs, data_ergs, v[1]))
                        for k, v in sorted(self.yields.items(), key=lambda x: -sum(x[1][0]))}
+
+    __par_masses__ = {"neutron": neutron_mass, "gamma": 0, "proton": proton_mass, 'alpha': alpha_mass}
+
+    @staticmethod
+    def particle_energy_convert(n: Nuclide, ergs, from_par, to_par) -> Tuple[np.ndarray, Nuclide]:
+        """
+        Converts the particle energies of a given `from_par`-induced fission on `n`, to that of `to_par`-induced fission
+            on`n_prime`. The problem solved is the following: what do the energies of `to_par` have to have to be in
+            order to produce the same pre-fission nucleus as `from_par` with regard to
+            nucleon numbers and compound nucleus excitation energy.
+        Args:
+            n: Nuclide instance
+            ergs: The energies to be converted
+            from_par: Particle that has kinetic energy specified by `ergs`.
+            to_par: The particle for which the new energies will be calculated.
+
+        Returns: Tuple[(calculated energies, pre fission nucleus for to_par)]
+
+        """
+        if not hasattr(ergs, '__iter__'):
+            assert isinstance(ergs, Number)
+            ergs = [ergs]
+        else:
+            assert isinstance(ergs[0], Number)
+        from_par_KEs = np.array(ergs)
+        err_msg = 'Particle, {} not implemented or is invalid. To add more particles, add values to the ' \
+                  'FissionYields.__par_masses__ dictionary.'
+
+        def get_par_z_a(par):
+            assert par in FissionYields.__par_masses__.keys(), err_msg.format(par)
+            if par != 'gamma':
+                _n = Nuclide.from_symbol(par)
+                return _n.Z, _n.A
+            else:
+                return 0, 0
+
+        from_par_z, from_par_a = get_par_z_a(from_par)
+        from_target_z, from_target_a = n.Z, n.A
+        from_par_target_nuclide_mass = n.rest_energy()
+        from_par_rest_mass = FissionYields.__par_masses__[from_par]
+
+        compound_z, compound_a = (from_par_a + from_target_a), (from_par_z + from_target_z)
+
+        to_par_z, to_par_a = get_par_z_a(to_par)
+        to_target_z, to_target_a = compound_a-to_par_z, compound_a-to_par_a
+
+        to_par_nuclide = Nuclide.from_Z_A_M(to_target_z, to_target_a)
+        to_par_target_nuclide_mass = to_par_nuclide.rest_energy()
+        to_par_rest_mass = FissionYields.__par_masses__[to_par]
+
+        to_par_KEs = from_par_rest_mass - from_par_target_nuclide_mass + from_par_KEs - to_par_rest_mass \
+                     + to_par_target_nuclide_mass
+        return to_par_KEs, to_par_nuclide
+
+    @staticmethod
+    def neutron2gamma(nuclide: Nuclide, neutron_erg):
+        return FissionYields.gamma2neutron(nuclide, neutron_erg, __invert__=True)
 
     def __repr__(self):
         return str(self.yields)
@@ -572,16 +679,12 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
     return makes_cut
 
 
-proton_mass = 938.272
-neutron_mass = 939.565
-
-
 class ProtonFissionErgConverter:
     @staticmethod
     def proton2neutron(n: Nuclide, proton_erg, __invert__=False):
         """
-        Calculates the neutron energy that gives the proper pre-fission state for the compound nucleus
-        (from proton fission on nuclide `n`). Used when proton yields are not available but neutron are.
+        Calculates the neutron energy that gives the proper pre-fissionXS state for the compound nucleus
+        (from proton fissionXS on nuclide `n`). Used when proton yields are not available but neutron are.
 
         Args:
             n:
@@ -612,37 +715,8 @@ class ProtonFissionErgConverter:
         return ProtonFissionErgConverter.proton2neutron(n,neutron_erg, True)
 
 
-class GammaFissionErgConverter:
-    @staticmethod
-    def gamma2neutron(n: Nuclide, photon_erg, __invert__=False):
-        """
-            Calculates the neutron energy that gives the proper pre-fission state for the compound nucleus
-            (from photo fission on nuclide `n`).  Used when photon yields are not available but neutron are.
-            Values below zero are filtered.
-            Args:
-                n: Non-compound nucleus
-                photon_erg: MeV
-                __invert__: Instead solve for photon erg from neutron erg
+# class GammaFissionErgConverter:
 
-            Returns: neutron energy
-
-            """
-        z, a = n.Z, n.A
-        if hasattr(photon_erg, '__iter__'):
-            photon_erg = np.array(photon_erg)
-        if not __invert__:
-            out = photon_erg - neutron_mass - Nuclide.get_mass_in_mev_per_c2(z=z, a=a - 1) + \
-                  Nuclide.get_mass_in_mev_per_c2(z=z, a=a)
-        else:
-            neutron_erg = photon_erg
-            out = neutron_erg + neutron_mass + Nuclide.get_mass_in_mev_per_c2(z=z, a=a - 1) - \
-                  Nuclide.get_mass_in_mev_per_c2(z=z, a=a)
-        out = np.array(list(filter(lambda x: x > 0, out)), dtype=float)
-        return out
-
-    @staticmethod
-    def neutron2gamma(nuclide: Nuclide, neutron_erg):
-        return GammaFissionErgConverter.gamma2neutron(nuclide, neutron_erg, True)
 
 
 class Nuclide:
@@ -656,8 +730,8 @@ class Nuclide:
         Decay channels and the resulting child nuclides (branching ratios)
         Proton activation cross-sections (PADF)
         Neutron activation cross-sections (ENDF)
-        Neutron, photon, proton, and SF fission yeilds (use caution with photon and proton data)
-        Neutron, photon, and proton fission cross-sections
+        Neutron, photon, proton, and SF fissionXS yeilds (use caution with photon and proton data)
+        Neutron, photon, and proton fissionXS cross-sections
 
 
     Examples:
@@ -687,7 +761,7 @@ class Nuclide:
 
     Parameters
         ev_or_filename : str of openmc.data.endf.Evaluation
-            ENDF fission product yield evaluation to read from. If given as a
+            ENDF fissionXS product yield evaluation to read from. If given as a
             string, it is assumed to be the filename for the ENDF file.
 
     Attributes
@@ -846,10 +920,10 @@ class Nuclide:
         simple_nuclide_name = self.atomic_symbol + str(self.A)
         if simple_nuclide_name not in PROTON_INDUCED_FISSION_XS1D:
             try:
-                with open(PROTON_PICKLE_DIR/'fission'/'{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                with open(PROTON_PICKLE_DIR/'fissionXS'/'{}.pickle'.format(simple_nuclide_name), 'rb') as f:
                     PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
             except FileNotFoundError:
-                assert False, 'No proton induced fission data for {0}. Download it and integrate it if it is ' \
+                assert False, 'No proton induced fissionXS data for {0}. Download it and integrate it if it is ' \
                               'available. The conversion to pickle is done in `endf_to_pickle.py`. See "{1}" for' \
                               ' instructions.'.format(self, pwd/'endf_files'/'FissionXS'/'readme')
 
@@ -858,7 +932,7 @@ class Nuclide:
     @property
     def gamma_induced_fiss_xs(self) -> CrossSection1D:
         """
-        Get the photon induced fission cross section for this nuclide.
+        Get the photon induced fissionXS cross section for this nuclide.
         Raise error if no data available.
         Returns:
 
@@ -866,10 +940,10 @@ class Nuclide:
         simple_nuclide_name = self.atomic_symbol + str(self.A)
         if simple_nuclide_name not in PHOTON_INDUCED_FISSION_XS1D:
             try:
-                with open(GAMMA_PICKLE_DIR / 'fission' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
                     PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
             except FileNotFoundError:
-                assert False, 'No photon induced fission data for {0}.'
+                assert False, 'No photon induced fissionXS data for {0}.'
 
         return PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
 
@@ -881,21 +955,6 @@ class Nuclide:
             .format(units, unit_dict.keys())
         j = self.atomic_mass*__u_to_kg__*__speed_of_light__**2
         return j*unit_dict[units]
-
-    @staticmethod
-    def get_mass_in_mev_per_c2(n: (Nuclide, str) = None, z=None, a=None):
-        c = 931.494102
-        if n is not None:
-            if isinstance(n, Nuclide):
-                return n.mass_in_mev_per_c2
-            else:
-                assert isinstance(n, str)
-                if '_' in n:
-                    n = n[:n.index('_')]
-                return atomic_mass(n)*c
-        else:
-            assert z is not None and a is not None
-            return atomic_mass(ATOMIC_SYMBOL[z] + str(a))*c
 
     @property
     def mass_in_mev_per_c2(self) -> float:
@@ -993,6 +1052,13 @@ class Nuclide:
             if symbol.endswith('m'):
                 symbol = symbol[:-1] + '_m1'
 
+        if symbol.lower() == 'n':
+            symbol = 'N1'
+        elif symbol.lower() == 'alpha':
+            symbol = 'He4'
+        elif symbol.lower() == 'proton':
+            symbol = 'H1'
+
         pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
         _m = NUCLIDE_NAME_MATCH.match(symbol)
         assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
@@ -1043,7 +1109,7 @@ class Nuclide:
     # def __get_sf_yield__(self, independent_bool) -> Dict[str, UFloat]:
     #     sub_dir = ('independent' if independent_bool else 'cumulative')
     #     f_path = SF_YIELD_PICKLE_DIR/sub_dir/'{}.marshal'.format(self.name)
-    #     assert f_path.exists(), 'No SF fission yield data for {}'.format(self.name)
+    #     assert f_path.exists(), 'No SF fissionXS yield data for {}'.format(self.name)
     #     with open(f_path, 'rb') as f:
     #         yield_data: yield_data_type = marshal.load(f)
     #     result = {}
