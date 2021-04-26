@@ -445,10 +445,15 @@ class FissionYields:
         err_msg = 'Particle, {} not implemented or is invalid. To add more particles, add values to the ' \
                   'FissionYields.__par_masses__ dictionary.'
 
-        def get_par_z_a(par):
+        def get_par_z_a(par: str):
+            """Return Z and A of particle if applicable, else (0, 0). Implement more particles here, e.g. electron
+            Args:
+                par: Particle symbol/name.
+            """
             assert par in FissionYields.__par_masses__.keys(), err_msg.format(par)
             if par != 'gamma':
                 _n = Nuclide.from_symbol(par)
+                assert _n.is_valid
                 return _n.Z, _n.A
             else:
                 return 0, 0
@@ -458,17 +463,17 @@ class FissionYields:
         from_par_target_nuclide_mass = n.rest_energy()
         from_par_rest_mass = FissionYields.__par_masses__[from_par]
 
-        compound_z, compound_a = (from_par_a + from_target_a), (from_par_z + from_target_z)
+        compound_z, compound_a = (from_par_z + from_target_z), (from_par_a + from_target_a)
 
         to_par_z, to_par_a = get_par_z_a(to_par)
-        to_target_z, to_target_a = compound_a-to_par_z, compound_a-to_par_a
+        to_target_z, to_target_a = compound_z-to_par_z, compound_a-to_par_a
 
         to_par_nuclide = Nuclide.from_Z_A_M(to_target_z, to_target_a)
         to_par_target_nuclide_mass = to_par_nuclide.rest_energy()
         to_par_rest_mass = FissionYields.__par_masses__[to_par]
 
-        to_par_KEs = from_par_rest_mass - from_par_target_nuclide_mass + from_par_KEs - to_par_rest_mass \
-                     + to_par_target_nuclide_mass
+        to_par_KEs = from_par_rest_mass + from_par_target_nuclide_mass + from_par_KEs - to_par_rest_mass \
+                     - to_par_target_nuclide_mass
         return to_par_KEs, to_par_nuclide
 
     @staticmethod
@@ -1052,7 +1057,7 @@ class Nuclide:
             if symbol.endswith('m'):
                 symbol = symbol[:-1] + '_m1'
 
-        if symbol.lower() == 'n':
+        if symbol.lower() in ['n', 'neutron']:
             symbol = 'N1'
         elif symbol.lower() == 'alpha':
             symbol = 'He4'
@@ -1462,8 +1467,8 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    s = Nuclide.from_symbol('U238')
-    print(s.cumulative_sf_fission_yield())
+    s = Nuclide.from_symbol('U237')
+    print(FissionYields.particle_energy_convert(s, np.arange(20), "neutron", 'gamma'))
     # print(__get_fiss_yield_path__('U238',"photon", 'GEF', False))
     # FissionYields(Nuclide.from_symbol('Ac223'), inducing_particle='proton', data_source=None)
 
