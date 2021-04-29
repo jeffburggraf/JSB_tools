@@ -9,7 +9,7 @@ import marshal
 from typing import Dict, List, TypedDict
 from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR,\
      PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, CrossSection1D, ActivationReactionContainer,\
-     GammaLine, DecayMode, yield_data_type, FISS_YIELDS_PATH
+     GammaLine, DecayMode, FISS_YIELDS_PATH
 from warnings import warn
 from uncertainties import ufloat
 from numbers import Number
@@ -493,21 +493,37 @@ class Helper:
                     yield {'parent_symbol': symbol, 'f_path': f_path}
 
 
-def pickle_fission_product_yields():
 
-    def build_data(y: FissionProductYields) -> yield_data_type:
-        data: yield_data_type = {}
+def pickle_fission_product_yields():
+    """
+    Marshal'd fission yield data is a dict of the form:
+        1st dump is energies:
+            List[float]
+        2nd dump is yield data:
+            {'Xe139':[list[float], list[float]],  # where the first list is yield, and the second is yield uncertainty
+                 Ta185: .... and so on,
+                 ...,
+            }
+
+    """
+
+    def build_data(y: FissionProductYields):
+        _data = {'independent': {},
+                 'cumulative': {}}
+
         for attrib in ['independent', 'cumulative']:
-            data[attrib] = {}
-            for energy, yield_dict in zip(y.energies, getattr(y, attrib)):
-                energy /= 1E6
-                energy = float(f"{energy:.4E}")
-                data[attrib][energy] = {}
-                for n_name, yield_ in yield_dict.items():
-                    yield_, yield_err = yield_.n, yield_.std_dev
-                    # if yield_ > 0:
-                    data[attrib][energy][n_name] = {'yield': float(yield_), "yield_err": float(yield_err)}
-        return data
+            out = _data[attrib]
+            for yield_dict in getattr(y, attrib):
+                for nuclide_name, yield_ in yield_dict.items():
+                    try:
+                        entry = out[nuclide_name]
+                    except KeyError:
+                        out[nuclide_name] = [[], []]
+                        entry = out[nuclide_name]
+                    entry[0].append(yield_.n)
+                    entry[1].append(float(yield_.std_dev))
+        _ergs = list(map(float, y.energies*1E-6))
+        return _ergs, _data
 
     #   To add more fissionXS yield source, add the data source directory, write directory,
     #   and the regex to extract Z,A and M (All is done via a Helper instance)
@@ -545,13 +561,14 @@ def pickle_fission_product_yields():
                 warn('Unable to load fissionXS yield from file {}'.format(f_path))
                 continue
 
-            data = build_data(openmc_yield)
+            ergs, data = build_data(openmc_yield)
             for yield_type, data in data.items():  # yield_type: cumulative or independent
                 if not (helper.new_data_dir/yield_type).exists():
                     Path.mkdir(helper.new_data_dir/yield_type)
                 f_path = helper.new_data_dir/str(yield_type)/str(parent_symbol + '.marshal')
 
                 with open(f_path, 'wb') as f:
+                    marshal.dump(ergs, f)
                     marshal.dump(data, f)
                 print('Written Fission yields for {}'
                       .format(Path(f_path.parents[2].name)/f_path.parents[1].name/f_path.parent.name/f_path.name))
@@ -584,5 +601,8 @@ def pickle_all_nuke_data():
 
 
 if __name__ == '__main__':
-    pickle_proton_fission_xs_data()
+    # pickle_fission_product_yields()
+    pass
+
+
 
