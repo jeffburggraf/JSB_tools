@@ -16,7 +16,7 @@ from numbers import Number
 import numpy as np
 from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
     gamma_enfd_b_data_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
-    proton_fiss_yield_data
+    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy  # Add here for fiss yield
 
 cwd = Path(__file__).parent
 
@@ -496,6 +496,9 @@ class Helper:
 
 def pickle_fission_product_yields():
     """
+    To add more fission yield sources/ search for the tag 'Add here for fiss yield' and make the needed changes.
+    To selectively update one type of fission yieds, look at the helpers variable below.
+
     Marshal'd fission yield data is a dict of the form:
         1st dump is energies:
             List[float]
@@ -527,10 +530,12 @@ def pickle_fission_product_yields():
 
     #   To add more fissionXS yield source, add the data source directory, write directory,
     #   and the regex to extract Z,A and M (All is done via a Helper instance)
+    # Add here for fiss yield
     neutron_yield_marshal_path_endf = FISS_YIELDS_PATH/'neutron'/'endf'
     neutron_yield_marshal_path_gef = FISS_YIELDS_PATH/'neutron'/'gef'
     sf_yield_marshal_path_gef = FISS_YIELDS_PATH/'SF'/'gef'
     proton_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'proton'/'ukfy'
+    gamma_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'gamma'/'ukfy'
 
     for _dir in [neutron_yield_marshal_path_endf, neutron_yield_marshal_path_gef, sf_yield_marshal_path_gef,
                  proton_yield_marshal_path_ukfy]:
@@ -538,18 +543,27 @@ def pickle_fission_product_yields():
             Path.mkdir(_dir.parent)
         if not _dir.exists():
             Path.mkdir(_dir)
-    helpers = [Helper(neutron_fission_yield_data_dir_gef,
-                      neutron_yield_marshal_path_gef,
-                      'GEFY_([0-9]+)_([0-9]+)_n.dat'),
-               Helper(neutron_fission_yield_data_dir_endf,
-                      neutron_yield_marshal_path_endf,
-                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
-               Helper(sf_yield_data_dir,
-                      sf_yield_marshal_path_gef,
-                      'GEFY_([0-9]+)_([0-9]+)_s.dat'),
-               Helper(proton_fiss_yield_data,
-                      proton_yield_marshal_path_ukfy,
-                      lambda x: x)]
+
+    # Add here for fiss yield
+    helpers = [Helper(gamma_fiss_yield_data_dir_ukfy,
+           gamma_yield_marshal_path_ukfy,
+           lambda x: x)]
+    # helpers = [Helper(neutron_fission_yield_data_dir_gef,
+    #                   neutron_yield_marshal_path_gef,
+    #                   'GEFY_([0-9]+)_([0-9]+)_n.dat'),
+    #            Helper(neutron_fission_yield_data_dir_endf,
+    #                   neutron_yield_marshal_path_endf,
+    #                   'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
+    #            Helper(sf_yield_data_dir,
+    #                   sf_yield_marshal_path_gef,
+    #                   'GEFY_([0-9]+)_([0-9]+)_s.dat'),
+    #            Helper(proton_fiss_yield_data_dir_ukfy,
+    #                   proton_yield_marshal_path_ukfy,
+    #                   lambda x: x),
+    #            Helper(gamma_fiss_yield_data_dir_ukfy,
+    #                   gamma_yield_marshal_path_ukfy,
+    #                   lambda x: x)
+    #            ]
 
     for helper in helpers:
         for x in helper.get_valid():
@@ -564,7 +578,7 @@ def pickle_fission_product_yields():
             ergs, data = build_data(openmc_yield)
             for yield_type, data in data.items():  # yield_type: cumulative or independent
                 if not (helper.new_data_dir/yield_type).exists():
-                    Path.mkdir(helper.new_data_dir/yield_type)
+                    Path.mkdir(helper.new_data_dir/yield_type, parents=True)
                 f_path = helper.new_data_dir/str(yield_type)/str(parent_symbol + '.marshal')
 
                 with open(f_path, 'wb') as f:
@@ -601,8 +615,9 @@ def pickle_all_nuke_data():
 
 
 if __name__ == '__main__':
-    # pickle_fission_product_yields()
     pass
+    # pickle_fission_product_yields()
+    # pass
 
 
 

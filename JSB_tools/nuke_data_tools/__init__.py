@@ -19,6 +19,8 @@ from numbers import Number
 pwd = Path(__file__).parent
 from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
     NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
+from functools import cached_property
+from scipy.interpolate import interp1d
 
 __all__ = ['Nuclide', 'avogadros_number']
 
@@ -275,12 +277,6 @@ def rest_mass(z=None, a=None, n=None):
         raise KeyError(f'No atomic mass data for Z={z} A={a}')
 
 
-# data_sources: For fission yields, this is a mapping from inducing particle to data directory name. Directories are
-#   named after the source of the data, e.g. endf, gef
-# A value of None tells the code to try to derive non-neutron-induced yield from neutron induced fission yields
-#    with adjusted energy and pre-fission nucleus.
-FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': [None], 'alpha': [None],
-                         'electron': [], 'sf': ['gef']}
 
 proton_mass = 938.272  # MeV/c^2
 neutron_mass = 939.565
@@ -1446,7 +1442,7 @@ class ActivationReactionContainer:
             try:
                 xs = CrossSection1D(openmc_product.yield_.x / 1E6, openmc_product.yield_.y, xs_fig_label,
                                     self.projectile)
-            except AttributeError as e:
+            except AttributeError:
                 continue
 
             self.product_nuclide_names_xss[activation_product_name] = xs
@@ -1495,12 +1491,237 @@ class ActivationReactionContainer:
 
 
 class RawFissionYieldData:
-    def __init__(self, inducing_particle, library, independent_bool, nuclide_name):
-        pass
+    instances: Dict[Path, RawFissionYieldData] = {}
+
+    def __new__(cls, *args, **kwargs):
+        _dir = RawFissionYieldData.__get_dir(*args, **kwargs)
+        if _dir in RawFissionYieldData.instances:
+            return RawFissionYieldData.instances[_dir]
+        instance = super(RawFissionYieldData, cls).__new__(cls)
+        instance.__init__(*args, **kwargs)
+        return instance
+
+    @staticmethod
+    def __get_dir(inducing_particle, library, independent_bool: bool, nuclide_name):
+        _dir = FISS_YIELDS_PATH / inducing_particle
+        if not _dir.exists():
+            assert False, f'Invalid inducing particle, "{inducing_particle}", for induced fission'
+        _dir /= library
+        if not _dir.exists():
+            assert False, f'Invalid library, "{library}", for {inducing_particle}-induced fission'
+        _dir = _dir / ('independent' if independent_bool else 'cumulative') / (nuclide_name + '.marshal')
+        if not _dir.exists():
+            raise FileNotFoundError(f"No fission yield file for {inducing_particle}-induced fission on {nuclide_name} "
+                                    f"from library, '{library}'")
+        return _dir
+
+    def __init__(self, inducing_particle, library, independent_bool: bool, nuclide_name):
+        _dir = self.__get_dir(inducing_particle, library, independent_bool, nuclide_name)
+        self.__file = open(_dir, 'rb')
+        self.ergs = marshal.load(self.__file)
+        RawFissionYieldData.instances[_dir] = self
+
+    @cached_property
+    def data(self):
+        out = marshal.load(self.__file)
+        del self.__file
+        return out
+
+
+class FissionYields:
+    # todo: add fill value optoin. Finish from_neutron. Clean up.
+    """
+    Retrieve fission yield data, if available. In some cases, the code will convert neutron yield
+        to the desired yield by adjusting the nucleus and energies accordingly
+
+    Attributes:
+        energies: Energies at which the yield is determined
+        library: Library where data was taken from, e.g. ukfy, or gef
+        eval_nuclide_name: nucleus that was used to evaluate the yield in cases where n-fission yields were adapted
+    # data_sources: For fission yields, this is a mapping from inducing particle to data directory name. Directories are
+    #   named after the source of the data, e.g. endf, gef
+    # A value of None tells the code to try to derive non-neutron-induced yield from neutron induced fission yields
+    #    with adjusted energy and pre-fission nucleus.
+
+    """
+    FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': ['ukfy', None],
+                             'sf': ['gef'], 'alpha': [None], 'electron': [], }
+
+    @staticmethod
+    def particle_energy_convert(nuclide_name: str, ergs, from_par, to_par) -> Tuple[np.ndarray, str]:
+        """
+        Converts the particle energies of a given `from_par`-induced fission on `n`, to that of `to_par`-induced fission
+            on`n_prime`. The problem solved is the following: what do the energies of `to_par` have to have to be in
+            order to produce the same pre-fission nucleus as `from_par` with regard to
+            nucleon numbers and compound nucleus excitation energy.
+        Args:
+            n: Nuclide instance
+            ergs: The energies to be converted
+            from_par: Particle that has kinetic energy specified by `ergs`.
+            to_par: The particle for which the new energies will be calculated.
+
+        Returns: Tuple[(calculated energies, pre fission nucleus for to_par)]
+
+        """
+        n = Nuclide.from_symbol(nuclide_name)
+        if not hasattr(ergs, '__iter__'):
+            assert isinstance(ergs, Number)
+            ergs = [ergs]
+        else:
+            assert isinstance(ergs[0], Number)
+        from_par_KEs = np.array(ergs)
+        err_msg = 'Particle, {} not implemented or is invalid. To add more particles, add values to the ' \
+                  'FissionYields.__par_masses__ dictionary.'
+
+        def get_par_z_a(par: str):
+            """Return Z and A of particle if applicable, else (0, 0). Implement more particles here, e.g. electron
+            Args:
+                par: Particle symbol/name.
+            """
+            assert par in FissionYields.__par_masses__.keys(), err_msg.format(par)
+            if par != 'gamma':
+                _n = Nuclide.from_symbol(par)
+                assert _n.is_valid
+                return _n.Z, _n.A
+            else:
+                return 0, 0
+
+        from_par_z, from_par_a = get_par_z_a(from_par)
+        from_target_z, from_target_a = n.Z, n.A
+        from_par_target_nuclide_mass = n.rest_energy()
+        from_par_rest_mass = FissionYields.__par_masses__[from_par]
+
+        compound_z, compound_a = (from_par_z + from_target_z), (from_par_a + from_target_a)
+
+        to_par_z, to_par_a = get_par_z_a(to_par)
+        to_target_z, to_target_a = compound_z - to_par_z, compound_a - to_par_a
+
+        to_par_nuclide = Nuclide.from_Z_A_M(to_target_z, to_target_a)
+        to_par_target_nuclide_mass = to_par_nuclide.rest_energy()
+        to_par_rest_mass = FissionYields.__par_masses__[to_par]
+
+        to_par_KEs = from_par_rest_mass + from_par_target_nuclide_mass + from_par_KEs - to_par_rest_mass \
+                     - to_par_target_nuclide_mass
+        return to_par_KEs, to_par_nuclide.name
+
+    @staticmethod
+    def __score(xnew, xp):
+        if len(xp) == 2:
+            if not all([i in xp for i in xnew]):
+                return 0
+        l = len(list(filter(lambda x: xp[0] <= x <= xp[-1], xnew)))
+        return l / len(xnew)
+
+    def __find_best_library__(self):
+        scores = []
+        libraries = []
+        datums = []
+        for lib in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par]:
+            if lib is None:
+                continue
+            try:
+                data = RawFissionYieldData(self.inducing_par, lib, self.independent_bool, self.target)
+            except FileNotFoundError:
+                continue
+            datums.append(data)
+            data_ergs = data.ergs
+            print('score: ', self.__score(self.energies, data_ergs), 'ergs: ', data_ergs)
+            libraries.append(lib)
+            scores.append(self.__score(self.energies, data_ergs))
+        if len(scores):
+            i = np.argmax(scores)
+            self.library = libraries[i]
+            return datums[i]
+
+    @classmethod
+    def from_neutron(cls, target, inducing_par, ergs, independent_bool=True):
+        assert ergs is not None, 'Must supply energies when converting neutron-fission data to another projectile'
+        new_target, new_ergs = FissionYields.particle_energy_convert(target, ergs, inducing_par, 'neutron')
+
+        yield_ = cls(new_target, 'neutron', ergs, None, independent_bool)
+
+    @staticmethod
+    def interp(xnew, x, y):
+        interp_func = interp1d(x, y, fill_value='extrapolate', bounds_error=False)
+        result = interp_func(xnew)
+        negative_select = np.where(xnew < 0)
+        result[negative_select] = 0
+        result = np.where(result >= 0, result, 0)
+        return result
+
+    def __init__(self, target, inducing_par, ergs=None, library=None, independent_bool=True):
+        """
+
+        Args:
+            target:
+            inducing_particle: None for SF.
+            ergs:
+            library:
+            independent_bool:
+        """
+        self.target = target
+        yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
+        if inducing_par is None:
+            inducing_par = 'sf'
+        else:
+            assert isinstance(inducing_par, str)
+            inducing_par = inducing_par.lower()
+        self.inducing_par = inducing_par
+        self.independent_bool = independent_bool
+        assert inducing_par in yield_dirs
+        self.energies = ergs
+
+        if library is not None:
+            self.library = library
+            assert library in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par], \
+                f"Library '{library}' for {self.inducing_par}-induced fission doesn't exist!"
+            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, library, self.independent_bool, self.target)
+        else:
+            self.__data: RawFissionYieldData = self.__find_best_library__()
+            if self.library is None:
+                raise FileNotFoundError(
+                    f"No fission yield file for {self.inducing_par}-induced fission on {target}.")
+        self.data_ergs = self.__data.ergs
+        data = self.__data.data
+        xe = data['Xe139']
+        inter_func = interp1d(self.__data.ergs, xe[0], fill_value='extrapolate', bounds_error=False)
+
+        self.yields = {}
+        _sorter = []
+        _keys_in_order = []
+        for n, yield_ in self.__data.data.items():
+            tot_yield = sum(yield_[0])
+            i = np.searchsorted(_sorter, tot_yield)
+            _sorter.insert(i, tot_yield)
+            _keys_in_order.insert(i, n)
+
+        for n in _keys_in_order[::-1]:
+            yield_ = self.__data.data[n]
+            yield_nominal = self.interp(ergs, self.__data.ergs, yield_[0])
+            yield_error = self.interp(ergs, self.__data.ergs, yield_[0])
+            self.yields[n] = unp.uarray(yield_nominal, yield_error)
+
+        plt.plot(ergs, unp.nominal_values(self.yields['Xe139']), ls='None', marker='o')
+        # x_new = np.linspace(0, 200)
+        # plt.plot(x_new, self.interp(x_new, self.__data.ergs, xe[0]), ls='None', marker='o')
+        for k, v in list(self.yields.items())[:10]:
+            plt.figure()
+            plt.plot(ergs, unp.nominal_values(v), ls='None', marker='o', label=k)
+            plt.legend()
+        plt.show()
+
 
 if __name__ == "__main__":
     x = np.arange(10)
     # y = unp.uarray(x, x)
     # np.interp(np.linspace(0,10,100), x, y)
+    import time
+    ergs = np.linspace(-10, 100, 200)
+    f = FissionYields('U238', 'neutron',ergs, None,  True)
+    # pri
+
+
+
+
 
 

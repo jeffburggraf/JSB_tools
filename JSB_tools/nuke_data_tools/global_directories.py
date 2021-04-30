@@ -37,4 +37,7 @@ sf_yield_data_dir = parent_data_dir / 'gefy81_s'
 neutron_fission_yield_data_dir_gef = parent_data_dir / 'gefy81_n'
 
 #  Download proton induced fissionXS yields from https://fispact.ukaea.uk/nuclear-data/downloads/
-proton_fiss_yield_data = parent_data_dir/'UKFY41data'/'ukfy4_1p'
+proton_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1p'
+gamma_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1g'
+alpha_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1a'
+deuterium_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1d'
