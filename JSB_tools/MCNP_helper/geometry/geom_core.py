@@ -96,7 +96,7 @@ class F4Tally(Tally):
 
     def add_fission_rate_multiplier(self, mat: int) -> None:
         """
-        Makes this tally a fission rate tally [fissions/(src particle)/cm3] for neutrons and protons
+        Makes this tally a fissionXS rate tally [fissions/(src particle)/cm3] for neutrons and protons
         Args:
             mat: Material number
 
