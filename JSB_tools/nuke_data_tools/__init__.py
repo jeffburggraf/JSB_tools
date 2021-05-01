@@ -1522,7 +1522,7 @@ class RawFissionYieldData:
         RawFissionYieldData.instances[_dir] = self
 
     @cached_property
-    def data(self):
+    def data(self) -> Dict:
         out = marshal.load(self.__file)
         del self.__file
         return out
@@ -1625,9 +1625,8 @@ class FissionYields:
                 continue
             datums.append(data)
             data_ergs = data.ergs
-            print('score: ', self.__score(self.energies, data_ergs), 'ergs: ', data_ergs)
             libraries.append(lib)
-            scores.append(self.__score(self.energies, data_ergs))
+            scores.append(self.__score(self.energies if self.energies is not None else data_ergs, data_ergs))
         if len(scores):
             i = np.argmax(scores)
             self.library = libraries[i]
@@ -1649,16 +1648,18 @@ class FissionYields:
         result = np.where(result >= 0, result, 0)
         return result
 
-    def __init__(self, target, inducing_par, ergs=None, library=None, independent_bool=True):
+    def __init__(self, target, inducing_par, energies=None, library=None, independent_bool=True):
         """
 
         Args:
             target:
-            inducing_particle: None for SF.
-            ergs:
+            inducing_par: None for SF.
+            energies:
             library:
             independent_bool:
         """
+        if isinstance(energies, (float, int)):
+            energies = [energies]
         self.target = target
         yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
         if inducing_par is None:
@@ -1666,59 +1667,199 @@ class FissionYields:
         else:
             assert isinstance(inducing_par, str)
             inducing_par = inducing_par.lower()
+        if inducing_par == 'sf':
+            assert energies is None, 'Cannot specify energies for SF'
+            energies = [0]
         self.inducing_par = inducing_par
         self.independent_bool = independent_bool
         assert inducing_par in yield_dirs
-        self.energies = ergs
+        self.energies = energies
 
         if library is not None:
             self.library = library
             assert library in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par], \
                 f"Library '{library}' for {self.inducing_par}-induced fission doesn't exist!"
-            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, library, self.independent_bool, self.target)
+            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, library, self.independent_bool,
+                                                                   self.target)
         else:
-            self.__data: RawFissionYieldData = self.__find_best_library__()
-            if self.library is None:
+            self.__data: RawFissionYieldData = self.__find_best_library__()  # sets self.library if data is found
+            if self.library is None:  # data wasn't found
                 raise FileNotFoundError(
                     f"No fission yield file for {self.inducing_par}-induced fission on {target}.")
         self.data_ergs = self.__data.ergs
-        data = self.__data.data
-        xe = data['Xe139']
-        inter_func = interp1d(self.__data.ergs, xe[0], fill_value='extrapolate', bounds_error=False)
-
-        self.yields = {}
+        if self.energies is None:
+            self.energies = self.data_ergs
+        self.energies = np.array(self.energies)
+        if self.__score(self.energies, self.data_ergs) != 1:
+            warn(f"\nExtrapolation being used in the {inducing_par}-fission yields of {target} for energies greater than "
+                 f"{self.data_ergs[-1]} and les than {self.data_ergs[0]}\n")
+        __yields_unsorted__ = {}
         _sorter = []
         _keys_in_order = []
         for n, yield_ in self.__data.data.items():
-            tot_yield = sum(yield_[0])
+            if len(self.__data.ergs) > 1:
+                yield_nominal = self.interp(self.energies, self.__data.ergs, yield_[0])
+                yield_error = self.interp(self.energies, self.__data.ergs, yield_[1])
+                __yields_unsorted__[n] = unp.uarray(yield_nominal, yield_error)
+
+            else:
+                yield_nominal = [yield_[0][0]]
+                print(yield_)
+                __yields_unsorted__[n] = ufloat(yield_[0][0], yield_[1][0])
+
+            tot_yield = sum(yield_nominal)
             i = np.searchsorted(_sorter, tot_yield)
             _sorter.insert(i, tot_yield)
             _keys_in_order.insert(i, n)
+            # print(_sorter)
 
-        for n in _keys_in_order[::-1]:
-            yield_ = self.__data.data[n]
-            yield_nominal = self.interp(ergs, self.__data.ergs, yield_[0])
-            yield_error = self.interp(ergs, self.__data.ergs, yield_[0])
-            self.yields[n] = unp.uarray(yield_nominal, yield_error)
+        self.yields = {k: __yields_unsorted__[k] for k in _keys_in_order[::-1]}
 
-        plt.plot(ergs, unp.nominal_values(self.yields['Xe139']), ls='None', marker='o')
-        # x_new = np.linspace(0, 200)
-        # plt.plot(x_new, self.interp(x_new, self.__data.ergs, xe[0]), ls='None', marker='o')
-        for k, v in list(self.yields.items())[:10]:
-            plt.figure()
-            plt.plot(ergs, unp.nominal_values(v), ls='None', marker='o', label=k)
-            plt.legend()
-        plt.show()
+    @cached_property
+    def mass_number_vs_yield(self) -> Dict:
+        a_dict = {}
+        for n, y in self.yields.items():
+            mass_num = int(re.match("[A-Za-z]*([0-9]+)", n).groups()[0])
+            try:
+                a_dict[mass_num] += y
+            except KeyError:
+                a_dict[mass_num] = np.array(y)
+
+        mass_nums = np.array(sorted(a_dict.keys()))
+        a_dict = {k: a_dict[k] for k in mass_nums}
+        return a_dict
+
+    def plot_A(self, weights=None):
+        if weights is None:
+            weights = np.ones_like(self.energies)
+        x = []
+        y = []
+        y_err = []
+        for a, yield_ in self.mass_number_vs_yield.items():
+            x.append(a)
+            _y = np.sum(yield_*weights)
+            y.append(_y.n)
+            y_err.append(_y.std_dev)
+
+        plt.figure()
+        plt.title(f'Mass distribution of {self.inducing_par}-induced fission of {self.target}')
+        plt.xlabel('A')
+        plt.ylabel('Yield per fission')
+        plt.errorbar(x, y, y_err)
+
+    def plot(self, nuclide: Union[List[str], str, None] = None, first_n_nuclides=12, plot_data=False):
+        if nuclide is not None:
+            if not isinstance(nuclide, str):
+                assert hasattr(nuclide, '__iter__')
+                plot_keys = nuclide
+            else:
+                assert isinstance(nuclide, str)
+                y = self.yields[nuclide]
+                y_data = self.__data.data[nuclide]
+                plt.errorbar(self.energies, unp.nominal_values(y), unp.std_devs(y), label=f'{nuclide}: interp')
+                plt.errorbar(self.__data.ergs, y_data[0], y_data[1], label=f'{nuclide}: data')
+                plt.legend()
+                return
+
+        else:
+            assert isinstance(first_n_nuclides, int)
+            plot_keys = list(self.yields.keys())[:first_n_nuclides]
+        for index, k in enumerate(plot_keys):
+            axs_i = index%4
+            if axs_i == 0:
+                fig, axs = plt.subplots(2, 2, figsize=(8,8), sharex=True)
+                axs = axs.flatten()
+            ax = axs[axs_i]
+            y_interp = unp.nominal_values(self.yields[k])
+            y_err_interp = unp.std_devs(self.yields[k])
+            y_data = self.__data.data[k][0]
+            y_err_data = self.__data.data[k][1]
+            ax.fill_between(self.energies, y_interp-y_err_interp, y_interp + y_err_interp,
+                            color='red', alpha=0.4)
+            interp_label = f'{k}: interp' if plot_data else k
+            ax.plot(self.energies, y_interp, label=interp_label, ls='--', c='red',
+                    marker='p' if not len(self.energies) else None)
+            if plot_data:
+                ax.errorbar(self.__data.ergs, y_data, y_err_data, label=f'{k}: data', ls='None', c='black',
+                            marker='o')
+            if axs_i > 1:
+                ax.set_xlabel('Projectile Energy [MeV]')
+            if axs_i in [0, 2]:
+                ax.set_ylabel('Yield per fission')
+
+            ax.legend()
+
+    def weight_by_fission_xs(self):
+        xs: CrossSection1D
+        n = Nuclide.from_symbol(self.target)
+        if self.inducing_par == 'gamma':
+            xs = n.gamma_induced_fiss_xs
+        elif self.inducing_par == 'proton':
+            xs = n.proton_induced_fiss_xs
+        elif self.inducing_par == 'neutron':
+            xs = n.neutron_induced_xs
+        else:
+            assert False
+        xs_values = xs.interp(self.energies)
+        return self.weight_by_erg(xs_values)
+
+    def weight_by_erg(self, weights):
+        """
+        Weight all yields by a value for each energy. e.g., a projectile energy distribution..
+        Args:
+            weights:
+
+        Returns:
+
+        """
+        try:
+            del self.mass_number_vs_yield
+        except AttributeError:
+            pass
+        assert len(weights) == len(self.energies)
+        __sorter = []
+        __keys = []
+
+        for k, v in self.yields.items():
+            n = np.sum(v*weights)
+            i = np.searchsorted(__sorter, n)
+            __sorter.insert(i, n)
+            __keys.insert(i, k)
+            self.yields[k] = v*weights
+        self.yields = {k: self.yields[k] for k in __keys[::-1]}
+        return self.yields
 
 
 if __name__ == "__main__":
-    x = np.arange(10)
-    # y = unp.uarray(x, x)
-    # np.interp(np.linspace(0,10,100), x, y)
-    import time
-    ergs = np.linspace(-10, 100, 200)
-    f = FissionYields('U238', 'neutron',ergs, None,  True)
-    # pri
+    from GlobalValues import get_proton_erg_prob_1
+    # x = np.arange(10)
+    # # y = unp.uarray(x, x)
+    # # np.interp(np.linspace(0,10,100), x, y)
+    # import time
+    ergs = np.linspace(1, 70, 70)
+
+    f = FissionYields('U238','proton',  ergs, None,  True)
+    # f.plot('Rh110_m1')
+
+    f.weight_by_fission_xs()
+    f.weight_by_erg(get_proton_erg_prob_1(ergs, normalize=True))
+
+    f.plot(first_n_nuclides=4)
+    # f.plot(first_n_nuclides=4)
+    f.plot_A()
+
+    # del f.mass_num ber_vs_yield
+    f.plot_A()
+    # del f.mass_number_vs_yield
+    # f.plot_A()
+
+    # plt.show()
+    # from openmc.data import FissionProductYields
+    # y = FissionProductYields('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/ENDF-B-VIII.0_nfy/nfy-092_U_238.endf')
+    # print(y.energies)
+    # for d in (y.independent):
+    #     print('Rh126' in d)
+    plt.show()
 
 
 

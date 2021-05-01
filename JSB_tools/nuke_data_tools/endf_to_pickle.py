@@ -513,18 +513,18 @@ def pickle_fission_product_yields():
     def build_data(y: FissionProductYields):
         _data = {'independent': {},
                  'cumulative': {}}
-
+        _l = len(y.energies)   # number of energies
         for attrib in ['independent', 'cumulative']:
             out = _data[attrib]
-            for yield_dict in getattr(y, attrib):
+            for index, yield_dict in enumerate(getattr(y, attrib)):  # one `index` for each energy in y.energies
                 for nuclide_name, yield_ in yield_dict.items():
                     try:
                         entry = out[nuclide_name]
                     except KeyError:
-                        out[nuclide_name] = [[], []]
+                        out[nuclide_name] = [[0]*_l, [0]*_l]  # sometimes entries are missing. This sets those to 0.
                         entry = out[nuclide_name]
-                    entry[0].append(yield_.n)
-                    entry[1].append(float(yield_.std_dev))
+                    entry[0][index] = yield_.n
+                    entry[1][index] = float(yield_.std_dev)
         _ergs = list(map(float, y.energies*1E-6))
         return _ergs, _data
 
@@ -545,9 +545,9 @@ def pickle_fission_product_yields():
             Path.mkdir(_dir)
 
     # Add here for fiss yield
-    helpers = [Helper(gamma_fiss_yield_data_dir_ukfy,
-           gamma_yield_marshal_path_ukfy,
-           lambda x: x)]
+    helpers = [Helper(neutron_fission_yield_data_dir_endf,
+                      neutron_yield_marshal_path_endf,
+                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*')]
     # helpers = [Helper(neutron_fission_yield_data_dir_gef,
     #                   neutron_yield_marshal_path_gef,
     #                   'GEFY_([0-9]+)_([0-9]+)_n.dat'),
@@ -604,7 +604,7 @@ for _directory in [PROTON_PICKLE_DIR/'fissionXS', GAMMA_PICKLE_DIR/'fissionXS', 
 
 
 def pickle_all_nuke_data():
-    # pickle_fission_product_yields()
+    pickle_fission_product_yields()
     # pickle_decay_data()
     # pickle_proton_activation_data()
     # pickle_proton_fission_xs_data()
@@ -616,7 +616,7 @@ def pickle_all_nuke_data():
 
 if __name__ == '__main__':
     pass
-    # pickle_fission_product_yields()
+    pickle_fission_product_yields()
     # pass
 
 
