@@ -10,7 +10,6 @@ from pathlib import Path
 from warnings import warn
 from uncertainties import ufloat, UFloat
 from uncertainties import unumpy as unp
-import uncertainties
 import marshal
 from functools import cached_property
 from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
@@ -252,7 +251,7 @@ def __get_fiss_yield_path__(nuclide_symbol: str, inducing_particle4path: str, da
     return path
 
 
-AVAILABLE_INDUCING_PARTICLES = ['neutron', 'proton', 'sf', 'gamma']
+AVAILABLE_INDUCING_PARTICLES = ['neutron', 'proton', 'SF', 'gamma']
 
 
 class FissionYields:
@@ -291,14 +290,14 @@ class FissionYields:
         to the desired yield by adjusting the nucleaous
         Args:
             nuclide: Fissioning Nuclide.
-            inducing_particle: Use 'sf' or None for spontaneous fission
+            inducing_particle: Use 'SF' or None for spontaneous fission
             eval_ergs: Iterable, Number, or None. Energies to evaluate (and interpolate ) yields at.
              If None, use the energies from data source.
             data_source: Several data sources are available depending on the inducing particle.
                          neutron: ['endf', 'gef']
                          proton': ['ukfy', <<convert from neutron>>]
                          gamma: [<<convert from neutron>>]
-                         'sf':['gef']
+                         'SF':['gef']
                          'alpha': []
                          electron: []
                          If None, pick best.
@@ -318,7 +317,7 @@ class FissionYields:
         #  None signifies to try to convert energy to equivalent for neutron induced fission, and use
         #  n-induced fission yields.
         data_sources = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': [None], 'alpha': [],
-                        'electron': [], 'sf': ['gef']}
+                        'electron': [], 'SF': ['gef']}
 
         if data_source is None:
             fiss_yield_path = self.__search_path__(inducing_particle, data_sources, independent_bool, nuclide_symbol)
