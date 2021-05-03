@@ -28,6 +28,11 @@ from matplotlib import pyplot as plt
 from JSB_tools.TH1 import TH1F
 from lmfit.models import GaussianModel
 
+data_path = cwd/'mics_saved_data'
+fit_data_path = data_path/"ROOT_fits"
+if not fit_data_path.exists():
+    Path.mkdir(fit_data_path, parents=True, exist_ok=True)
+# if not
 
 try:
     import ROOT
@@ -277,7 +282,63 @@ class ROOTFitBase:
     Call super(sub_cass, self).__init__(x, y, x_err, y_err) to initialize `x`, `y`, `x_err`, and `y_err`.
     `x` and `y` may be a unp.array. If not, then uncertainties can may be optionally specified by `x_err` and `y_err`
 
+    In order for the load and saving features to work, define all coeffs as properties.
+
     """
+    def save_to_root_file(self, name, directory=None):
+        # Todo: save errors using a given x domain to be interpolated later.
+        if directory is None:
+            directory = fit_data_path
+        else:
+            directory = Path(directory)
+        f_path = directory/f"fit_{name}.root"
+        if f_path.exists():
+            warnings.warn(f'Overwriting saved fit, "{name}"')
+
+        tfile = ROOT.TFile(str(f_path), 'recreate')
+        tfile.WriteObject(self.__tf1__, '__tf1__')
+        _x = np.array(self.x)
+        _len = len(_x)
+        x = ROOT.TArrayD(_len, self.x)
+        xerr = ROOT.TArrayD(_len, self.x_err)
+        y = ROOT.TArrayD(_len, self.y)
+        yerr = ROOT.TArrayD(_len, self.y_err)
+        tfile.WriteObject(x, 'x')
+        tfile.WriteObject(xerr, 'x_err')
+        tfile.WriteObject(y, 'y')
+        tfile.WriteObject(yerr, 'y_err')
+        tfile.Close()
+
+    @classmethod
+    def load(cls, name, directory=None):
+        if directory is None:
+            directory = fit_data_path
+        else:
+            directory = Path(directory)
+        path = directory/f"fit_{name}.root"
+        assert path.exists(), f'No fit path, "{path}"'
+        file = ROOT.TFile(str(path))
+        # x = np.array(f.Get('x'))
+        # y = np.array(f.Get('y'))
+        # x_err = np.array(f.Get('x_err'))
+        # y_err = np.array(f.Get('y_err'))
+        out = cls.__new__(cls)
+        __tf1__ = file.Get('__tf1__')
+        out.x = np.array(file.Get('x'))
+        out.y = np.array(file.Get('y'))
+        out.x_err = np.array(file.Get('x_err'))
+        out.y_err = np.array(file.Get('y_err'))
+        out.__tf1__ = __tf1__
+        tg = ROOT.TGraphErrors(len(out.x), out.x, out.y, out.x_err, out.y_err)
+        for i in range(__tf1__.GetNpar()):
+            print('before: ', __tf1__.GetParameter(i))
+            'SNMBE'
+        out.__ROOT_fit_result__ = tg.Fit(__tf1__.GetName(), 'SNMBEQ')  # Have to redo the fit because ROOT is trash.
+        # out.__ROOT_fit_result__ = file.Get('__ROOT_fit_result__')
+        for i in range(__tf1__.GetNpar()):
+            print('after: ', __tf1__.GetParameter(i))
+        return out
+
     def __init__(self, x: Sequence[Union[UFloat, Number]], y: Sequence[Union[UFloat, Number]],
                  x_err: Sequence[Number], y_err: Sequence[Number], max_calls=10000):
         """
@@ -314,6 +375,11 @@ class ROOTFitBase:
         self.x_err = np.array(x_err, dtype=np.float)[arg_sort]
         self.y_err = np.array(y_err, dtype=np.float)[arg_sort]
 
+    # def __confidence_intervals__(self):
+    #     _x = np.array(x, dtype=np.float)
+    #     out_error = np.zeros_like(_x)
+    #     __ROOT_fit_result__.GetConfidenceIntervals(len(_x), 1, 1, _x, out_error, 0.68, False)  # fills out_error
+
     def eval_fit(self, x: Union[None, Number, Sequence] = None) -> Union[Sequence[UFloat], ufloat]:
         """
         Eval the fit result at points specified by `x`.
@@ -328,12 +394,15 @@ class ROOTFitBase:
                                                      "\nExample: self.__ROOT_fit_result__ = " \
                                                      "hist.__ROOT_hist__.Fit('peak_fit', 'SN')"
         __ROOT_fit_result__ = getattr(self, '__ROOT_fit_result__')
+        if __ROOT_fit_result__ is not None:
+            assert 'FitResult' in str(type(__ROOT_fit_result__)), \
+                f"Invalid type of ROOTFitBase subclass attribute, '__ROOT_fit_result__'. " \
+                f"Type must be ROOT.TFitResultPtr, not '{type(__ROOT_fit_result__)}'"
+
         __tf1__ = getattr(self, '__tf1__')
         assert isinstance(__tf1__, ROOT.TF1), f"Invalid type of ROOTFitBase subclass attribute, '__tf1__'. " \
                                               f"Must be of type ROOT.TF1, not '{type(__tf1__)}'"
-        assert isinstance(__ROOT_fit_result__, ROOT.TFitResultPtr),\
-            f"Invalid type of ROOTFitBase subclass attribute, '__ROOT_fit_result__'. " \
-            f"Type must be ROOT.TFitResultPtr, not '{type(__ROOT_fit_result__)}'"
+
         if x is None:
             x = self.x
         if not hasattr(x, '__iter__'):
@@ -342,12 +411,14 @@ class ROOTFitBase:
             x = unp.nominal_values(x)
 
         out_nominal = np.array([__tf1__.Eval(_x) for _x in x])
+
         _x = np.array(x, dtype=np.float)
-        out_error = np.zeros_like(_x)
-        __ROOT_fit_result__.GetConfidenceIntervals(len(_x), 1, 1, _x, out_error, 0.68, False)  # fills out_error
-        if len(out_error) == 1:  # if `x` is a scalar value
-            return ufloat(out_nominal[0], out_error[0])
-        return unp.uarray(out_nominal, out_error)
+        __fit_error__ = np.zeros_like(_x)
+        __ROOT_fit_result__.GetConfidenceIntervals(len(_x), 1, 1, _x, __fit_error__, 0.68, False)  # fills out_error
+
+        if len(__fit_error__) == 1:  # if `x` is a scalar value
+            return ufloat(out_nominal[0], __fit_error__[0])
+        return unp.uarray(out_nominal, __fit_error__)
 
     def plot_fit(self, ax=None, x=None, x_label=None, y_label=None, title=None):
         """
@@ -407,6 +478,16 @@ class PeakFit(ROOTFitBase):
         return cls(hist, center_guess=center_guess, sigma_guess=sigma_guess)
 
     def __init__(self, hist: TH1F, center_guess=None, min_x=None, max_x=None, sigma_guess=None):
+        """
+        Fit a histogram, preferably one with a single peak. Use min_x/ max_x to truncate fitting range.
+        Background will be initialized using full range, hence teh existence of a truncation feature.
+        Args:
+            hist:
+            center_guess: Guess of x value of peak.
+            min_x: for peak truncation
+            max_x: for peak truncation
+            sigma_guess: Guess of the sigma of the peak.
+        """
         if isinstance(center_guess, UFloat):
             center_guess = center_guess.n
         if center_guess is None:
@@ -421,21 +502,21 @@ class PeakFit(ROOTFitBase):
         bg_guess = hist.median_y.n
         # self.guess(hist.bin_centers, hist.nominal_bin_values, hist.bin_std_devs)
 
-
         if min_x is not None or max_x is not None:
             # cut hist
-            hist = hist.remove_bins_outside_range(min_x, max_x)
-        super(PeakFit, self).__init__(hist.bin_centers, unp.nominal_values(hist.bin_values), hist.bin_widths,
-                                      unp.std_devs(hist.bin_values))
+            hist_windowed = hist.remove_bins_outside_range(min_x, max_x)
+        else:
+            hist_windowed = hist
+        super(PeakFit, self).__init__(x=hist_windowed.bin_centers, y=unp.nominal_values(hist_windowed.bin_values), x_err=hist_windowed.bin_widths,
+                                      y_err=unp.std_devs(hist_windowed.bin_values))
 
-        _temp_hist = hist - bg_guess
+        _temp_hist = hist_windowed - bg_guess
         _temp_hist.__ROOT_hist__.Fit('gaus', '0Q')
         _g_tf1 = _temp_hist.__ROOT_hist__.GetListOfFunctions().FindObject('gaus')
         if sigma_guess is None:
             sigma_guess = _g_tf1.GetParameter(2)
         amp_guess = _g_tf1.GetParameter(0)*_g_tf1.GetParameter(2)*np.sqrt(2*np.pi)
         # print('Gauss fit par[0]: ', _g_tf1.GetParameter(0)*_g_tf1.GetParameter(2)*np.sqrt(2*np.pi))
-
 
         func = self.__tf1__ = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
         # amp_guess = np.sum(unp.nominal_values(hist.bin_widths * (hist.bin_values - hist.median_y)))
@@ -447,11 +528,32 @@ class PeakFit(ROOTFitBase):
         # func.SetParLimits(3, 0, 1E10)
         func.SetParameter(3, bg_guess)
 
-        self.__ROOT_fit_result__ = hist.__ROOT_hist__.Fit('peak_fit', "SNMBFE")
-        self.amp = ufloat(func.GetParameter(0), func.GetParError(0))
-        self.center = ufloat(func.GetParameter(1), func.GetParError(1))
-        self.sigma = ufloat(func.GetParameter(2), func.GetParError(2))
-        self.bg = ufloat(func.GetParameter(3), func.GetParError(3))
+        self.__ROOT_fit_result__ = hist_windowed.__ROOT_hist__.Fit('peak_fit', "SNMBE")
+        # self.amp = ufloat(func.GetParameter(0), func.GetParError(0))
+        # self.center = ufloat(func.GetParameter(1), func.GetParError(1))
+        # self.sigma = ufloat(func.GetParameter(2), func.GetParError(2))
+        # self.bg = ufloat(func.GetParameter(3), func.GetParError(3))
+        # self.fwhm = 2.355*self.sigma
+
+    @property
+    def amp(self):
+        return ufloat(self.__tf1__.GetParameter(0), self.__tf1__.GetParError(0))
+
+    @property
+    def center(self):
+        return ufloat(self.__tf1__.GetParameter(1), self.__tf1__.GetParError(1))
+
+    @property
+    def sigma(self):
+        return ufloat(self.__tf1__.GetParameter(2), self.__tf1__.GetParError(2))
+
+    @property
+    def bg(self):
+        return ufloat(self.__tf1__.GetParameter(3), self.__tf1__.GetParError(3))
+
+    @property
+    def fwhm(self):
+        return 2.355*self.sigma
 
 
 class PolyFit(ROOTFitBase):
@@ -464,7 +566,13 @@ class PolyFit(ROOTFitBase):
         # self.__tf1__ = ROOT.TF1(f_name, f_name)
         self.__ROOT_fit_result__ = self.tgraph.Fit(f_name, "SME")
         self.__tf1__ = self.tgraph.GetListOfFunctions().FindObject(f_name)
-        self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
+
+        # self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
+
+    @property
+    def coeffs(self):
+        n_params = self.__tf1__.GetNpar()
+        return [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(n_params)]
 
 
 class LogPolyFit(ROOTFitBase):
@@ -483,14 +591,14 @@ class LogPolyFit(ROOTFitBase):
             y_err:
             order: Order of polynomial
             fix_coeffs_to_guess: Sometimes it is helpful to fix a coeff to the value determined from the initial
-                fit in Log-Log space, since the fitting in linear here (this is how the parameters are "guessed").
+                fit (i.e. the guess) in Log-Log space (i.e. when the fit is linear).
                 This can help reduce issues during the final non-linear fit. Recommended to fix the highest order params
                 first.
         """
         if fix_coeffs_to_guess is None:
             fix_coeffs_to_guess = []
         assert hasattr(fix_coeffs_to_guess, '__iter__')
-        assert all(isinstance(i, int) for i in fix_coeffs_to_guess)
+        assert all(isinstance(i, (int, np.int64)) for i in fix_coeffs_to_guess), list(map(type, fix_coeffs_to_guess))
         assert all([i in range(order+1) for i in fix_coeffs_to_guess]),\
             "Values in `fix_coeffs_to_guess` must be within range [0, order] "
         assert len(fix_coeffs_to_guess) < order, "Too many parameters are fixed."
@@ -506,7 +614,7 @@ class LogPolyFit(ROOTFitBase):
         f_name = f'pol{order}'
         tgraph.Fit(f_name, 'S')
         __tf1__ = tgraph.GetListOfFunctions().FindObject(f_name)
-        coeffs = [__tf1__.GetParameter(i) for i in range(order+1)]
+        # coeffs = [__tf1__.GetParameter(i) for i in range(order+1)]
         formula = "+".join([f'TMath::Log(x)**{i}*[{i}]' for i in range(order+1)])
         formula = f"2.71828**({formula})"
 
@@ -516,9 +624,33 @@ class LogPolyFit(ROOTFitBase):
 
         for i in range(order + 1):
             if i in fix_coeffs_to_guess:
-                self.__tf1__.FixParameter(i, coeffs[i])
+                self.__tf1__.FixParameter(i, self.__tf1__.GetParameter(i))
             else:
-                self.__tf1__.SetParameter(i, coeffs[i])
+                self.__tf1__.SetParameter(i, self.__tf1__.GetParameter(i))
         self.__ROOT_fit_result__ = self.tgraph.Fit('log_fit', 'S')
-        self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
+        # self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
 
+    @property
+    def coeffs(self):
+        n_params = self.__tf1__.GetNpar()
+        return [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(n_params)]
+
+if __name__ == '__main__':
+    h = TH1F(-12, 12, 100)
+    for _ in range(10000):
+        h.Fill(np.random.randn()+4.5)
+        if np.random.uniform(0, 1)>0.1:
+            h.Fill(np.random.uniform(-12,12))
+    f = PeakFit(h, 4, )
+    _fuck_= f.eval_fit(f.x)
+    for i in range(f.__tf1__.GetNpar()):
+        print('before: ', f.__tf1__.GetParameter(i))
+    f.save_to_root_file('test')
+    ax = f.plot_fit()
+    o = f.load('test')
+
+    o.plot_fit(ax)
+    for x1, x2 in zip(f.eval_fit(f.x), o.eval_fit(o.x)):
+        print(x1, x2)
+    plt.show()
+    # print('woooo!', o.x)

@@ -545,26 +545,26 @@ def pickle_fission_product_yields():
             Path.mkdir(_dir)
 
     # Add here for fiss yield
-    helpers = [Helper(neutron_fission_yield_data_dir_endf,
-                      neutron_yield_marshal_path_endf,
-                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*')]
-    # helpers = [Helper(neutron_fission_yield_data_dir_gef,
-    #                   neutron_yield_marshal_path_gef,
-    #                   'GEFY_([0-9]+)_([0-9]+)_n.dat'),
-    #            Helper(neutron_fission_yield_data_dir_endf,
+    # helpers = [Helper(neutron_fission_yield_data_dir_endf,
     #                   neutron_yield_marshal_path_endf,
-    #                   'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
-    #            Helper(sf_yield_data_dir,
-    #                   sf_yield_marshal_path_gef,
-    #                   'GEFY_([0-9]+)_([0-9]+)_s.dat'),
-    #            Helper(proton_fiss_yield_data_dir_ukfy,
-    #                   proton_yield_marshal_path_ukfy,
-    #                   lambda x: x),
-    #            Helper(gamma_fiss_yield_data_dir_ukfy,
-    #                   gamma_yield_marshal_path_ukfy,
-    #                   lambda x: x)
-    #            ]
-
+    #                   'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*')]
+    helpers = [Helper(neutron_fission_yield_data_dir_gef,
+                      neutron_yield_marshal_path_gef,
+                      'GEFY_([0-9]+)_([0-9]+)_n.dat'),
+               Helper(neutron_fission_yield_data_dir_endf,
+                      neutron_yield_marshal_path_endf,
+                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
+               Helper(sf_yield_data_dir,
+                      sf_yield_marshal_path_gef,
+                      'GEFY_([0-9]+)_([0-9]+)_s.dat'),
+               Helper(proton_fiss_yield_data_dir_ukfy,
+                      proton_yield_marshal_path_ukfy,
+                      lambda x: x),
+               Helper(gamma_fiss_yield_data_dir_ukfy,
+                      gamma_yield_marshal_path_ukfy,
+                      lambda x: x)
+               ]
+    #
     for helper in helpers:
         for x in helper.get_valid():
             f_path = x['f_path']

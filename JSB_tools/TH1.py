@@ -154,7 +154,7 @@ class TH1F:
         if ROOT_hist is not None:
             self.__ROOT_hist__ = ROOT_hist
             self.__bin_left_edges__ = np.array(
-                [ROOT_hist.GetBinLowEdge(i) for i in range(1, ROOT_hist.GetNbinsX() + 2)], dtype=np.float)
+                [ROOT_hist.GetBinLowEdge(i) for i in range(1, ROOT_hist.GetNbinsX() + 2)], dtype=float)
             self.title = ROOT_hist.GetName()
             self.n_bins = len(self.__bin_left_edges__) - 1
         else:
@@ -166,11 +166,11 @@ class TH1F:
                 if bin_width is None:
                     assert nbins is not None, arg_error_msg
                     assert isinstance(nbins, int), '`nbins` arg must be an integer'
-                    self.__bin_left_edges__ = np.linspace(min_bin, max_bin, nbins + 1, dtype=np.float)
+                    self.__bin_left_edges__ = np.linspace(min_bin, max_bin, nbins + 1, dtype=float)
                 else:
                     assert nbins is None, arg_error_msg
                     assert isinstance(bin_width, Number), '`bin_width` arg must be a number'
-                    self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=np.float)
+                    self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=float)
             else:
                 assert len(bin_left_edges) >= 2, "`bin_left_edges` argument must be iterable of length greater than 1"
                 assert all([isinstance(x, Number) for x in bin_left_edges]), f'All values of `bin_left_edges` must be a'\
@@ -181,7 +181,7 @@ class TH1F:
                                                                                        ' No other bin specification '\
                                                                                        'arguments allowed in this case.'
 
-                self.__bin_left_edges__ = np.array(bin_left_edges, dtype=np.float)
+                self.__bin_left_edges__ = np.array(bin_left_edges, dtype=float)
 
             if title is None:
                 title = "hist{0}".format(TH1F.title_number)
@@ -428,9 +428,13 @@ class TH1F:
         if xmax is None:
             xmax = self.__bin_left_edges__[-1]
         s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_centers))
+        try:
+            ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
+                        yerr=self.bin_std_devs[s],  ds="steps-mid", label=leg_label, **kwargs)
+        except AttributeError as e:
+            warn('AttributeError on plt.errorbar. Could be due to bug in matplotlib. Try different mpl version.')
+            raise e
 
-        ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
-                    yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
         if show_stats:
             text = self.get_stats_text()
             text = '\n'.join(text)
@@ -1016,7 +1020,11 @@ def ttree_and(expressions):
 
 if __name__ == "__main__":
     import time
-    #
-    while True:
-        ROOT.gSystem.ProcessEvents()
-        time.sleep(0.05)
+    h = TH1F(0,1,10)
+    h.plot()
+    # plt.show()
+    plt.errorbar([1], [2], [2], ds='steps-mid')
+    plt.show()
+    # while True:
+    #     ROOT.gSystem.ProcessEvents()
+    #     time.sleep(0.05)
