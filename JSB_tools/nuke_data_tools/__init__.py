@@ -240,6 +240,7 @@ class RawFissionYieldData:
     instances: Dict[Path, RawFissionYieldData] = {}
 
     def __new__(cls, *args, **kwargs):
+        """For cashed class instances."""
         _dir = RawFissionYieldData.__get_dir(*args, **kwargs)
         if _dir in RawFissionYieldData.instances:
             return RawFissionYieldData.instances[_dir]
@@ -262,15 +263,16 @@ class RawFissionYieldData:
         return _dir
 
     def __init__(self, inducing_particle, library, independent_bool: bool, nuclide_name):
-        _dir = self.__get_dir(inducing_particle, library, independent_bool, nuclide_name)
-        self.__file = open(_dir, 'rb')
-        self.ergs = marshal.load(self.__file)
-        RawFissionYieldData.instances[_dir] = self
+        self.file_path = self.__get_dir(inducing_particle, library, independent_bool, nuclide_name)
+        # define this here so that the whole file isn't loaded in the event that only energies are needed.
+        self.file = open(self.file_path, 'rb')
+        self.ergs = marshal.load(self.file)
+        RawFissionYieldData.instances[self.file_path] = self
 
     @cached_property
     def data(self) -> Dict:
-        out = marshal.load(self.__file)
-        del self.__file
+        out = marshal.load(self.file)
+        del self.file
         return out
 
 
@@ -288,6 +290,10 @@ class FissionYields:
     """
     FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': ['ukfy', None],
                              'sf': ['gef'], 'alpha': [None], 'electron': [], }
+
+    @property
+    def file_path(self):
+        return self.__data.file_path
 
     @staticmethod
     def particle_energy_convert(nuclide_name: str, ergs, from_par, to_par) -> Tuple[np.ndarray, str]:
@@ -430,24 +436,24 @@ class FissionYields:
                                            f"Your options are:\n{list(yield_dirs.keys())}"
         self.energies = energies
         if not hasattr(self.energies, '__iter__'):
-            assert self.energies is None or isinstance(self.energies, Number), "Invalid `energies` argument."
-            self.energies = [self.energies]
-
-        if library is not None:
-            self.library = library
-            assert library in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par], \
-                f"Library '{library}' for {self.inducing_par}-induced fission doesn't exist!"
-            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, library, self.independent_bool,
+            if self.energies is not None:
+                assert isinstance(self.energies, Number), "Invalid `energies` argument."
+                self.energies = [self.energies]
+        self.library = library
+        if self.library is not None:
+            assert self.library in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par], \
+                f"Library '{self.library}' for {self.inducing_par}-induced fission doesn't exist!"
+            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, self.library, self.independent_bool,
                                                                    self.target)
         else:
             self.__data: RawFissionYieldData = self.__find_best_library__()  # sets self.library if data is found
             if self.library is None:  # data wasn't found
-
                 raise FileNotFoundError(
                     f"No fission yield file for {self.inducing_par}-induced fission on {target}.")
         self.data_ergs = self.__data.ergs
         if self.energies is None:
             self.energies = self.data_ergs
+
         self.energies = np.array(self.energies)
 
         if self.__score(self.energies, self.data_ergs) != 1:
@@ -494,9 +500,19 @@ class FissionYields:
         a_dict = {k: a_dict[k] for k in mass_nums}
         return a_dict
 
-    def plot_A(self, weights=None):
+    def plot_A(self, weights=None, at_energy=None):
+        title = f'Fragment mass distribution of {self.inducing_par}-induced fission of {self.target}'
+        if self.__is_weighted or weights is not None:
+            title += ' (weighted)'
         if weights is None:
-            weights = np.ones_like(self.energies)
+            if at_energy is not None:
+                weights = np.zeros(len(self.energies))
+                i = np.abs(at_energy - self.energies).argmin()
+                weights[i] = 1
+                title += f'\n {self.inducing_par} energy = {at_energy} MeV'
+            else:
+                weights = np.ones_like(self.energies)
+
         x = []
         y = []
         y_err = []
@@ -511,10 +527,8 @@ class FissionYields:
             y_err.append(_y.std_dev)
 
         plt.figure()
-        title = f'Mass distribution of {self.inducing_par}-induced fission of {self.target}'
 
-        if self.__is_weighted:
-            title += ' (weighted)'
+
         plt.title(title)
         plt.xlabel('A')
         plt.ylabel('Yield per fission')
@@ -1595,7 +1609,7 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    from GlobalValues import get_proton_erg_prob_1
+    # from GlobalValues import get_proton_erg_prob_1
     # x = np.arange(10)
     # # y = unp.uarray(x, x)
     # # np.interp(np.linspace(0,10,100), x, y)
@@ -1603,10 +1617,10 @@ if __name__ == "__main__":
     ergs = np.linspace(1, 70, 70)
 
 
-    f = FissionYields('U238', 'SF',  None, None,  True)
-    print(f.yields)
-    f.plot_A()
-    old_x = f.yields['Xe139']
+    f = FissionYields('U238', 'proton',  None, None,  True)
+    print(f.library, f.file_path)
+    f.plot_A(at_energy=140)
+    # f.plot()
     # w = f.weight_by_fission_xs()
     # w *= get_proton_erg_prob_1(ergs, normalize=True)
     # f.weight_by_erg(get_proton_erg_prob_1(ergs, normalize=True))
