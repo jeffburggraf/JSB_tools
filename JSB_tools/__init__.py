@@ -28,8 +28,8 @@ from matplotlib import pyplot as plt
 from JSB_tools.TH1 import TH1F
 from lmfit.models import GaussianModel
 
-data_path = cwd/'mics_saved_data'
-fit_data_path = data_path/"ROOT_fits"
+data_path = cwd/'user_saved_data'
+fit_data_path = data_path/"fits"
 if not fit_data_path.exists():
     Path.mkdir(fit_data_path, parents=True, exist_ok=True)
 # if not

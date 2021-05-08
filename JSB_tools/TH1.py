@@ -96,7 +96,6 @@ def rolling_MAD(window_width, values):
     if not isinstance(values, np.ndarray):
         values = np.array(values)
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
-    print(list(window_indicies))
     out = np.array([np.median(np.abs(values[idx] - np.median(values[idx]))) for idx in window_indicies],
                    dtype=np.ndarray)
 
