@@ -16,16 +16,25 @@ from scipy.interpolate import interp1d
 from JSB_tools.TH1 import rolling_MAD, rolling_median
 from abc import abstractmethod, ABCMeta
 from lmfit.model import ModelResult
+from lmfit.models import PolynomialModel
+from lmfit import Parameters, fit_report
+from uncertainties.umath import log as ulog
+from scipy.odr import Model as ODRModel
+from scipy.odr import RealData,ODR, polynomial, Output
+from scipy.odr.models import _poly_fcn
 
 
 class FitBase(metaclass=ABCMeta):
-    # def __new__(cls, *args, **kwargs):
+    @property
+    def params(self):
+        if hasattr(self, '__params__'):
+            return self.__params__
+        return self.fit_result.params
 
     def __init__(self, x, y, yerr):
         assert hasattr(x, '__iter__')
         assert hasattr(y, '__iter__')
         assert len(x) == len(y)
-
         if any([isinstance(i, UFloat) for i in y]):
             assert yerr is None, "y values are UFloats, so `yerr` must not be supplied as an arg!"
             yerr = unp.std_devs(y)
@@ -69,7 +78,6 @@ class FitBase(metaclass=ABCMeta):
         else:
             out.yerr = np.zeros_like(out.x)
         out.y = out.fit_result.data
-        out.params = out.fit_result.params
         out.set_params()
         return out
 
@@ -77,56 +85,91 @@ class FitBase(metaclass=ABCMeta):
         for k, v in self.params.items():
             setattr(self, k, ufloat(float(v), v.stderr))
 
-    @property
-    def fit_y_err(self):
-        return self.fit_result.eval_uncertainty()
-
-    @property
-    def fit_y(self):
-        return self.fit_result.eval()
-
-    def eval_func(self, x=None):
-        if x is None:
-            return unp.uarray(self.fit_y, self.fit_y_err)
+    def eval_fit_error(self, x=None, params=None):
+        args = {}
+        if params is not None:
+            args['params'] = params
         else:
-            y = interp1d(self.x, self.fit_y, kind='quadratic', bounds_error=False)(x)
-            yerr = interp1d(self.x, self.fit_y_err, kind='quadratic', bounds_error=False)(x)
-            # y = np.interp(x, self.x, self.fit_y)
-            # yerr = np.interp(x, self.x, self.fit_y_err)
-            return unp.uarray(y, yerr)
+            args['params'] = self.params
+        if x is not None:
+            args['x'] = x
+        return self.fit_result.eval_uncertainty(**args)
 
-    def plot_fit(self, ax=None, fit_x=None):
+    def eval_fit_nominal(self, x=None, params=None):
+        args = {}
+        if params is not None:
+            args['params'] = params
+        else:
+            args['params'] = self.params
+        if x is not None:
+            args['x'] = x
+        return self.fit_result.eval(**args)
+
+    def eval_fit(self, x=None, params=None):
+        return unp.uarray(self.eval_fit_nominal(x=x, params=params), self.eval_fit_error(x=x, params=params))
+        # if x is None:
+        #     return unp.uarray(self.fit_y, self.fit_y_err)
+        # else:
+        #     y = interp1d(self.x, self.fit_y, kind='quadratic', bounds_error=False)(x)
+        #     yerr = interp1d(self.x, self.fit_y_err, kind='quadratic', bounds_error=False)(x)
+        #     # y = np.interp(x, self.x, self.fit_y)
+        #     # yerr = np.interp(x, self.x, self.fit_y_err)
+        #     return unp.uarray(y, yerr)
+
+    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, xlabel=None, ylabel=None):
         if ax is None:
             plt.figure()
             ax = plt.gca()
-        points_line = ax.errorbar(self.x, self.y, self.yerr, label='data', ls='None', marker='o')
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+
+        points_line = ax.errorbar(self.x, self.y, self.yerr, label='Data', ls='None', marker='o')
         if fit_x is None:
             fit_x = np.linspace(self.x[0], self.x[-1], len(self.x)*4)
-        fit_y = self.eval_func(fit_x)
+        fit_y = self.eval_fit(x=fit_x, params=params)
         fit_err = unp.std_devs(fit_y)
         fit_y = unp.nominal_values(fit_y)
         fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--')[0]
         fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit')
-        print(points_line)
         ax.legend([points_line, (fill_poly, fit_line)], ["data", "Fit"])
         return ax
 
     def __repr__(self):
-        self.params.pretty_print()
-        return ""
+        return fit_report(self.fit_result, min_correl=0.5)
+        # self.params.pretty_print()
+        # return ""
 
 
-def get_cut_select(x, min_, max_):
-    return np.where((x >= min_) & (x <= max_))
+class PolyFit(FitBase):
+    @staticmethod
+    def model_func(x, params):
+        return PolynomialModel().eval(x=x, params=params)
+
+    def __init__(self, x, y, yerr=None, order=1):
+        super().__init__(x, y, yerr)
+        model = PolynomialModel(degree=order)
+        params = model.guess(data=self.y, x=self.x, weights=self.__weights__)
+        self.fit_result = model.fit(x=x, data=self.y, params=params, weights=self.__weights__, scale_covar=False)
+        self.coeffs = [ufloat(float(p), p.stderr) for p in self.params.values()]
+
+
+class LinearFit(PolyFit):
+    def __init__(self, x, y, yerr=None):
+        super().__init__(x, y, yerr, order=1)
 
 
 class PeakFit(FitBase):
+    def get_cut_select(x, min_, max_):
+        return np.where((x >= min_) & (x <= max_))
+
     @classmethod
-    def from_hist(cls, hist: TH1F, peak_center_guess, sigma_guess=None, window=None):
+    def from_hist(cls, hist: TH1F, peak_center_guess, window_width=None):
         if not hist.is_density:
             warnings.warn('Histogram supplied to PeakFit is may not be a density. Divide by bin values to correct.')
         return cls(peak_center_guess=peak_center_guess, x=hist.bin_centers, y=hist.nominal_bin_values,
-                   yerr=hist.bin_std_devs, sigma_guess=sigma_guess, window=window)
+                   yerr=hist.bin_std_devs, window_width=window_width)
 
     @staticmethod
     def gen_fake_data(center=0, n_counts=10000, bg_const=10, bg_linear=5, sigma=1, xrange=(-15, 15), nbins=100):
@@ -152,7 +195,7 @@ class PeakFit(FitBase):
         Returns:
 
         """
-        s = get_cut_select(self.x, min_, max_)
+        s = PeakFit.get_cut_select(self.x, min_, max_)
 
         self.x = self.x[s]
         self.y = self.y[s]
@@ -188,7 +231,7 @@ class PeakFit(FitBase):
         self.__cut__(peak_center_guess - window_width, peak_center_guess + window_width)
         bg_guess = np.mean(self.bg_est)
         bg_subtracted = self.y - self.bg_est
-        plt.plot(self.x, bg_subtracted, label='bg sub')
+        # plt.plot(self.x, bg_subtracted, label='bg sub')
         guess_model = GaussianModel()
         params = guess_model.guess(data=self.y, x=self.x)  # guess parameters by fitting simple gaussian
         guess_model.fit(x=self.x, data=bg_subtracted, params=params, weights=self.__weights__)
@@ -199,7 +242,7 @@ class PeakFit(FitBase):
 
         model = Model(self.model_func)
         self.fit_result = model.fit(x=self.x, data=self.y, params=params,  weights=self.__weights__, scale_covar=False)
-        self.params = self.fit_result.params
+        # self.params = self.fit_result.params
         self.amp: UFloat = None  # are set later
         self.center: UFloat = None
         self.sigma: UFloat = None
@@ -208,16 +251,236 @@ class PeakFit(FitBase):
         self.set_params()
 
 
+class LogPolyFit(FitBase):
+    """
+    A fit of the form:
+        e^(c0 + c1 log(x) + c2 log(x)^2 + ... + cn log(x)^n)
 
-x, y = PeakFit.gen_fake_data(0, 1000, 10,30, xrange=[-50,50], nbins=156)
-y += PeakFit.gen_fake_data(23, 200, xrange=[-50, 50], nbins=156)[1]
-y += np.random.randint(0, 20,size= len(y))
-# plt.plot(x, y)
-p = PeakFit(23, x, y, yerr=np.sqrt(y))
+    This model is good for fitting efficiency curves from HPGe detectors.
+    Errors in model are not calculated from Jacobian matrix, as this leads to gross over-estimation.
+    Instead, the model errors are interpolated from the data errors.
+    Thus you should only use this when the goal is a simple fit to the data that behaves well
+     asymptotically rather than hypothesis testing. i.e., don't expect the coefficients to have "physical meaning".
+    """
+    @staticmethod
+    def model_func(x, **params):
+        out = np.zeros(len(x), dtype=np.float)
+        for power, (_, coeff) in enumerate(params.items()):
+            out += coeff*np.log(x)**power
+        out = np.e**out
+        return out
 
-p.save('test')
+    def __init__(self, x, y, yerr=None, order=3, fix_highest_coeff=False):
+        """
+        Log poly fit.
+        Args:
+            x: array
+            y: array or unp.uarray
+            yerr: array or unp.uarray
+            order: Order of polynomial
+            fix_highest_coeff: Sometimes it is helpful to fix the largest coeff to the value determined from the initial
+                fit (i.e. the guess) in Log-Log space (i.e. when the fit is linear).
+                This can help reduce issues during the final non-linear fit.
+                first.
 
-p: PeakFit = p.load('test')
-p.plot_fit()
+        """
+        super().__init__(x, y, yerr)
+        assert all([_ > 0 for _ in self.y]),  "All 'y' values must be greater than zero due to the log function!"
+        assert all([_ > 0 for _ in self.x]),  "All 'x' values must be greater than zero due to the log function!"
+        _y = unp.uarray(self.y, self.yerr)
 
-plt.show()
+        log_y = [ulog(ufloat(_, _err)) for _, _err in zip(self.y, self.yerr)]
+        log_y_error = np.array([_.std_dev for _ in log_y])
+        log_y_error = np.where(log_y_error > 0, log_y_error, 1)
+        log_y = np.array([_.n for _ in log_y])
+        log_x = np.log(self.x)
+
+        model_temp = PolynomialModel(degree=order)
+        params = model_temp.guess(log_y, x=log_x, weights=1.0/log_y_error)
+        model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
+
+        if fix_highest_coeff:
+            params[f'c{order}'].vary = False
+        model = Model(self.model_func)
+        self.fit_result = model.fit(self.y, params=params, x=self.x, weights=self.__weights__, scale_covar=True,
+                                    verbose=True)
+
+        self.coefs = [ufloat(float(p), p.stderr) for p in self.params.values()]
+
+    def eval_fit_error(self, x=None, params=None):
+        if x is None:
+            x = self.x
+        assert params is None, "params not supported here."
+        return interp1d(self.x, self.yerr, bounds_error=False, fill_value=(self.yerr[0], self.yerr[-1]))(x)
+
+    def eval_fit_nominal(self, x=None, params=None):
+        if params is None:
+            params = self.params
+        if x is None:
+            x = self.x
+        return self.model_func(x, **params)
+
+
+class ODRBase(metaclass=ABCMeta):
+    def __init__(self, x, y, xerr, yerr):
+        if any(isinstance(xi, UFloat) for xi in x):
+            xerr = np.array([xi.std_dev if isinstance(xi, UFloat) else 0 for xi in x])
+            x = np.array([xi.n if isinstance(xi, UFloat) else xi for xi in x])
+        if any(isinstance(yi, UFloat) for yi in y):
+            yerr = np.array([yi.std_dev if isinstance(yi, UFloat) else 0 for yi in y])
+            y = np.array([yi.n if isinstance(yi, UFloat) else yi for yi in y])
+        args = {}
+        if yerr is not None:
+            assert not any([isinstance(_, UFloat) for _ in yerr]), "Ufloats in yerr"
+            args["sy"] = yerr
+        else:
+            yerr = np.zeros_like(x)
+        if xerr is not None:
+            assert not any([isinstance(_, UFloat) for _ in xerr]), "Ufloats in xerr"
+            args["sx"] = xerr
+        else:
+            xerr = np.zeros_like(x)
+
+        self.x = x
+        self.y = y
+        self.yerr = yerr
+        self.xerr = xerr
+
+        self.data = RealData(self.x, self.y, **args)
+
+    @property
+    def __beta__(self):
+        """Represents the coeffs"""
+        return unp.uarray(self.fit_result.beta, self.fit_result.sd_beta)
+
+    @property
+    def fit_result(self) -> Output:
+        if hasattr(self, '__odr__'):
+            return self.__odr__.output
+        else:
+            assert hasattr(self, '__fit_result__'), "Invalid subclass, missing __odr__ attribute"
+            return self.__fit_result__
+
+    def eval_fit(self, x=None, params=None):
+        if x is None:
+            x = self.x
+        if params is None:
+            params = self.__beta__
+        return self.model_func(params, x)
+
+    @property
+    def odr_obj(self):
+        #  __odr__
+        # make so this can only be gotten once?
+        pass
+
+    @odr_obj.setter
+    def odr_obj(self, value):
+        # Make it so this can only be set once?
+        pass
+
+    @abstractmethod
+    def model_func(self, b, x):
+        pass
+
+    def save(self, fname, extra__=None):
+        fname = (fname + "_ODR"+'.lmfit')
+        path = Path(__file__).parent/"user_saved_data"/'fits'/fname
+        if path.exists():
+            warnings.warn(f"Fit named '{fname} already exists!. Overwriting.")
+        with open(path, 'wb') as f:
+            pickle.dump(self.fit_result, f)
+            pickle.dump((self.x, self.y, self.xerr, self.yerr), f)
+            if extra__ is not None:
+                pickle.dump(extra__, f)
+
+    @classmethod
+    def load(cls, fname):
+        fname = (fname + "_ODR" + '.lmfit')
+        path = Path(__file__).parent / "user_saved_data" / 'fits' / fname
+        out = PolyFitODR.__new__(cls)
+        if not path.exists():
+            raise FileNotFoundError(f"No fit named {fname}")
+        with open(path, 'rb') as f:
+            out.__fit_result__ = pickle.load(f)
+            out.x, out.y, out.xerr, out.yerr = pickle.load(f)
+            try:
+                extra_attribs = pickle.load(f)
+            except EOFError:
+                extra_attribs = {}
+            for k, value in extra_attribs.items():
+                setattr(out, k, value)
+
+        return out
+
+    def plot_fit(self, x=None, ax=None, xlabel=None, ylabel=None, mpl_args=None):
+        # if ax is None:
+        #     plt.figure()
+        #     ax = plt.gca()
+        # if mpl_args is None:
+        #     mpl_args = {}
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+
+        points_line = ax.errorbar(self.x, self.y, xerr=self.xerr, yerr=self.yerr, label="Data", ls='None', marker='o')
+        if x is None:
+            x = np.linspace(self.x[0], self.x[-1], len(self.x)*4)
+            # x = interp1d(self.x, self.y)(_x_new)
+        print(self.x)
+        print(x)
+        y_fit = self.eval_fit(x=x)
+        y_fit_err = unp.std_devs(y_fit)
+        y_fit = unp.nominal_values(y_fit)
+        fit_line = ax.plot(x, y_fit, label="Fit")[0]
+        fill_poly = ax.fill_between(x, y_fit-y_fit_err, y_fit+y_fit_err, alpha=0.7, label='Fit')
+        ax.legend([points_line, (fill_poly, fit_line)], ["data", "Fit"])
+
+        return ax
+
+
+class PolyFitODR(ODRBase):
+    def __init__(self, x, y, xerr=None, yerr=None, order=2):
+        super().__init__(x, y, xerr, yerr)
+        self.__odr__ = ODR(self.data, polynomial(order))
+        self.__odr__.run()
+        self._powers = np.asarray(order)
+
+    def save(self, fname):
+        super(PolyFitODR, self).save(fname=fname, extra__={"_powers": self._powers})
+
+    @property
+    def coeffs(self):
+        return self.__beta__
+
+    def model_func(self, b, x):
+        return _poly_fcn(b, x, self._powers)
+
+    def __repr__(self):
+        self.fit_result.pprint()
+        return ""
+
+
+if __name__ == '__main__':
+    x = unp.uarray([1,2,3], [3,3,3])
+    x_true = np.linspace(0, 1, 100)
+    y_true = 3+6*x_true
+    err_percent = 0.1
+    x = x_true + np.random.randn(100)*err_percent
+    y = y_true + np.random.randn(100)*err_percent
+    y_err = [err_percent]*100
+    x_err = [err_percent]*100
+
+    f2 = PolyFit(x, y, y_err)
+    f2.plot_fit()
+    f = PolyFitODR(x, y, xerr=x_err, yerr=y_err, order=1)
+    f.save("delete")
+
+    f = PolyFitODR.load('delete')
+
+    f.plot_fit()
+    plt.show()

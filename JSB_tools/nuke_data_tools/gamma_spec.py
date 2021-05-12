@@ -19,7 +19,8 @@ from typing import List, Dict, Callable, Any, Optional
 import warnings
 import uncertainties.unumpy as unp
 from uncertainties import ufloat, UFloat
-from JSB_tools import PolyFit, PeakFit, LogPolyFit, ROOTFitBase
+# from JSB_tools import PolyFit, LogPolyFit, ROOTFitBase
+from JSB_tools.regression import PeakFit, LogPolyFit, PolyFit, PolyFitODR
 import re
 from scipy.signal import find_peaks, peak_widths
 data_dir = DECAY_PICKLE_DIR/'__fast__gamma_dict__.marshal'
@@ -183,7 +184,7 @@ class PrepareGammaSpec:
         self.calibration_points: List[PrepareGammaSpec.CalibrationPeak] = []  # Calibration points.
 
         self.erg_fit: PolyFit = None
-        self.eff_fit: ROOTFitBase = None
+        self.eff_fit: LogPolyFit = None
         self.fwhm_coeffs = None
         self.eff_fit_method: str = None
         self.__channel_bins__ = np.arange(n_channels+1) - 0.5  # for use in specifying histogram with bin centers
@@ -211,22 +212,23 @@ class PrepareGammaSpec:
             self.count_array = unp.uarray(counts_array, np.sqrt(counts_array))
             self.channel_hist = TH1F(bin_left_edges=gamma_spec.__channel_bins__)
             self.channel_hist += self.count_array
-            self.channel_hist = self.channel_hist.remove_bins_outside_range(channel_guess - 2*window_width,
-                                                                            channel_guess+2*window_width)
+            # self.channel_hist = self.channel_hist.remove_bins_outside_range(channel_guess - 2*window_width,
+            #                                                                 channel_guess+2*window_width)
             self.channel_hist /= self.channel_hist.bin_widths
-            self.fit = PeakFit(self.channel_hist, center_guess=channel_guess,
-                               min_x=channel_guess - window_width/2,
-                               max_x=channel_guess+window_width/2)
+            self.fit = PeakFit(peak_center_guess=channel_guess, x=self.channel_hist.bin_centers, y=counts_array,
+                               yerr=np.sqrt(counts_array),
+                               window_width=window_width)
             self.true_counts = true_counts
             self.energy = energy
 
         def plot(self):
-            ax = self.fit.plot_fit(x_label="Channel", y_label="counts")
+            ax = self.fit.plot_fit(xlabel="Channel", ylabel="counts (raw)")
             t = f'Gamma energy: {self.energy}, n_counts: {self.fit.amp: .2e}\n' \
                 f'peak FWHM (chs): {self.fit.fwhm}'
 
             if self.true_counts is not None:
-                t += f'efficiency: \n {self.fit.amp/self.true_counts:.2f}'
+                plt.subplots_adjust(top=0.81)
+                t += f'\nefficiency: \n {self.fit.amp/self.true_counts:.2f}'
             ax.set_title(t)
 
     def add_peaks_4_calibration(self, counts_array: Collection,
@@ -260,37 +262,42 @@ class PrepareGammaSpec:
             if plot:
                 z.plot()
 
-    def compute_calibration(self, efficiency_order=3, fit_n_largest_coeffs=1, eff_fit_method="LogPolyFit"):
+    def compute_calibration(self, efficiency_order=3, fit_last_eff_coeff=False, erg_order=1):
         """
 
         Args:
             efficiency_order: Order of the efficiency fit.
-            fit_n_largest_coeffs: Fix the largest efficiency fit coefficients to the initial guess. See LogPolyFit docs
-            eff_fit_method: Fit function to use
+            fit_last_eff_coeff: Fix the largest efficiency fit coefficients to the initial guess. See LogPolyFit docs
+            erg_order: Order of energy calibration.
 
         Returns:
 
         """
-        peak_centers = []
+        channel_peak_centers = []  # center of peaks (the channel!)
         energies = []
         _eff_energies = []  # enrgies only of those peaks for which efficiency calibration will be perfomred
         efficiencies = []
         for p in self.calibration_points:
-
-            peak_centers.append(ufloat(p.fit.center.n, p.fit.sigma.n))
+            _peak_center = ufloat(p.fit.center.n, p.fit.sigma.n/np.sqrt(p.fit.amp.n))
+            channel_peak_centers.append(_peak_center)
             energies.append(p.energy)
             if p.true_counts is not None:
                 eff = p.fit.amp/p.true_counts
                 _eff_energies.append(p.energy)
                 efficiencies.append(eff)
         energies = np.array(energies)
+        channel_peak_centers = np.array(channel_peak_centers)
+        srt = np.argsort(channel_peak_centers)
+        energies = energies[srt]
+        channel_peak_centers = channel_peak_centers[srt]
+
         if not any(np.isclose(energies, 1460.83, atol=1)):
             warnings.warn("Don't forget to use the (very common) K-40 line at 1460.83 KeV. ")
         if 511 not in energies:
             warnings.warn("Don't forget to use the (very common) 511 KeV annihilation line")
-        #
-        self.erg_fit = PolyFit(peak_centers, energies)
-        self.erg_fit.plot_fit(x_label='Channels', y_label='Energies [Kev]')
+        self.erg_fit = PolyFitODR(x=channel_peak_centers, y=energies, order=erg_order)
+        ax = self.erg_fit.plot_fit(xlabel='Channels', ylabel='Energies [Kev]')
+        ax.set_title("Energy Calibration Result")
         self.erg_bin_centers = unp.nominal_values(self.erg_fit.eval_fit(np.arange(self.n_channels)))
         self.erg_bins = unp.nominal_values(self.erg_fit.eval_fit(self.__channel_bins__))
         plt.figure()
@@ -299,23 +306,17 @@ class PrepareGammaSpec:
         plt.plot(_x, 2.34*unp.std_devs(self.erg_fit.eval_fit(_x)), label='Err')
         plt.legend()
         plt.plot(_x, 2.34*(self.erg_fit.coeffs[0].std_dev + _x*self.erg_fit.coeffs[1].std_dev))
+        plt.show()
 
-        assert eff_fit_method in ['LogPolyFit']  # add more here if needed
-        self.eff_fit_method = eff_fit_method
         if len(efficiencies):
             efficiencies = [ufloat(1E-10, 0)] + list(efficiencies)
             _eff_energies = [1E-10] + list(_eff_energies)
             assert efficiency_order <= len(efficiencies), "Lower efficiency order. Not enough points."
-            if eff_fit_method == 'LogPolyFit':
-                self.eff_fit = LogPolyFit(_eff_energies, efficiencies, order=efficiency_order,
-                                          fix_coeffs_to_guess=np.arange(efficiency_order,
-                                                                        efficiency_order - fit_n_largest_coeffs,
-                                                                        -1, dtype=int))
-            elif False:  # add more fit methods here
-                pass
-            else:
-                assert False
-            self.eff_fit.plot_fit(x=self.erg_bin_centers, x_label='Energy [KeV]', y_label='Efficiency')
+
+            self.eff_fit = LogPolyFit(_eff_energies, efficiencies, order=efficiency_order,
+                                      fix_highest_coeff=fit_last_eff_coeff)
+
+            self.eff_fit.plot_fit(fit_x=self.erg_bin_centers, xlabel='Energy [KeV]', ylabel='Efficiency')
         else:
             warnings.warn("No points for efficiency calibration.")
 
@@ -329,9 +330,8 @@ class PrepareGammaSpec:
             _effs = self.eff_fit.eval_fit(hist.bin_centers)
             _effs = np.where(unp.nominal_values(_effs) != 0, _effs, unp.uarray(np.ones(len(_effs)), np.zeros_like(len(_effs))))
             hist /= _effs
-        #
+        hist.SetTitle("Erg vs (raw) counts")
         ax = hist.plot(xmax=max_erg, xmin=min_erg)
-        # ax = hist.plot()
 
         def ch_2_erg(chs):
             return np.interp(chs, np.arange(self.n_channels), self.erg_bin_centers)
@@ -339,12 +339,13 @@ class PrepareGammaSpec:
         def erg_2_ch(ergs):
             return np.interp(ergs, self.erg_bin_centers, np.arange(self.n_channels))
         ax.secondary_xaxis('top', functions=(erg_2_ch, ch_2_erg)).set_xlabel("channel")
-        ax.set_xlabel("energy [KeV]")
+        ax.set_xlabel("Energy [KeV]")
+        ax.set_ylabel("Counts")
 
         return ax
 
     def save_calibration(self):
-        self.pa
+        pass
 
 
 class ROOTSpectrum:
@@ -419,17 +420,25 @@ if __name__ == '__main__':
                         # a = np.array([int(s.split()[0]) for s in data_lines])
                         # print(a.shape)
 
+    def erg_2_channel(erg):
+        return (erg-0.119)/0.556999
+
+    def channel_2_erg(ch):
+        return ch*0.556999 + 0.119
+
+
     ch_2_erg = [(393.0, 218.6), (315, 175), (532, 296.5), (917.6, 511), (2623, 1460.83)]  # ch -> actual energy
-    ergs = np.array([59.9, 88.4, 122, 166, 392, 514, 661, 898, 1173, 1332, 1835])
-    effs = np.array([0.06, 0.1, 0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
-    print([i[0] for i in ch_2_erg])
-    print([i[1] for i in ch_2_erg])
+    ergs = np.array([59.9, 88.4, 122,   166,   392, 514, 661, 898, 1173, 1332, 1835])
+    effs = np.array([0.06, 0.1,  0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
     counts_true = 10000 * np.ones_like(effs)
     counts_measured = effs * counts_true
 
-    m = PrepareGammaSpec('test', len(counts))
+    m = PrepareGammaSpec(len(counts))
     _channels = [393.0, 315, 532, 917.6, 2623]
     _energies = [218.6, 175, 296.5, 511, 1460.83]
+    #  ============================  Add fake peaks =====================
+
+    #  ======================================================
     _true_counts = list(10000*np.interp(_energies, ergs, effs))
     _true_counts[_energies.index(511)] = None
     _true_counts[_energies.index(1460.83)] = None
