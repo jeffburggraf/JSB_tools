@@ -455,6 +455,7 @@ class InputDeck:
         if self.__has_called_write_inp_in_scope__:
             if self.is_mcnp:
                 with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
+                    print("Created 'Clean.py'. Run this script to remove PTRAC, OUTP, etc.")
                     import inspect
                     cmds = inspect.getsource(__clean__)
                     cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))

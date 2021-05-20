@@ -141,14 +141,6 @@ class TH1F:
     ROOT_histos = []
     __histo_pad_dict__ = {}
 
-    # @classmethod
-    # def points_to_bins(cls, points):
-    #     bin_edges = [0.5 * (points[i - 1] + points[i]) for i in range(1, len(points))]
-    #     w_0 = bin_edges[0] - points[0]
-    #     w_1 = points[-1] - bin_edges[-1]
-    #     bin_edges = [points[0] - w_0] + bin_edges + [points[-1] + w_1]
-    #     return cls(bin_left_edges=bin_edges)
-
     def __init__(self, min_bin=None, max_bin=None, nbins=None, bin_left_edges=None, bin_width=None, title=None, ROOT_hist=None):
         if ROOT_hist is not None:
             self.__ROOT_hist__ = ROOT_hist
@@ -403,7 +395,9 @@ class TH1F:
         return s
 
     def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
-             ylabel=None, show_stats=False, **kwargs):
+             ylabel=None, show_stats=False, title=None, **kwargs):
+        if title is not None:
+            self.SetTitle(title)
         if ax is None:
             _, ax = plt.subplots()
         else:

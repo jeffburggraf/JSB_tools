@@ -183,7 +183,6 @@ class RightCylinderSurface(Surface):
             surf_num:
             comment:
         """
-        assert not dx == dy == dz == 0, 'dx, dy, and dz cannot all be zero!'
         super(RightCylinderSurface, self).__init__(surface_number=surf_num, surface_name=surf_name,
                                                            surface_comment=comment)
         self.x0 = x0
@@ -228,6 +227,8 @@ class RightCylinderSurface(Surface):
 
     @property
     def surface_card(self):
+        assert not self.dx == self.dy == self.dz == 0, 'dx, dy, and dz cannot all be zero!'
+
         comment = get_comment(self.surface_comment, self.surface_name)
         out = f"{self.surface_number} RCC {self.x0:.{NDIGITS}g} {self.y0:.{NDIGITS}g} {self.z0:.{NDIGITS}g}" \
               f"  {self.dx:.{NDIGITS}g} {self.dy:.{NDIGITS}g} {self.dz:.{NDIGITS}g} {self.radius:.{NDIGITS}g}" \

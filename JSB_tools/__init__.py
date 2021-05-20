@@ -25,6 +25,28 @@ try:
 except ModuleNotFoundError:
     root_exists = False
 
+import sys
+import traceback
+
+
+class __TracePrints(object):
+
+    def __init__(self):
+        self.stdout = sys.stdout
+
+    def write(self, s):
+        self.stdout.write("Writing %r\n" % s)
+        traceback.print_stack(file=self.stdout)
+
+    def flush(self): pass
+
+
+def trace_prints():
+    """
+    When there is a pesky print statement somewhere, use this to find it.
+    """
+    sys.stdout = __TracePrints()
+
 
 class ProgressReport:
     def __init__(self, i_final, sec_per_print=2, i_init=0):
@@ -95,17 +117,56 @@ def ROOT_loop():
 
 
 class FileManager:
+    root_files:Dict[Path, ROOT.TFile] = {}
+
     def __init__(self, path_to_root_dir: Union[str, Path], recreate=False):
         """
+        Creates a human friendly link between file and a dictionary of descriptive attributes that make it easy to
+            access files created in a previous script.
+
+        Args:
+            path_to_root_dir: Path to the top directory.
+            recreate: If you are loading an existing FileManager, then this must be False, else it will override the
+                previous data.
+
+        Examples:
+            When a series of files (of any type) are created, they can be loaded later without the need to use a
+             regex to lookup the file. e.g. many files are created from a series of MCNP simulations for which the
+             energy and position of the particle source varies.
+
+                cwd = Path(__file__).parent  # top directory of the simulations.
+                f_man = FileManager(cwd, recreate=True)
+
+                for pos in positions:
+                    for energy in energies:
+
+                        input_deck_name = f"{pos}_{energy}"
+
+                         # The following will create a directory for the simulation where src energy=energy and source
+                         #  position=pos. The function returns the path of the created input deck
+                         #  (See JSB_tools.MCNP_helper.inputDeck)
+                         f_path = i.write_inp_in_scope(input_deck_name) # this
+                         outp_path = f_path.parent/'outp'  # this is the name of the outp file MCNP will create
+
+                         # Even though `outp_path` doesn't exists yet, I can make a quick lookup with using FileManager
+                         #  as follows:
+                         f_man.add_path(outp_path, src_energy=energy, source_pos=position)
+                # upon exiting the script, FileManager will save the association between the files and the key/values
+                # in a pickle file named __file_lookup__.pickle in the top directory specified by `path_to_root_dir` in
+                # the FileManager instantiation.
+
+                In another script, say, that analyses the outp files, one could do the following (almost identical to
+                the rotine for initially creating the FIleManeger.
+                cwd = Path(__file__).parent  # top directory of the simulations.
+                f_man = FileManager(cwd, recreate=False)  # NOTE THAT IS False
+
+
+
         todo: Make it so files in the current/any sub dir are valid. The 'root_dir' is just the dir that containes the
             __file_info__.pickle.
             Make  "__file_info__.pickle" a hidden file
             This is a good place to use doctests
 
-        Args:
-            path_to_root_dir:
-            recreate:
-        Examples:
 
 
         """
@@ -118,9 +179,10 @@ class FileManager:
             self.root_directory.mkdir()
         self.file_lookup_data: Dict[Path, dict] = {}
 
-        self.lookup_path = self.root_directory/"__file_lookup__.pickle"
+        # path to file that stores association information
+        self.__save_path = self.root_directory / "__file_lookup__.pickle"
         try:
-            with open(self.lookup_path, 'rb') as f:
+            with open(self.__save_path, 'rb') as f:
                 self.file_lookup_data = pickle.load(f)
         except FileNotFoundError:
             pass
@@ -128,20 +190,20 @@ class FileManager:
         if recreate:
             self.file_lookup_data = {}
 
-        for path in self.file_lookup_data.copy():
-            if not path.exists():
-                warnings.warn(f'\nFile, "{path}", was expected, but is missing.')
+        # for path in self.file_lookup_data.copy():
+        #     if not path.exists():
+        #         warnings.warn(f'\nLink found to non-existing file, "{path}".')
 
         register(self.__at_exit__)
 
     def __save_lookup_data__(self):
-        with open(self.lookup_path, 'wb') as f:
+        with open(self.__save_path, 'wb') as f:
             pickle.dump(self.file_lookup_data, f)
 
     def add_path(self, path, missing_ok=False, **lookup_attributes):
         path = self.root_directory/Path(path)
         if not missing_ok:
-            assert path.exists(), f'The path, "{path}", does not exist. Cannot add this path to FileManager'
+            assert path.exists(), f'The path, "{path}", does not exist. Use missing_ok=True to bypass this error'
         assert not path.is_dir(), f'The path, "{path}", is a directory.'
         assert path not in self.file_lookup_data, f'Cannot add path, "{path}", to FileManager twice.'
         assert lookup_attributes not in self.file_lookup_data.values(),\
@@ -150,21 +212,46 @@ class FileManager:
         self.file_lookup_data[path] = lookup_attributes
         self.__save_lookup_data__()
 
-    def get_path(self, **lookup_kwargs) -> Union[None, Path]:
-        for path, attribs in self.file_lookup_data.items():
-            if lookup_kwargs == attribs:
-                return path
-
-    def get_paths(self, **lookup_kwargs) -> Dict[Path, dict]:
+    def find_path(self, missing_ok=False, **lookup_attributes) -> Union[None, Path]:
         """
-        Return list of all paths for which every key/value in lookup_kwargs appears in file's keys/values.
+        Return the path to a file who's keys/values **exactly** match `lookup_kwargs`. There can only be one. If non
         Args:
-            **lookup_kwargs: key/values
+            missing_ok: whether to raise an error if file not found
+            **lookup_attributes:
 
         Returns:
 
         """
-        lookup_kwargs = set(lookup_kwargs.items())
+        for path, attribs in self.file_lookup_data.items():
+            if lookup_attributes == attribs:
+                return path
+        available_files_string = '\n'.join(map(str, self.file_lookup_data.values()))
+        if not missing_ok:
+            raise FileNotFoundError(f"No file with the following matching keys/values:\n {lookup_attributes}\n"
+                                    f"Currently linked files are:\n{available_files_string}")
+
+    def find_paths(self, **lookup_attributes) -> Dict[Path, dict]:
+        """
+        Find of all file paths for which `lookup_attributes` is a subset of the files attributes.
+        Return a dictionary who's keys are file paths, and values are the corresponding
+            lookup attributes (all of them for the given file, not just the ones the user searched for)
+        Args:
+            **lookup_attributes: key/values
+
+        Examples:
+            A FileManeger exists that links files containing the following attributes:
+                f1 -> {"energy": 10, "position": 3, "particle": "neutron"}
+                f2 -> {"energy": 12, "position": 3, "particle": "proton"}
+                f2 -> {"energy": 19, "position": 3, "particle": "proton"}
+                lookup_kwargs = (position=3) will return all file paths
+                lookup_kwargs = (position=3, particle=proton) will return  file paths f2 and f3
+                lookup_kwargs = (energy=10) will return  file path f1
+            will match with
+
+        Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
+
+        """
+        lookup_kwargs = set(lookup_attributes.items())
         matches = {}
         for path, attribs in self.file_lookup_data.items():
             attribs_set = set(attribs.items())
@@ -172,21 +259,74 @@ class FileManager:
                 matches[path] = attribs
         return matches
 
-    def pickle_data(self, data, path=None, **lookup_attributes):
-        if path is None:
-            i = 0
-            while path := (self.root_directory/f"file_{i}.pickle"):
-                i += 1
-                if path not in self.file_lookup_data:
-                    break
-        path = self.root_directory/path
+    def find_tree(self, tree_name="tree", **lookup_attributes) -> ROOT.TTree:
+        path = self.find_path(**lookup_attributes)
+        if (path is None) or not path.exists():
+            raise FileNotFoundError(f"Attempted to load ROOT tree on non-existent file. Attributes:{lookup_attributes}")
+        return self.__load_tree_from_path__(path=path, tree_name=tree_name)
 
-        with open(path, 'wb') as f:
+    @staticmethod
+    def __load_tree_from_path__(path, tree_name='tree'):
+        if not path.exists():
+            raise FileNotFoundError(f"Attempted to load ROOT tree on non-existent file, '{path}'")
+        f = ROOT.TFile(str(path))
+        FileManager.root_files[path] = f
+
+        assert tree_name in map(lambda x:x.GetName(), f.GetListOfKeys()), \
+            f'Invalid `tree_name`, "{tree_name}". ROOT file, "{path}", does not contain a key named "{tree_name}"'
+        tree = f.Get(tree_name)
+        return tree
+
+    def find_trees(self, tree_name="tree", **lookup_attributes) -> Dict[ROOT.TTree, dict]:
+        """
+        Same concept of find_paths, except the dictionary keys are ROOT trees.
+        Args:
+            tree_name:
+            **lookup_attributes:
+
+        Returns:
+
+        """
+        matches = {}
+        for path, attribs in self.find_paths(**lookup_attributes).items():
+            tree = self.__load_tree_from_path__(path=path, tree_name=tree_name)
+
+            matches[tree] = attribs
+        return matches
+
+    def pickle_data(self, data, file_name=None, **lookup_attributes):
+        """
+        Save `data` to pickle file with the provided `lookup_attributes`
+        Args:
+            data: Data to be saved
+            file_name: Name of pickle file. If not provided, then pick name automatically.
+            **lookup_attributes:
+
+        Returns:
+
+        """
+        if file_name is None:
+            i = 0
+            while file_name := (self.root_directory / f"file_{i}.pickle"):
+                i += 1
+                if file_name not in self.file_lookup_data:
+                    break
+        file_name = self.root_directory / file_name
+
+        with open(file_name, 'wb') as f:
             pickle.dump(data, f)
-        self.add_path(path, **lookup_attributes)
+        self.add_path(file_name, **lookup_attributes)
 
     def unpickle_data(self, **lookup_kwargs):
-        path = self.get_path(**lookup_kwargs)
+        """
+        Unpickle and return the file who's keys/values match exactly
+        Args:
+            **lookup_kwargs:
+
+        Returns:
+
+        """
+        path = self.find_path(**lookup_kwargs)
 
         with open(path, 'rb') as f:
             return pickle.load(f)
@@ -203,13 +343,21 @@ class FileManager:
         return '\n'.join(outs)
 
     def __repr__(self):
-        return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
+        outs = ['-'*80]
+        for path, keys_values in self.file_lookup_data.items():
+            outs.append(f"{keys_values}\n\t{path}\n")
+        outs[-1] = outs[-1][:-1]
+        outs.append(outs[0] + '\n')
+        out = "\n".join(outs)
+        out = f"Files in FileManeger at '{self.__save_path}:'\n" + out
+        return out
+        # return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
 
     def clean(self):
         for path in self.file_lookup_data.keys():
             path = Path(path)
             path.unlink(missing_ok=True)
-        self.lookup_path.unlink(missing_ok=True)
+        self.__save_path.unlink(missing_ok=True)
 
 
 def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[float], order=2):

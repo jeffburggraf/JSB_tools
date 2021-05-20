@@ -304,6 +304,20 @@ class Aluminum(Material):
         self.add_element_natural('Al')
 
 
+class Mylar(Material):
+    def __init__(self, density=1.38, mat_number: int = None, mat_name: str = "Mylar",
+                 mat_kwargs: Dict[str, str] = None, elemental_zaids=False):
+        super(Mylar, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        fractions = [0.363632, 0.454552, 0.181816]
+
+        zaids = [1001, 6000, 8016]
+
+        if elemental_zaids:
+            zaids = [1000*(z//1000) for z in zaids]
+
+        [self.add_zaid(z, atom_fraction) for z, atom_fraction in zip(zaids, fractions)]
+
+
 class Air(Material):
     def __init__(self, temperature=293, temp_units: str = 'K', pressure: float = 1, pressure_units: str = 'bars',
                  n_sig_digits=4, density=None,  mat_number: int = None, mat_name: str = "air",

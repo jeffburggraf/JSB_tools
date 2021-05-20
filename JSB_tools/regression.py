@@ -430,9 +430,7 @@ class ODRBase(metaclass=ABCMeta):
         points_line = ax.errorbar(self.x, self.y, xerr=self.xerr, yerr=self.yerr, label="Data", ls='None', marker='o')
         if x is None:
             x = np.linspace(self.x[0], self.x[-1], len(self.x)*4)
-            # x = interp1d(self.x, self.y)(_x_new)
-        print(self.x)
-        print(x)
+
         y_fit = self.eval_fit(x=x)
         y_fit_err = unp.std_devs(y_fit)
         y_fit = unp.nominal_values(y_fit)
