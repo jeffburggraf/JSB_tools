@@ -28,7 +28,7 @@ data_dir = DECAY_PICKLE_DIR/'__fast__gamma_dict__.marshal'
 cwd = Path(__file__).parent
 DATA = None
 
-data_save_path = cwd/'spectra_saves'
+data_save_path = cwd/'spectroscopy_saves'
 if not data_save_path.exists():
     Path.mkdir(data_save_path)
 
@@ -157,8 +157,8 @@ def gamma_search(erg_center: float,
 
 
 class PrepareGammaSpec:
+    data_path = cwd.parent / 'user_saved_data' / 'spectra_calibrations'
 
-    data_dir = cwd/"Spectra_data"
 
     def __init__(self, n_channels):
         """
@@ -166,21 +166,6 @@ class PrepareGammaSpec:
         Args:
             n_channels: number of channels.
         """
-        if not PrepareGammaSpec.data_dir.exists():
-            PrepareGammaSpec.data_dir.mkdir()
-
-        # self.root_file = ROOT.TFile(str(path), 'recreate')
-        # self.tree = ROOT.TTree('spectrum', 'spectrum')
-        # self.erg_br = np.array([0], dtype=float)
-        # self.eff_br = np.array([0], dtype=float)
-        # self.ch_br = np.array([0], dtype=float)
-        # self.t_br = np.array([0], dtype=float)
-        # self.tree.Branch('erg', self.erg_br, 'erg/F')
-        # self.tree.Branch('eff', self.eff_br, 'eff/F')
-        # self.tree.Branch('ch', self.ch_br, 'ch/F')
-        # self.tree.Branch('t', self.t_br, 't/F')
-        #
-        # self.calibration_spectra = []  # various count spectra for energy calibration.
         self.calibration_points: List[PrepareGammaSpec.CalibrationPeak] = []  # Calibration points.
 
         self.erg_fit: PolyFit = None
@@ -251,6 +236,8 @@ class PrepareGammaSpec:
             plot: If true, plot fits.
 
         """
+        if hasattr(self, 'is_loaded'):
+            raise NotImplementedError('Calibration already compeletd (this calibration was loaded from disk)')
         assert len(counts_array) == self.n_channels
 
         if true_counts is None:
@@ -264,7 +251,7 @@ class PrepareGammaSpec:
 
     def compute_calibration(self, efficiency_order=3, fit_last_eff_coeff=False, erg_order=1):
         """
-
+        When you're done adding calibration peaks, call this function.
         Args:
             efficiency_order: Order of the efficiency fit.
             fit_last_eff_coeff: Fix the largest efficiency fit coefficients to the initial guess. See LogPolyFit docs
@@ -273,9 +260,11 @@ class PrepareGammaSpec:
         Returns:
 
         """
+        if hasattr(self, 'is_loaded'):
+            raise NotImplementedError('Calibration already computed (this calibration was loaded from disk)')
         channel_peak_centers = []  # center of peaks (the channel!)
         energies = []
-        _eff_energies = []  # enrgies only of those peaks for which efficiency calibration will be perfomred
+        _eff_energies = []  # energies only of those peaks for which efficiency calibration will be perfomred
         efficiencies = []
         for p in self.calibration_points:
             _peak_center = ufloat(p.fit.center.n, p.fit.sigma.n/np.sqrt(p.fit.amp.n))
@@ -300,13 +289,12 @@ class PrepareGammaSpec:
         ax.set_title("Energy Calibration Result")
         self.erg_bin_centers = unp.nominal_values(self.erg_fit.eval_fit(np.arange(self.n_channels)))
         self.erg_bins = unp.nominal_values(self.erg_fit.eval_fit(self.__channel_bins__))
-        plt.figure()
-        plt.title('FWHM')
-        _x = np.arange(self.n_channels)
-        plt.plot(_x, 2.34*unp.std_devs(self.erg_fit.eval_fit(_x)), label='Err')
-        plt.legend()
-        plt.plot(_x, 2.34*(self.erg_fit.coeffs[0].std_dev + _x*self.erg_fit.coeffs[1].std_dev))
-        plt.show()
+        # plt.figure()
+        # plt.title('FWHM')
+        # _x = np.arange(self.n_channels)
+        # plt.plot(_x, 2.34*unp.std_devs(self.erg_fit.eval_fit(_x)), label='Err')
+        # plt.legend()
+        # plt.plot(_x, 2.34*(self.erg_fit.coeffs[0].std_dev + _x*self.erg_fit.coeffs[1].std_dev))
 
         if len(efficiencies):
             efficiencies = [ufloat(1E-10, 0)] + list(efficiencies)
@@ -321,6 +309,9 @@ class PrepareGammaSpec:
             warnings.warn("No points for efficiency calibration.")
 
     def plot_erg_spectrum(self, min_erg=None, max_erg=None, eff_correction=False):
+        if hasattr(self, 'is_loaded'):
+            raise NotImplementedError('Cannot plot calibration spectrum for loaded calibration data.')
+
         assert self.erg_bin_centers is not None, "Run compute_calibration before calling obj.plot_erg_spectrum() !"
         hist = TH1F(bin_left_edges=self.erg_bins)  # start from second entry to avoid dividing by zero
         for p in self.calibration_points:
@@ -344,8 +335,63 @@ class PrepareGammaSpec:
 
         return ax
 
-    def save_calibration(self):
-        pass
+    def save_calibration(self, name: str):
+        assert self.erg_bin_centers is not None, "Run self.compute_calibration before saving"
+        assert isinstance(name, str)
+        data_path = PrepareGammaSpec.data_path
+        Path(data_path).mkdir(parents=True, exist_ok=True)
+        data = {'erg_bins': self.erg_bins, 'erg_bin_centers': self.erg_bin_centers,
+                '__channel_bins__': self.__channel_bins__}  # maybe add more to this? e.g. raw calibration data
+        with open(data_path/(name + '.pickle'), 'wb') as f:
+            pickle.dump(data, f)
+
+        self.eff_fit.save(name)
+        self.erg_fit.save(name)
+
+    @classmethod
+    def load_calibration(cls, name: str):
+        assert isinstance(name, str)
+        data_path = PrepareGammaSpec.data_path/f"{name}.pickle"
+        assert data_path.exists(), f'No saved calibration named, "{name}"'
+        with open(data_path, 'rb') as f:
+            data = pickle.load(f)
+        result = cls.__new__(cls)
+        result.erg_fit = PolyFitODR.load(name)
+        result.eff_fit = LogPolyFit.load(name)
+        result.erg_bins = data['erg_bins']
+        result.erg_bin_centers = data['erg_bin_centers']
+        result.__channel_bins__ = data['__channel_bins__']
+        result.is_loaded = True
+        return result
+
+
+class BuildSpectrum:
+    """
+    This is the next step after saving a calibration.
+    Using the desired calibration, sen all the data of a given spectrum to this class, where it can be saved to a ROOT
+    tree for analysis.
+    """
+    def __init__(self, name, name_of_calibration):
+        self.__name_of_calibration = name_of_calibration
+        self.name = name
+        path = cwd.parent/'user_saved_data'/'spectra_trees'
+        path.mkdir(parents=True)
+        path = path/name
+        if path.exists():
+            warnings.warn(f'Overwriting spectrum named "{name}"')
+
+        self.root_file = ROOT.TFile(str(path), 'recreate')
+        self.tree = ROOT.TTree('spectrum', 'spectrum')
+        self.erg_br = np.array([0], dtype=float)
+        self.eff_br = np.array([0], dtype=float)
+        self.ch_br = np.array([0], dtype=float)
+        self.t_br = np.array([0], dtype=float)
+        self.tree.Branch('erg', self.erg_br, 'erg/F')
+        self.tree.Branch('eff', self.eff_br, 'eff/F')
+        self.tree.Branch('ch', self.ch_br, 'ch/F')
+        self.tree.Branch('t', self.t_br, 't/F')
+
+    def fill(self, channel, time):pass
 
 
 class ROOTSpectrum:
@@ -397,7 +443,13 @@ class ROOTSpectrum:
 
 
 if __name__ == '__main__':
-
+    # c = PrepareGammaSpec.load_calibration('PHELIX_test')
+    # print(c.erg_fit)
+    # print(c.eff_fit)
+    # print(c.erg_bins)
+    # c.eff_fit.plot_fit()
+    # c.erg_fit.plot_fit()
+    # plt.show()
     p_name = '10_Loop_596s_2400s_000.Spe'
     counts = np.zeros(8192)
     channels = np.arange(len(counts), dtype=float) + 0.5
@@ -430,20 +482,39 @@ if __name__ == '__main__':
     ch_2_erg = [(393.0, 218.6), (315, 175), (532, 296.5), (917.6, 511), (2623, 1460.83)]  # ch -> actual energy
     ergs = np.array([59.9, 88.4, 122,   166,   392, 514, 661, 898, 1173, 1332, 1835])
     effs = np.array([0.06, 0.1,  0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
-    counts_true = 10000 * np.ones_like(effs)
-    counts_measured = effs * counts_true
+    # counts_true = 10000 * np.ones_like(effs)
+    # counts_measured = effs * counts_true
 
     m = PrepareGammaSpec(len(counts))
     _channels = [393.0, 315, 532, 917.6, 2623]
     _energies = [218.6, 175, 296.5, 511, 1460.83]
     #  ============================  Add fake peaks =====================
+    # fake_erg = 1600
+    # c = PrepareGammaSpec.load_calibration('PHELIX_test')
+    # ch = np.searchsorted(c.erg_bin_centers, fake_erg)
+    # fake_eff = 1.2*np.interp(fake_erg, ergs, effs)
+    # hist = TH1F(bin_left_edges=c.erg_bins)
+    # for n in np.random.normal(fake_erg, 3, int(fake_eff*10000)):
+    #     hist.Fill(n)
+    # counts += hist.nominal_bin_values
+    # _energies.append(fake_erg)
+    # _channels.append(ch)
+    # # plt.plot(c.erg_bin_centers, counts)
+    # # plt.show()
 
     #  ======================================================
+
     _true_counts = list(10000*np.interp(_energies, ergs, effs))
     _true_counts[_energies.index(511)] = None
     _true_counts[_energies.index(1460.83)] = None
     m.add_peaks_4_calibration(counts, _channels, _energies, _true_counts)
     m.compute_calibration()
     m.plot_erg_spectrum(min_erg=50, max_erg=2000)
+    m.save_calibration('PHELIX_test')
 
+    c = PrepareGammaSpec.load_calibration('PHELIX_test')
+    print(c.erg_fit)
     plt.show()
+#
+#
+# #  Todo figure out FWHM

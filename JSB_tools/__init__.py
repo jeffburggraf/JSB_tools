@@ -11,22 +11,22 @@ from pathlib import Path
 from typing import Union, Sequence
 import pickle
 from atexit import register
-cwd = Path(__file__).parent
 from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 import time
 from matplotlib import pyplot as plt
 from JSB_tools.TH1 import TH1F
+import sys
+import traceback
+
+cwd = Path(__file__).parent
 
 try:
     import ROOT
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
-
-import sys
-import traceback
 
 
 class __TracePrints(object):
@@ -44,6 +44,7 @@ class __TracePrints(object):
 def trace_prints():
     """
     When there is a pesky print statement somewhere, use this to find it.
+    Run this function at beginning of script
     """
     sys.stdout = __TracePrints()
 

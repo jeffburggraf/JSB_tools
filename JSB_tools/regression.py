@@ -44,12 +44,17 @@ class FitBase(metaclass=ABCMeta):
         self.x = np.array(x)
         self.y = np.array(y)
         self.yerr = np.array(yerr)
-        self.__weights__ = 1.0/np.where(self.yerr != 0, self.yerr, 1)
+
+        # For zero errors (inf weight), use a large number
+        self.__weights__ = 1.0/np.where(self.yerr != 0, self.yerr, 1E-12)
 
         self.fit_result: ModelResult = None
 
-    def save(self, f_name):
-        path = Path(__file__).parent/"user_saved_data"/'fits'/(f_name+'.lmfit')
+    def save(self, f_name, directory=None):
+        if directory is None:
+            directory = Path(__file__).parent
+
+        path = directory/"user_saved_data"/'fits'/f'{f_name}_{type(self).__name__}.lmfit'
         if path.exists():
             warnings.warn(f"Fit with name '{f_name}' already saved. Overwriting")
         try:
@@ -64,11 +69,16 @@ class FitBase(metaclass=ABCMeta):
         pass
 
     @classmethod
-    def load(cls, f_name):
-        path = Path(__file__).parent/"user_saved_data"/'fits'/(f_name +'.lmfit')
+    def load(cls, f_name, directory=None):
+        if directory is None:
+            directory = Path(__file__).parent
+
+        path = directory/"user_saved_data"/'fits'/f'{f_name}_{cls.__name__}.lmfit'
+
+        # path = Path(__file__).parent/"user_saved_data"/'fits'/(f_name +'.lmfit')
         assert path.exists(), f"No fit result saved to\n{path}"
         out: FitBase = cls.__new__(cls)
-        out.fit_result: ModelResult = load_modelresult(path, {"model_func": out.model_func})
+        out.fit_result = load_modelresult(path, {"model_func": out.model_func})
         try:
             out.x = out.fit_result.userkws['x']
         except KeyError:
@@ -83,7 +93,10 @@ class FitBase(metaclass=ABCMeta):
 
     def set_params(self):
         for k, v in self.params.items():
-            setattr(self, k, ufloat(float(v), v.stderr))
+            if v.stderr is None:
+                setattr(self, k, ufloat(float(v), 0))
+            else:
+                setattr(self, k, ufloat(float(v), abs(v.stderr)))
 
     def eval_fit_error(self, x=None, params=None):
         args = {}
@@ -152,7 +165,10 @@ class PolyFit(FitBase):
         model = PolynomialModel(degree=order)
         params = model.guess(data=self.y, x=self.x, weights=self.__weights__)
         self.fit_result = model.fit(x=x, data=self.y, params=params, weights=self.__weights__, scale_covar=False)
-        self.coeffs = [ufloat(float(p), p.stderr) for p in self.params.values()]
+
+    @property
+    def coeffs(self):
+        return [ufloat(float(p), p.stderr) for p in self.params.values()]
 
 
 class LinearFit(PolyFit):
@@ -219,7 +235,6 @@ class PeakFit(FitBase):
             yerr:
             window_width: Should be about 3x the width (base to base) of peak to be fit
         """
-
         super().__init__(x, y, yerr)
         if window_width is None:
             warnings.warn("No `window_width` arg provided. Using 20 as window_width. See __init__ docs")
@@ -259,8 +274,8 @@ class LogPolyFit(FitBase):
     This model is good for fitting efficiency curves from HPGe detectors.
     Errors in model are not calculated from Jacobian matrix, as this leads to gross over-estimation.
     Instead, the model errors are interpolated from the data errors.
-    Thus you should only use this when the goal is a simple fit to the data that behaves well
-     asymptotically rather than hypothesis testing. i.e., don't expect the coefficients to have "physical meaning".
+    Thus you should only use this when the goal is a simple fit to the data that behaves well under this model
+     (asymptotically) rather than hypothesis testing. i.e., don't expect the coefficients to have "physical meaning".
     """
     @staticmethod
     def model_func(x, **params):
@@ -463,22 +478,62 @@ class PolyFitODR(ODRBase):
         return ""
 
 
+class MaximumLikelyHoodBase:
+    def __init__(self, x, y, yerr):
+        assert hasattr(x, '__iter__')
+        assert hasattr(y, '__iter__')
+        assert len(x) == len(y)
+        if any([isinstance(i, UFloat) for i in y]):
+            assert yerr is None, "y values are UFloats, so `yerr` must not be supplied as an arg!"
+            yerr = unp.std_devs(y)
+            y = unp.nominal_values(y)
+        if yerr is None:
+            yerr = np.zeros(len(x))
+        self.x = np.array(x)
+        self.y = np.array(y)
+        self.yerr = np.array(yerr)
+
+
 if __name__ == '__main__':
-    x = unp.uarray([1,2,3], [3,3,3])
-    x_true = np.linspace(0, 1, 100)
-    y_true = 3+6*x_true
-    err_percent = 0.1
-    x = x_true + np.random.randn(100)*err_percent
-    y = y_true + np.random.randn(100)*err_percent
-    y_err = [err_percent]*100
-    x_err = [err_percent]*100
 
-    f2 = PolyFit(x, y, y_err)
-    f2.plot_fit()
-    f = PolyFitODR(x, y, xerr=x_err, yerr=y_err, order=1)
-    f.save("delete")
-
-    f = PolyFitODR.load('delete')
-
-    f.plot_fit()
-    plt.show()
+    pass
+    # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
+    # def ch_2_erg(ch):
+    #     return 0.08874085 + ch*0.55699971
+    #
+    # def erg_2_ch(erg):
+    #     return (erg-0.08874085)/0.55699971
+    # n_chanels = 4000
+    # N = 20000
+    #
+    # c = PrepareGammaSpec(n_chanels)
+    #
+    # ergs = np.array([59.9, 88.4, 122, 166, 392, 514, 661, 898, 1173, 1332, 1835])
+    # effs = np.array([0.06, 0.1, 0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
+    # channels = np.arange(n_chanels)
+    #
+    # counts = np.zeros(n_chanels)
+    # counts += np.random.poisson(10, len(counts))
+    # fake_ergs = [20, 230, 450, 500, 700, 1230, 1600]
+    # true_counts = [N]*len(fake_ergs)
+    # channel_guesses = []
+    # for erg in fake_ergs:
+    #     index_center = erg_2_ch(erg)
+    #     channel_guesses.append(index_center)
+    #
+    #     for i in np.random.normal(index_center, 10, int(N*np.interp(erg, ergs, effs))):
+    #         i = int(i)
+    #         counts[i] += 1
+    #
+    # plt.plot(channels, counts)
+    # c.add_peaks_4_calibration(counts, channel_guesses, fake_ergs, true_counts, fit_width=50, plot=False)
+    # c.compute_calibration()
+    # # c.plot_erg_spectrum()
+    # c.erg_fit.plot_fit()
+    # c.eff_fit.plot_fit()
+    # c.save_calibration('die')
+    # c2= PrepareGammaSpec.load_calibration('die')
+    # c2.eff_fit.plot_fit()
+    # c2.erg_fit.plot_fit()
+    # plt.show()
+    # # plt.show()

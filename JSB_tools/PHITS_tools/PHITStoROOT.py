@@ -146,8 +146,15 @@ class PHITSTTreeHelper:
 
     @property
     def is_boundary_crossing(self):
+        """
+        True if particle is on a surface. Use self.cell_before_crossing to get the cell the particle was just in, and
+        self.cell for the cell the particle is heading into.
+        Returns:
+
+        """
         if self.ncol == 10 or self.ncol == 12:
-            assert self.cell_before_crossing != self.cell, "Hmmm. Thought I understood this."
+            assert self.cell_before_crossing != self.cell, "Hmmm this shouldn't happen. Thought I understood this." \
+                                                           " Advise"
             return True
         else:
             return False
@@ -224,6 +231,13 @@ ROOT.gROOT.ProcessLine(
 
 
 class Container:
+    root_files = []  # refs to all root files created
+
+    @staticmethod
+    def __close_root_files():
+        for f in Container.root_files:
+            f.Close()
+
     def __init__(self, sim_dump_file_path, output_file_name, output_directory, max_events, tree_name, overwrite):
         self.sim_dump_file_path = sim_dump_file_path
         assert Path(self.sim_dump_file_path).exists(), "Cannot find simulation dump file: {}".format(
@@ -232,9 +246,10 @@ class Container:
         self.output_file_dir = output_directory
         self.max_events = max_events
         self.overwrite = overwrite
-
+        self.root_file_path: Union[Path, None] = None
         self.tree_name = "tree" if tree_name is None else tree_name
         self.root_file, self.tree = self.__make_ROOT_file_and_tree__()
+        # self.r
 
         self.__br_arrays__ = []
 
@@ -525,7 +540,7 @@ class Container:
 
     def close(self):
         self.tree.Write()
-        # self.root_file.Close()
+        self.root_file.Close()
 
     def make_branch(self, b_name, dtype, reset=None, length=1):
         """
@@ -573,6 +588,7 @@ class Container:
             self.__make_ROOT_file_and_tree__(__rename_index__ + 1)
 
         file = ROOT.TFile(str(new_file_path), "RECREATE")
+        self.root_file_path = new_file_path
         print("Creating: {0}".format(new_file_path))
 
         tree = ROOT.TTree("tree", self.tree_name)
@@ -584,6 +600,8 @@ class Container:
             prev_params.y = values[3]
             prev_params.z = values[4]"""
 # Todo: I don't think this is useful actually ???
+
+
 class PrevParameters:
     def __init__(self):
         self.x = 0
@@ -612,7 +630,7 @@ class PrevParameters:
             return de/dx
 
 
-_containers = []  # to preserve memory of ROOT files
+# _containers = []  # to preserve memory of ROOT files
 
 
 def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str, None] = None,
@@ -634,7 +652,7 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
     """
 
     container = Container(input_file_path, output_file_name, output_directory, max_histories, tree_name, overwrite)
-    _containers.append(container)
+    # _containers.append(container)
     file_size = Path(input_file_path).stat().st_size
     if max_histories is None:
         progress = ProgressReport(file_size)
@@ -783,7 +801,11 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
 
     container.close()
     print("'{0}' is done!".format(Path(input_file_path).name))
-    return container.tree
+    #  Reopen  root file. This removes the warning from ROOT about a file not being closed
+    f = ROOT.TFile(str(container.root_file_path))
+    Container.root_files.append(f)
+    tree = f.Get(container.tree_name)
+    return tree
 
 
 if __name__ == "__main__":
