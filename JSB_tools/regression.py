@@ -479,7 +479,7 @@ class PolyFitODR(ODRBase):
 
 
 class MaximumLikelyHoodBase:
-    def __init__(self, x, y, yerr):
+    def __init__(self, x, y, xerr, yerr):
         assert hasattr(x, '__iter__')
         assert hasattr(y, '__iter__')
         assert len(x) == len(y)
@@ -487,14 +487,71 @@ class MaximumLikelyHoodBase:
             assert yerr is None, "y values are UFloats, so `yerr` must not be supplied as an arg!"
             yerr = unp.std_devs(y)
             y = unp.nominal_values(y)
+        if any([isinstance(i, UFloat) for i in x]):
+            assert xerr is None, "y values are UFloats, so `yerr` must not be supplied as an arg!"
+            xerr = unp.std_devs(x)
+            x = unp.nominal_values(x)
         if yerr is None:
             yerr = np.zeros(len(x))
+        if xerr is None:
+            xerr = np.zeros(len(x))
         self.x = np.array(x)
         self.y = np.array(y)
         self.yerr = np.array(yerr)
+        self.xerr = xerr
+
+
+class ExponentialMLL:
+    def __init__(self, times, weights=None, times_noise=None, weights_noise=None):
+        if weights is None:
+            weights = np.ones_like(times)
+        if times_noise is None:
+            assert weights_noise is None
+            times_noise = weights_noise = np.array([])
+        if weights_noise is None:
+            weights_noise = np.ones_like(times_noise)
+
+        self.lambda_ = self.estimate(times, weights, times_noise, weights_noise)
+
+        for i in range(len(times)*10):
+            i = np.random.randint(0, len(times), len(times))
+
+    @property
+    def hl(self):
+        return np.log(2)/self.lambda_
+
+    @staticmethod
+    def estimate(times, weights, times_noise, weights_noise):
+        n1 = np.sum(weights)
+        n2 = np.sum(weights_noise)
+        sum1 = np.sum(times * weights)
+        sum2 = np.sum(times_noise * weights_noise)
+        return (n1-n2)/(sum1-sum2)
+
+
+
 
 
 if __name__ == '__main__':
+    hl = 40
+    data_true = np.random.exponential(hl/np.log(2), 500)+20
+    noise = np.random.exponential(1.4*hl/np.log(2), 300)
+    h_data = TH1F.from_raw_data(data_true)
+    # data_true = data_true[np.where(data_true>2)]
+    noise = noise[np.where(noise>2)]
+
+
+    h_noise = TH1F.from_raw_data(noise, bins=h_data.__bin_left_edges__)
+    h_tot = h_data + h_noise
+    h_tot.plot(leg_label="total")
+    h_noise.plot(leg_label="noise")
+    h_data.plot(leg_label="Signal")
+    plt.legend()
+    # times_meas = np.concatenate([data_true, noise])
+    times_meas = data_true
+    m = ExponentialMLL(times_meas, times_noise=None)
+    print(m.hl)
+    plt.show()
 
     pass
     # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
