@@ -22,7 +22,7 @@ from uncertainties.umath import log as ulog
 from scipy.odr import Model as ODRModel
 from scipy.odr import RealData,ODR, polynomial, Output
 from scipy.odr.models import _poly_fcn
-
+from lmfit import minimize
 
 class FitBase(metaclass=ABCMeta):
     @property
@@ -502,44 +502,74 @@ class MaximumLikelyHoodBase:
 
 
 class ExponentialMLL:
-    def __init__(self, times, weights=None, times_noise=None, weights_noise=None):
+    def __init__(self, times, max_time=None, weights=None):
         if weights is None:
             weights = np.ones_like(times)
-        if times_noise is None:
-            assert weights_noise is None
-            times_noise = weights_noise = np.array([])
-        if weights_noise is None:
-            weights_noise = np.ones_like(times_noise)
+        self.times = times
 
-        self.lambda_ = self.estimate(times, weights, times_noise, weights_noise)
+        # if times_noise is None:
+        #     assert weights_noise is None
+        #     times_noise = weights_noise = np.array([])
+        if weights is None:
+            weights = np.ones_like(weights)
 
-        for i in range(len(times)*10):
-            i = np.random.randint(0, len(times), len(times))
+        if max_time is None:
+            max_time = max(times)
+
+        self.max_time = max_time
+        self.weights = weights
+
+
+        # self.lambda_ = self.estimate(times, weights, times_noise, weights_noise)
+
+        # for i in range(len(times)*10):
+        #     i = np.random.randint(0, len(times), len(times))
 
     @property
     def hl(self):
-        return np.log(2)/self.lambda_
+        return np.log(2)/self.params.valuesdict()['_lambda']
 
     @staticmethod
-    def estimate(times, weights, times_noise, weights_noise):
-        n1 = np.sum(weights)
-        n2 = np.sum(weights_noise)
-        sum1 = np.sum(times * weights)
-        sum2 = np.sum(times_noise * weights_noise)
-        return (n1-n2)/(sum1-sum2)
+    def likelihood(params, x, _weights=None, max_time=None):
+        a = max_time
+        parvals = params.valuesdict()
+        times = x
+        _lambda = parvals['_lambda']
+        # noise = parvals['noise']
 
+        # probs = (noise + _lambda*np.e**-(times*_lambda))/(1 - np.e**(-(a*_lambda)) + a*noise)
+        probs = ( _lambda*np.e**-(times*_lambda))
+        print('probs :', probs)
+        print("times: ",times)
+        print("params", params, _lambda)
+        print()
+        llh = np.sum(_weights*np.log(probs))
+        print(llh)
+        # print(llh)
+        return -llh
+
+    def estimate(self, lambda_guess=None, noise_guess=None):
+        if lambda_guess is None:
+            lambda_guess = np.sum(self.weights)/sum(self.weights*self.times)
+            print('Lambda guess', lambda_guess)
+        if noise_guess is None:
+            noise_guess = 1E-10
+        self.params = Parameters()
+        self.params.add('_lambda', lambda_guess,min=0, max=max(self.times))
+        # self.params.add('noise', noise_guess, min=0, max=sum(self.times))
+        m = minimize(self.likelihood, self.params, args=(self.times,),
+                     kws={'_weights': self.weights, 'max_time': self.max_time}, method='cobyla')
+        print(m.params)
 
 
 
 
 if __name__ == '__main__':
     hl = 40
+    n = 0
     data_true = np.random.exponential(hl/np.log(2), 500)+20
-    noise = np.random.exponential(1.4*hl/np.log(2), 300)
+    noise = np.random.uniform(0, max(data_true), int(max(data_true)*n))
     h_data = TH1F.from_raw_data(data_true)
-    # data_true = data_true[np.where(data_true>2)]
-    noise = noise[np.where(noise>2)]
-
 
     h_noise = TH1F.from_raw_data(noise, bins=h_data.__bin_left_edges__)
     h_tot = h_data + h_noise
@@ -547,10 +577,13 @@ if __name__ == '__main__':
     h_noise.plot(leg_label="noise")
     h_data.plot(leg_label="Signal")
     plt.legend()
-    # times_meas = np.concatenate([data_true, noise])
     times_meas = data_true
-    m = ExponentialMLL(times_meas, times_noise=None)
-    print(m.hl)
+    print("lambda true: ", np.log(2)/hl)
+
+    m = ExponentialMLL(h_tot.bin_centers, weights=h_tot.nominal_bin_values)
+    m.estimate()
+
+
     plt.show()
 
     pass

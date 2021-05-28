@@ -86,6 +86,8 @@ class ProgressReport:
         if t_now > self.__next_print_time__:
             self.__report__(t_now, i)
             self.__next_print_time__ += self.__sec_per_print__
+            return True
+        return False
 
 
 def closest(sorted_dict: SortedDict, key):

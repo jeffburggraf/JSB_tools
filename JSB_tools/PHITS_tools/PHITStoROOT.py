@@ -701,20 +701,21 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
             if dt > max_time:
                 break
         line_number += 1
+
         line = file.readline()
+        if line == "":
+            break
+
         bytes_read = file.tell()
-        if line.rstrip() == '':  # continue if the line contains only white space
-            continue
+
         if max_time is None:
             if progress is not None:
                 progress.log(bytes_read)
+
             else:
                 if n_events > 5000:
                     i_final = bytes_read * max_histories / n_events
                     progress = ProgressReport(i_final, i_init=bytes_read)
-
-        if line == "":
-            break
 
         if ncol_re.match(line):
             # If previous value ncol does not indicate start of calculation, then fill previous event
