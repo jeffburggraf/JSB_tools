@@ -96,7 +96,6 @@ def rolling_MAD(window_width, values):
     if not isinstance(values, np.ndarray):
         values = np.array(values)
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
-    print(list(window_indicies))
     out = np.array([np.median(np.abs(values[idx] - np.median(values[idx]))) for idx in window_indicies],
                    dtype=np.ndarray)
 
@@ -142,19 +141,11 @@ class TH1F:
     ROOT_histos = []
     __histo_pad_dict__ = {}
 
-    # @classmethod
-    # def points_to_bins(cls, points):
-    #     bin_edges = [0.5 * (points[i - 1] + points[i]) for i in range(1, len(points))]
-    #     w_0 = bin_edges[0] - points[0]
-    #     w_1 = points[-1] - bin_edges[-1]
-    #     bin_edges = [points[0] - w_0] + bin_edges + [points[-1] + w_1]
-    #     return cls(bin_left_edges=bin_edges)
-
     def __init__(self, min_bin=None, max_bin=None, nbins=None, bin_left_edges=None, bin_width=None, title=None, ROOT_hist=None):
         if ROOT_hist is not None:
             self.__ROOT_hist__ = ROOT_hist
             self.__bin_left_edges__ = np.array(
-                [ROOT_hist.GetBinLowEdge(i) for i in range(1, ROOT_hist.GetNbinsX() + 2)], dtype=np.float)
+                [ROOT_hist.GetBinLowEdge(i) for i in range(1, ROOT_hist.GetNbinsX() + 2)], dtype=float)
             self.title = ROOT_hist.GetName()
             self.n_bins = len(self.__bin_left_edges__) - 1
         else:
@@ -166,11 +157,11 @@ class TH1F:
                 if bin_width is None:
                     assert nbins is not None, arg_error_msg
                     assert isinstance(nbins, int), '`nbins` arg must be an integer'
-                    self.__bin_left_edges__ = np.linspace(min_bin, max_bin, nbins + 1, dtype=np.float)
+                    self.__bin_left_edges__ = np.linspace(min_bin, max_bin, nbins + 1, dtype=float)
                 else:
                     assert nbins is None, arg_error_msg
                     assert isinstance(bin_width, Number), '`bin_width` arg must be a number'
-                    self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=np.float)
+                    self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=float)
             else:
                 assert len(bin_left_edges) >= 2, "`bin_left_edges` argument must be iterable of length greater than 1"
                 assert all([isinstance(x, Number) for x in bin_left_edges]), f'All values of `bin_left_edges` must be a'\
@@ -181,7 +172,7 @@ class TH1F:
                                                                                        ' No other bin specification '\
                                                                                        'arguments allowed in this case.'
 
-                self.__bin_left_edges__ = np.array(bin_left_edges, dtype=np.float)
+                self.__bin_left_edges__ = np.array(bin_left_edges, dtype=float)
 
             if title is None:
                 title = "hist{0}".format(TH1F.title_number)
@@ -404,7 +395,9 @@ class TH1F:
         return s
 
     def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
-             ylabel=None, show_stats=False, **kwargs):
+             ylabel=None, show_stats=False, title=None, **kwargs):
+        if title is not None:
+            self.SetTitle(title)
         if ax is None:
             _, ax = plt.subplots()
         else:
@@ -428,15 +421,21 @@ class TH1F:
         if xmax is None:
             xmax = self.__bin_left_edges__[-1]
         s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_centers))
+        try:
+            ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
+                        yerr=self.bin_std_devs[s],  ds="steps-mid", label=leg_label, **kwargs)
+        except AttributeError as e:
+            warn('AttributeError on plt.errorbar. Could be due to bug in matplotlib. Try different mpl version.')
+            raise e
 
-        ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
-                    yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
         if show_stats:
             text = self.get_stats_text()
             text = '\n'.join(text)
             # ax.text(0.8, 0.95-0.03*h, text,  transform=ax.transAxes)
             ob = offsetbox.AnchoredText(text, loc=1)
             ax.add_artist(ob)
+        if  leg_label:
+            ax.legend()
 
         return ax
 
@@ -1016,7 +1015,11 @@ def ttree_and(expressions):
 
 if __name__ == "__main__":
     import time
-    #
-    while True:
-        ROOT.gSystem.ProcessEvents()
-        time.sleep(0.05)
+    h = TH1F(0,1,10)
+    h.plot()
+    # plt.show()
+    plt.errorbar([1], [2], [2], ds='steps-mid')
+    plt.show()
+    # while True:
+    #     ROOT.gSystem.ProcessEvents()
+    #     time.sleep(0.05)

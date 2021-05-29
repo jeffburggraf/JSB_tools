@@ -170,6 +170,9 @@ class Cell(GeomSpecMixin):
     def clear():
         Cell.all_cells = MCNPNumberMapping('Cell', 10)
 
+    def delete_cell(self):
+        del Cell.all_cells[self.cell_number]
+
     def __init__(self, material: Union[int, Material, PHITSOuterVoid] = 0,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
                  importance: Tuple[str, int] = None,

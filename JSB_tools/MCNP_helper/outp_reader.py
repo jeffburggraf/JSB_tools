@@ -611,7 +611,7 @@ class StoppingPowerData:
         return ax
 
     def plot_range(self, ax=None, label=None, title=None, material_name_4_title=None, particle_name_4_title=None,
-                   density=None, use_best_units=True):
+                   density=None, units=None):
 
         if ax is None:
             fig, ax = plt.subplots()
@@ -627,33 +627,25 @@ class StoppingPowerData:
                 y = self.ranges/density
 
         ax.set_xlabel("Energy [MeV]")
-        unit_conversion, units = 1, 'cm'
 
         if density is None:
+            unit_conversion, units = 1, 'cm'
             ax.set_ylabel("range [g/cm2]")
         else:
-            if max(y) < 1E-4:
-                units = 'um'
-                unit_conversion = 1E4
-            elif 0.1 <= max(y) < 1:
-                units = 'mm'
-                unit_conversion = 10
-            elif 1 <= max(y) < 100:
-                units = 'cm'
-                unit_conversion = 1
-            elif 100 <= max(y) <= 1000 * 100:
-                units = 'm'
-                unit_conversion = 1 / 100
+            unit_names = ["nm", "um", "mm", "cm", "m", "km"]
+            orders = np.array([-7, -4, -1, 0, 2, 5])
+            if units is None:
+                test_value = np.max(y)
+                i = np.searchsorted(orders, np.log10(test_value), side='right') - 1
+                i = max([0, i])
+                units = unit_names[i]
             else:
-                units = 'km'
-                unit_conversion = 1 / (100 * 1000)
+                assert units in unit_names, f"Invalid units, {units}"
+                i = unit_names.index(units)
 
-            # if use_best_units:
-            #     y /= 100
-            #     mean_range_in_meters = np.max(y)
-            #     unit_converts = [(10**-3, 'km'), (10**1, 'm'), (10**2, 'cm'), (10**3, 'mm'), (10**6, 'μm'), (10**9, 'nm')]
-            #     conversion, units = \
-            #         unit_converts[int(np.argmin([abs(mean_range_in_meters*c-1) for c, unit in unit_converts]))]
+            unit_conversion = 10.**-orders[i]
+            # print('test_value x: ',self.energies[len(y)//2], 'test_value', test_value, " np.log10(test_value)",
+            #       np.log10(test_value), 'i:', i, "unit_conversion: ", f"{unit_conversion:.2E}")
 
             ax.set_ylabel("range [{}]".format(units))
 
@@ -685,8 +677,9 @@ class StoppingPowerData:
 
             if density is not None:
                 title += "; material density: {0:.4E} g/cm3".format(density)
+            title = "\n" + title
 
-            ax.set_title(title)
+            ax.set_title(title, y=1.05)
         return ax
 
     @classmethod

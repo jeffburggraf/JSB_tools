@@ -7,6 +7,7 @@ from JSB_tools.nuke_data_tools import Nuclide
 from typing import Union, Sized
 from dataclasses import dataclass
 from abc import abstractmethod
+from numbers import Number
 
 """a
 [source]
@@ -113,12 +114,32 @@ class GaussianEnergyDistribution(Distribution):
     fwhm: float = None
     __is_energy_dist__ = True
 
+    def __truediv__(self, other):
+        new = GaussianEnergyDistribution(self.mean, self.std, self.min_erg, self.max_erg, self.fwhm)
+        new /= other
+        return new
+
+    def __itruediv__(self, other):
+        assert isinstance(other, (float, int))
+        if other == 0:
+            raise ZeroDivisionError
+        other = 1.0/other
+        self.__imul__(other)
+        return self
+
+    def __mul__(self, other):
+        new = GaussianEnergyDistribution(self.mean, self.std, self.min_erg, self.max_erg, self.fwhm)
+        new *= other
+        return new
+
     def __imul__(self, other: float):
+        assert isinstance(other, Number)
         if self.fwhm is not None:
             self.fwhm *= other
         if self.std is not None:
             self.std *= other
         self.mean *= other
+
         if self.min_erg is not None:
             self.min_erg *= other
         if self.max_erg is not None:
@@ -136,7 +157,6 @@ class GaussianEnergyDistribution(Distribution):
             self.min_erg = self.mean - 5*self.std
         if self.max_erg is None:
             self.max_erg = self.mean + 5*self.std
-
         kwargs = {'e-type': '2', 'eg0': str(self.mean), "eg1": str(self.fwhm),
                   "eg2": str(self.min_erg), "eg3": str(self.max_erg)}
         return kwargs

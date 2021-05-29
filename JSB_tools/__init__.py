@@ -1,39 +1,52 @@
 """
 Core functions like ROOT_Loop, as well as functions that I didn't know where else to put
 """
-import os
-import sys
-# from .outp_reader import OutP
+
 import warnings
-from abc import abstractmethod, ABCMeta
-from openmc.data import atomic_weight
-import re
 from typing import List, Dict
 import numpy as np
-import time
-from numbers import Number
 from itertools import islice
 from sortedcontainers import SortedDict
 from pathlib import Path
 from typing import Union, Sequence
 import pickle
 from atexit import register
-from dataclasses import dataclass
-cwd = Path(__file__).parent
 from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 import time
 from matplotlib import pyplot as plt
 from JSB_tools.TH1 import TH1F
-from lmfit.models import GaussianModel
+import sys
+import traceback
 
+cwd = Path(__file__).parent
 
 try:
     import ROOT
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
+
+
+class __TracePrints(object):
+
+    def __init__(self):
+        self.stdout = sys.stdout
+
+    def write(self, s):
+        self.stdout.write("Writing %r\n" % s)
+        traceback.print_stack(file=self.stdout)
+
+    def flush(self): pass
+
+
+def trace_prints():
+    """
+    When there is a pesky print statement somewhere, use this to find it.
+    Run this function at beginning of script
+    """
+    sys.stdout = __TracePrints()
 
 
 class ProgressReport:
@@ -73,6 +86,8 @@ class ProgressReport:
         if t_now > self.__next_print_time__:
             self.__report__(t_now, i)
             self.__next_print_time__ += self.__sec_per_print__
+            return True
+        return False
 
 
 def closest(sorted_dict: SortedDict, key):
@@ -105,17 +120,56 @@ def ROOT_loop():
 
 
 class FileManager:
+    root_files:Dict[Path, ROOT.TFile] = {}
+
     def __init__(self, path_to_root_dir: Union[str, Path], recreate=False):
         """
+        Creates a human friendly link between file and a dictionary of descriptive attributes that make it easy to
+            access files created in a previous script.
+
+        Args:
+            path_to_root_dir: Path to the top directory.
+            recreate: If you are loading an existing FileManager, then this must be False, else it will override the
+                previous data.
+
+        Examples:
+            When a series of files (of any type) are created, they can be loaded later without the need to use a
+             regex to lookup the file. e.g. many files are created from a series of MCNP simulations for which the
+             energy and position of the particle source varies.
+
+                cwd = Path(__file__).parent  # top directory of the simulations.
+                f_man = FileManager(cwd, recreate=True)
+
+                for pos in positions:
+                    for energy in energies:
+
+                        input_deck_name = f"{pos}_{energy}"
+
+                         # The following will create a directory for the simulation where src energy=energy and source
+                         #  position=pos. The function returns the path of the created input deck
+                         #  (See JSB_tools.MCNP_helper.inputDeck)
+                         f_path = i.write_inp_in_scope(input_deck_name) # this
+                         outp_path = f_path.parent/'outp'  # this is the name of the outp file MCNP will create
+
+                         # Even though `outp_path` doesn't exists yet, I can make a quick lookup with using FileManager
+                         #  as follows:
+                         f_man.add_path(outp_path, src_energy=energy, source_pos=position)
+                # upon exiting the script, FileManager will save the association between the files and the key/values
+                # in a pickle file named __file_lookup__.pickle in the top directory specified by `path_to_root_dir` in
+                # the FileManager instantiation.
+
+                In another script, say, that analyses the outp files, one could do the following (almost identical to
+                the rotine for initially creating the FIleManeger.
+                cwd = Path(__file__).parent  # top directory of the simulations.
+                f_man = FileManager(cwd, recreate=False)  # NOTE THAT IS False
+
+
+
         todo: Make it so files in the current/any sub dir are valid. The 'root_dir' is just the dir that containes the
             __file_info__.pickle.
             Make  "__file_info__.pickle" a hidden file
             This is a good place to use doctests
 
-        Args:
-            path_to_root_dir:
-            recreate:
-        Examples:
 
 
         """
@@ -128,9 +182,10 @@ class FileManager:
             self.root_directory.mkdir()
         self.file_lookup_data: Dict[Path, dict] = {}
 
-        self.lookup_path = self.root_directory/"__file_lookup__.pickle"
+        # path to file that stores association information
+        self.__save_path = self.root_directory / "__file_lookup__.pickle"
         try:
-            with open(self.lookup_path, 'rb') as f:
+            with open(self.__save_path, 'rb') as f:
                 self.file_lookup_data = pickle.load(f)
         except FileNotFoundError:
             pass
@@ -138,20 +193,20 @@ class FileManager:
         if recreate:
             self.file_lookup_data = {}
 
-        for path in self.file_lookup_data.copy():
-            if not path.exists():
-                warnings.warn(f'\nFile, "{path}", was expected, but is missing.')
+        # for path in self.file_lookup_data.copy():
+        #     if not path.exists():
+        #         warnings.warn(f'\nLink found to non-existing file, "{path}".')
 
         register(self.__at_exit__)
 
     def __save_lookup_data__(self):
-        with open(self.lookup_path, 'wb') as f:
+        with open(self.__save_path, 'wb') as f:
             pickle.dump(self.file_lookup_data, f)
 
     def add_path(self, path, missing_ok=False, **lookup_attributes):
         path = self.root_directory/Path(path)
         if not missing_ok:
-            assert path.exists(), f'The path, "{path}", does not exist. Cannot add this path to FileManager'
+            assert path.exists(), f'The path, "{path}", does not exist. Use missing_ok=True to bypass this error'
         assert not path.is_dir(), f'The path, "{path}", is a directory.'
         assert path not in self.file_lookup_data, f'Cannot add path, "{path}", to FileManager twice.'
         assert lookup_attributes not in self.file_lookup_data.values(),\
@@ -160,21 +215,46 @@ class FileManager:
         self.file_lookup_data[path] = lookup_attributes
         self.__save_lookup_data__()
 
-    def get_path(self, **lookup_kwargs) -> Union[None, Path]:
-        for path, attribs in self.file_lookup_data.items():
-            if lookup_kwargs == attribs:
-                return path
-
-    def get_paths(self, **lookup_kwargs) -> Dict[Path, dict]:
+    def find_path(self, missing_ok=False, **lookup_attributes) -> Union[None, Path]:
         """
-        Return list of all paths for which every key/value in lookup_kwargs appears in file's keys/values.
+        Return the path to a file who's keys/values **exactly** match `lookup_kwargs`. There can only be one. If non
         Args:
-            **lookup_kwargs: key/values
+            missing_ok: whether to raise an error if file not found
+            **lookup_attributes:
 
         Returns:
 
         """
-        lookup_kwargs = set(lookup_kwargs.items())
+        for path, attribs in self.file_lookup_data.items():
+            if lookup_attributes == attribs:
+                return path
+        available_files_string = '\n'.join(map(str, self.file_lookup_data.values()))
+        if not missing_ok:
+            raise FileNotFoundError(f"No file with the following matching keys/values:\n {lookup_attributes}\n"
+                                    f"Currently linked files are:\n{available_files_string}")
+
+    def find_paths(self, **lookup_attributes) -> Dict[Path, dict]:
+        """
+        Find of all file paths for which `lookup_attributes` is a subset of the files attributes.
+        Return a dictionary who's keys are file paths, and values are the corresponding
+            lookup attributes (all of them for the given file, not just the ones the user searched for)
+        Args:
+            **lookup_attributes: key/values
+
+        Examples:
+            A FileManeger exists that links files containing the following attributes:
+                f1 -> {"energy": 10, "position": 3, "particle": "neutron"}
+                f2 -> {"energy": 12, "position": 3, "particle": "proton"}
+                f2 -> {"energy": 19, "position": 3, "particle": "proton"}
+                lookup_kwargs = (position=3) will return all file paths
+                lookup_kwargs = (position=3, particle=proton) will return  file paths f2 and f3
+                lookup_kwargs = (energy=10) will return  file path f1
+            will match with
+
+        Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
+
+        """
+        lookup_kwargs = set(lookup_attributes.items())
         matches = {}
         for path, attribs in self.file_lookup_data.items():
             attribs_set = set(attribs.items())
@@ -182,21 +262,74 @@ class FileManager:
                 matches[path] = attribs
         return matches
 
-    def pickle_data(self, data, path=None, **lookup_attributes):
-        if path is None:
-            i = 0
-            while path := (self.root_directory/f"file_{i}.pickle"):
-                i += 1
-                if path not in self.file_lookup_data:
-                    break
-        path = self.root_directory/path
+    def find_tree(self, tree_name="tree", **lookup_attributes) -> ROOT.TTree:
+        path = self.find_path(**lookup_attributes)
+        if (path is None) or not path.exists():
+            raise FileNotFoundError(f"Attempted to load ROOT tree on non-existent file. Attributes:{lookup_attributes}")
+        return self.__load_tree_from_path__(path=path, tree_name=tree_name)
 
-        with open(path, 'wb') as f:
+    @staticmethod
+    def __load_tree_from_path__(path, tree_name='tree'):
+        if not path.exists():
+            raise FileNotFoundError(f"Attempted to load ROOT tree on non-existent file, '{path}'")
+        f = ROOT.TFile(str(path))
+        FileManager.root_files[path] = f
+
+        assert tree_name in map(lambda x:x.GetName(), f.GetListOfKeys()), \
+            f'Invalid `tree_name`, "{tree_name}". ROOT file, "{path}", does not contain a key named "{tree_name}"'
+        tree = f.Get(tree_name)
+        return tree
+
+    def find_trees(self, tree_name="tree", **lookup_attributes) -> Dict[ROOT.TTree, dict]:
+        """
+        Same concept of find_paths, except the dictionary keys are ROOT trees.
+        Args:
+            tree_name:
+            **lookup_attributes:
+
+        Returns:
+
+        """
+        matches = {}
+        for path, attribs in self.find_paths(**lookup_attributes).items():
+            tree = self.__load_tree_from_path__(path=path, tree_name=tree_name)
+
+            matches[tree] = attribs
+        return matches
+
+    def pickle_data(self, data, file_name=None, **lookup_attributes):
+        """
+        Save `data` to pickle file with the provided `lookup_attributes`
+        Args:
+            data: Data to be saved
+            file_name: Name of pickle file. If not provided, then pick name automatically.
+            **lookup_attributes:
+
+        Returns:
+
+        """
+        if file_name is None:
+            i = 0
+            while file_name := (self.root_directory / f"file_{i}.pickle"):
+                i += 1
+                if file_name not in self.file_lookup_data:
+                    break
+        file_name = self.root_directory / file_name
+
+        with open(file_name, 'wb') as f:
             pickle.dump(data, f)
-        self.add_path(path, **lookup_attributes)
+        self.add_path(file_name, **lookup_attributes)
 
     def unpickle_data(self, **lookup_kwargs):
-        path = self.get_path(**lookup_kwargs)
+        """
+        Unpickle and return the file who's keys/values match exactly
+        Args:
+            **lookup_kwargs:
+
+        Returns:
+
+        """
+        path = self.find_path(**lookup_kwargs)
 
         with open(path, 'rb') as f:
             return pickle.load(f)
@@ -213,13 +346,21 @@ class FileManager:
         return '\n'.join(outs)
 
     def __repr__(self):
-        return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
+        outs = ['-'*80]
+        for path, keys_values in self.file_lookup_data.items():
+            outs.append(f"{keys_values}\n\t{path}\n")
+        outs[-1] = outs[-1][:-1]
+        outs.append(outs[0] + '\n')
+        out = "\n".join(outs)
+        out = f"Files in FileManeger at '{self.__save_path}:'\n" + out
+        return out
+        # return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
 
     def clean(self):
         for path in self.file_lookup_data.keys():
             path = Path(path)
             path.unlink(missing_ok=True)
-        self.lookup_path.unlink(missing_ok=True)
+        self.__save_path.unlink(missing_ok=True)
 
 
 def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[float], order=2):
@@ -258,267 +399,5 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
     return unp.uarray(new_nominal_ys, new_stddev_ys)
 
 
-class ROOTFitBase:
-    """
-    Base class that handles the leg work of doing a fit using ROOT.
-    The base class must have an attribute named __ROOT_fit_result__ and __tf1__, explained below.
-        __ROOT_fit_result__
-            A ROOT.TFitResultPtr instance. For example,these are created by the following code:
-                hist.Fit(funcname, 'S')
-                or,
-                tgraph.Fit(funcname, 's')
-        __tf1__
-            A ROOT.TF1 instance. For example,these are created by the following code:
-                tgraph.Fit("pol3", 'S')
-                self.__tf1__ = tgraph.GetListOfObjects().FindObject("pol3")
-                or,
-                self.__tf1__ = ROOT.Tf1(funcname, "[0] + [1]*TMath::Log(x) + [1]*TMath::Log(x)^2")
-
-    Call super(sub_cass, self).__init__(x, y, x_err, y_err) to initialize `x`, `y`, `x_err`, and `y_err`.
-    `x` and `y` may be a unp.array. If not, then uncertainties can may be optionally specified by `x_err` and `y_err`
-
-    """
-    def __init__(self, x: Sequence[Union[UFloat, Number]], y: Sequence[Union[UFloat, Number]],
-                 x_err: Sequence[Number], y_err: Sequence[Number], max_calls=10000):
-        """
-        Initializes data for fitting.
-        Args:
-            x:
-            y:
-            x_err:
-            y_err:
-        """
-        ROOT.TVirtualFitter.SetMaxIterations(max_calls*10)
-        # TVirtualFitter::SetMaxIterations(n)
-        assert hasattr(x, '__iter__')
-        assert hasattr(y, '__iter__')
-
-        if isinstance(x[0], UFloat):
-            assert x_err is None, "`x` is a unp.uarray, so x_err` cannot be specified!"
-            x_err = np.array([i.std_dev for i in x])
-            x = np.array([i.n for i in x])
-        if isinstance(y[0], UFloat):
-            assert y_err is None, "`y` is a unp.uarray, so y_err` cannot be specified!"
-            y_err = np.array([i.std_dev for i in y])
-            y = np.array([i.n for i in y])
-
-        if x_err is None:
-            x_err = np.zeros_like(x)
-        if y_err is None:
-            y_err = np.zeros_like(x)
-
-        arg_sort = np.argsort(x)
-
-        self.x = np.array(x, dtype=np.float)[arg_sort]
-        self.y = np.array(y, dtype=np.float)[arg_sort]
-        self.x_err = np.array(x_err, dtype=np.float)[arg_sort]
-        self.y_err = np.array(y_err, dtype=np.float)[arg_sort]
-
-    def eval_fit(self, x: Union[None, Number, Sequence] = None) -> Union[Sequence[UFloat], ufloat]:
-        """
-        Eval the fit result at points specified by `x`.
-        Args:
-            x: data points to evaluate function at
-
-        Returns:unp.uarray
-        """
-        assert hasattr(self, '__tf1__'), 'Subclass must have a __tf1__ attribute. Example: __tf1__ = ' \
-                                         'tgraph.GetListOfFunctions().FindObject(f_name) '
-        assert hasattr(self, '__ROOT_fit_result__'), "Subclass must have a __ROOT_fit_result__ attribute. " \
-                                                     "\nExample: self.__ROOT_fit_result__ = " \
-                                                     "hist.__ROOT_hist__.Fit('peak_fit', 'SN')"
-        __ROOT_fit_result__ = getattr(self, '__ROOT_fit_result__')
-        __tf1__ = getattr(self, '__tf1__')
-        assert isinstance(__tf1__, ROOT.TF1), f"Invalid type of ROOTFitBase subclass attribute, '__tf1__'. " \
-                                              f"Must be of type ROOT.TF1, not '{type(__tf1__)}'"
-        assert isinstance(__ROOT_fit_result__, ROOT.TFitResultPtr),\
-            f"Invalid type of ROOTFitBase subclass attribute, '__ROOT_fit_result__'. " \
-            f"Type must be ROOT.TFitResultPtr, not '{type(__ROOT_fit_result__)}'"
-        if x is None:
-            x = self.x
-        if not hasattr(x, '__iter__'):
-            x = [x]
-        if isinstance(x[0], UFloat):
-            x = unp.nominal_values(x)
-
-        out_nominal = np.array([__tf1__.Eval(_x) for _x in x])
-        _x = np.array(x, dtype=np.float)
-        out_error = np.zeros_like(_x)
-        __ROOT_fit_result__.GetConfidenceIntervals(len(_x), 1, 1, _x, out_error, 0.68, False)  # fills out_error
-        if len(out_error) == 1:  # if `x` is a scalar value
-            return ufloat(out_nominal[0], out_error[0])
-        return unp.uarray(out_nominal, out_error)
-
-    def plot_fit(self, ax=None, x=None, x_label=None, y_label=None, title=None):
-        """
-        Plots the fit result.
-        Args:
-            ax:
-            x: Points to plot fit result at.
-            x_label: axis labels
-            y_label:
-            title:
-
-        Returns: ax
-
-        """
-        if ax is None:
-            plt.figure()
-            ax = plt.gca()
-
-        if x is None:
-            x = np.linspace(min(self.x), self.x[-1], 3*len(self.x))
-        ax.errorbar(self.x, self.y, yerr=self.y_err, xerr=self.x_err, label="Data", ls='None', marker='o', zorder=0)
-        fit_errs = unp.std_devs(self.eval_fit(x))
-        fit_ys = unp.nominal_values(self.eval_fit(x))
-        ax.fill_between(x, fit_ys-fit_errs, fit_ys+fit_errs, color='grey', alpha=0.5, label='Fit error')
-        ax.plot(x, fit_ys, label='Fit', ls='--')
-        ax.legend()
-        if x_label is not None:
-            ax.set_xlabel(x_label)
-        if y_label is not None:
-            ax.set_ylabel(y_label)
-        if title is not None:
-            ax.set_title(title)
-        return ax
-
-
-class PeakFit(ROOTFitBase):
-    def guess(self, x, y, y_err):
-        model = GaussianModel()
-        weights = 1.0/np.where(y_err == 0, 1, y_err)
-        params = model.guess(y, x=x)
-        fit_result = model.fit(data=(y - np.median(y)), x=x, weights=weights, params=params)
-        print(fit_result.plot_fit())
-        plt.show()
-
-    @classmethod
-    def from_points(cls, x, y, center_guess=None, y_err=None, sigma_guess=1):
-        assert len(x) == len(y)
-        assert not isinstance(x[0], UFloat)
-
-        if y_err is None:
-            assert not isinstance(y[0], UFloat)
-        else:
-            y = unp.uarray(y, y_err)
-        # hist = TH1F.points_to_bins(x)
-        hist = TH1F.from_x_and_y(x, y, y_err=y_err)
-        # hist += y
-        return cls(hist, center_guess=center_guess, sigma_guess=sigma_guess)
-
-    def __init__(self, hist: TH1F, center_guess=None, min_x=None, max_x=None, sigma_guess=None):
-        if isinstance(center_guess, UFloat):
-            center_guess = center_guess.n
-        if center_guess is None:
-            center_guess = np.median(hist.bin_centers)
-
-        assert isinstance(center_guess, Number), f'Center guess must be a number, not {type(center_guess)}'
-        if not hist.is_density:
-            warnings.warn('Histogram passed to fit_peak may not have density as bin values!'
-                          ' To fix this, do hist /= hist.binvalues before passing to peak_fit')
-        # Set background guess before range cut is applied. This could be useful when one wants the background
-        # estimate to be over a larger range that may include other interfering peaks
-        bg_guess = hist.median_y.n
-        # self.guess(hist.bin_centers, hist.nominal_bin_values, hist.bin_std_devs)
-
-
-        if min_x is not None or max_x is not None:
-            # cut hist
-            hist = hist.remove_bins_outside_range(min_x, max_x)
-        super(PeakFit, self).__init__(hist.bin_centers, unp.nominal_values(hist.bin_values), hist.bin_widths,
-                                      unp.std_devs(hist.bin_values))
-
-        _temp_hist = hist - bg_guess
-        _temp_hist.__ROOT_hist__.Fit('gaus', '0Q')
-        _g_tf1 = _temp_hist.__ROOT_hist__.GetListOfFunctions().FindObject('gaus')
-        if sigma_guess is None:
-            sigma_guess = _g_tf1.GetParameter(2)
-        amp_guess = _g_tf1.GetParameter(0)*_g_tf1.GetParameter(2)*np.sqrt(2*np.pi)
-        # print('Gauss fit par[0]: ', _g_tf1.GetParameter(0)*_g_tf1.GetParameter(2)*np.sqrt(2*np.pi))
-
-
-        func = self.__tf1__ = ROOT.TF1('peak_fit', '[0]*TMath::Gaus(x,[1],[2], kTRUE) + [3]')
-        # amp_guess = np.sum(unp.nominal_values(hist.bin_widths * (hist.bin_values - hist.median_y)))
-        func.SetParameter(0, amp_guess)
-
-        func.SetParameter(1, center_guess)
-        func.SetParLimits(2, 1E-10, 100)
-        func.SetParameter(2, abs(sigma_guess))
-        # func.SetParLimits(3, 0, 1E10)
-        func.SetParameter(3, bg_guess)
-
-        self.__ROOT_fit_result__ = hist.__ROOT_hist__.Fit('peak_fit', "SNMBFE")
-        self.amp = ufloat(func.GetParameter(0), func.GetParError(0))
-        self.center = ufloat(func.GetParameter(1), func.GetParError(1))
-        self.sigma = ufloat(func.GetParameter(2), func.GetParError(2))
-        self.bg = ufloat(func.GetParameter(3), func.GetParError(3))
-
-
-class PolyFit(ROOTFitBase):
-    """Basic polynomial fit."""
-    def __init__(self, x, y, x_err=None, y_err=None, order=1):
-        super(PolyFit, self).__init__(x, y, x_err, y_err)
-        self.tgraph = ROOT.TGraphErrors(len(x), self.x, self.y, self.x_err, self.y_err)
-
-        f_name = f"pol{order}"
-        # self.__tf1__ = ROOT.TF1(f_name, f_name)
-        self.__ROOT_fit_result__ = self.tgraph.Fit(f_name, "SME")
-        self.__tf1__ = self.tgraph.GetListOfFunctions().FindObject(f_name)
-        self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
-
-
-class LogPolyFit(ROOTFitBase):
-    """
-    A fit of the form e^(c0 + c1 log(x) + c2 log(x)^2 + ... + cn log(x)^n).
-    This expression is good for fitting efficiency curves from HPGe detectors.
-
-    """
-    def __init__(self,  x, y, x_err=None, y_err=None, order=2, fix_coeffs_to_guess=None):
-        """
-        Log poly fit.
-        Args:
-            x: array or unp.uarray
-            y: array or unp.uarray
-            x_err:
-            y_err:
-            order: Order of polynomial
-            fix_coeffs_to_guess: Sometimes it is helpful to fix a coeff to the value determined from the initial
-                fit in Log-Log space, since the fitting in linear here (this is how the parameters are "guessed").
-                This can help reduce issues during the final non-linear fit. Recommended to fix the highest order params
-                first.
-        """
-        if fix_coeffs_to_guess is None:
-            fix_coeffs_to_guess = []
-        assert hasattr(fix_coeffs_to_guess, '__iter__')
-        assert all(isinstance(i, int) for i in fix_coeffs_to_guess)
-        assert all([i in range(order+1) for i in fix_coeffs_to_guess]),\
-            "Values in `fix_coeffs_to_guess` must be within range [0, order] "
-        assert len(fix_coeffs_to_guess) < order, "Too many parameters are fixed."
-
-        super(LogPolyFit, self).__init__(x, y, x_err, y_err)
-        log_x = unp.log(unp.uarray(self.x, self.x_err))
-        log_y = unp.log(unp.uarray(self.y, self.y_err))
-        log_y_err = unp.std_devs(log_y)
-        log_x_err = unp.std_devs(log_x)
-        log_y = unp.nominal_values(log_y)
-        log_x = unp.nominal_values(log_x)
-        tgraph = ROOT.TGraphErrors(len(x), log_x, log_y, log_x_err, log_y_err)
-        f_name = f'pol{order}'
-        tgraph.Fit(f_name, 'S')
-        __tf1__ = tgraph.GetListOfFunctions().FindObject(f_name)
-        coeffs = [__tf1__.GetParameter(i) for i in range(order+1)]
-        formula = "+".join([f'TMath::Log(x)**{i}*[{i}]' for i in range(order+1)])
-        formula = f"2.71828**({formula})"
-
-        self.__tf1__ = self.__tf1__ = ROOT.TF1("log_fit", formula)
-
-        self.tgraph = ROOT.TGraphErrors(len(x), self.x, self.y, self.x_err, self.y_err)
-
-        for i in range(order + 1):
-            if i in fix_coeffs_to_guess:
-                self.__tf1__.FixParameter(i, coeffs[i])
-            else:
-                self.__tf1__.SetParameter(i, coeffs[i])
-        self.__ROOT_fit_result__ = self.tgraph.Fit('log_fit', 'S')
-        self.coeffs = [ufloat(self.__tf1__.GetParameter(i), self.__tf1__.GetParError(i)) for i in range(order+1)]
-
+if __name__ == '__main__':
+   pass
