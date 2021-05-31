@@ -1,9 +1,6 @@
 #PTRAC
 
-When using MCNP to aid in the design of a physics experiment, tallies often fail to provide the information we need. 
-While tallies are convenient, they can be limited. 
-
-This is where PTRAC comes in. The format of a PTRAC file is uniquely obscure and poorly documented. 
+Tallies are convenient, but they can be limited.This is where PTRAC comes in. The format of a PTRAC file is uniquely obscure and poorly documented. 
 The decoding of PTRAC files is an undertaking that you don't want to undertake. You should just use Geant instead. 
 Or use this package to convert your PTRAC files into a ROOT tree. There's also an option to write the simulation
 to a human-readable text file (use option `write_2_text=True`).
@@ -20,8 +17,9 @@ tb = ROOT.TBrowser()
 ROOT_loop()
 ```
 
-Done! A ROOT tree should appear in the working directory. Open up a TBrowser and check it out.
+Done! A ROOT tree should appear in the working directory. Open up a TBrowser and check it out 
+(ROOT_loop is just there to make this work).
 A file names "lookup.txt" will be saved to the working directory. 
-This file contains information of, for example, the IDs for all the particles, and the meaning of the
-banked event numbers (i.e. the creation of secondary particles, that are "banked" during transport to be handled once 
-the current history finishes).
+This file contains information of, for example, the IDs for all the particles, the meaning of 
+banked event numbers (i.e. the creation of secondary particles, that are "banked" during transport to be handled after 
+the current particle history finishes).

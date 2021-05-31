@@ -85,7 +85,7 @@ class Branch:
         return f"<Branch, {self.name}, value=: {self._value}>"
 
     def fill(self, value):
-        assert len(self._value) <= 1
+        assert len(self._value) < 2
         self._value.push_back(float(value))
 
     def clear(self):
