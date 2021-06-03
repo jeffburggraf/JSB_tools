@@ -519,12 +519,6 @@ class ExponentialMLL:
         self.max_time = max_time
         self.weights = weights
 
-
-        # self.lambda_ = self.estimate(times, weights, times_noise, weights_noise)
-
-        # for i in range(len(times)*10):
-        #     i = np.random.randint(0, len(times), len(times))
-
     @property
     def hl(self):
         return np.log(2)/self.params.valuesdict()['_lambda']

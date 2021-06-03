@@ -36,8 +36,9 @@ class Base:
                 a = int(m.groups()[1])
             except KeyError:
                 assert False, f"Invalid projectile, {projectile}. Examples: Xe139, H2, He3, H3, Mo105"
-
-            self.zaid = int(1E6 * z + a)
+            self.z = z
+            self.a = a
+            # self.zaid = int(1E6 * z + a)
             self.erg_per_a = energy / a
 
         self._x = ROOT.vector('float')()
@@ -64,6 +65,8 @@ class Base:
         cmd = f'cd {self.save_dir.relative_to(cwd)};{cmd_name} {self.save_dir.name}'
         command = subprocess.Popen(cmd, shell=True, stdout=PIPE, )
         std_out = str(command.stdout.read())
+        print(std_out)
+        print(cmd)
         if 'Error Message' in std_out:
             for p in self.save_dir.iterdir():
                 p.unlink()
@@ -161,6 +164,7 @@ class Base:
 class PHITS(Base):
     def __init__(self, projectile: str, material: Material, energy, nps=1E4, overwrite=False):
         super().__init__(projectile, material, energy, nps, overwrite)
+        zaid = 1E6*self.z + self.a
         try:
             self._load_data()
         except FileNotFoundError:
@@ -169,8 +173,8 @@ class PHITS(Base):
                 i.write_inp_in_scope(locals(), new_file_name=self.save_dir.name)
 
                 try:
-                    self.ityp = {"H1": '1', 'electron': '12', 'positron': '13', 'H2': '15', 'H3': '16', 'He3': 17,
-                                 'He4': 18}[projectile.replace('-', '')]
+                    self.ityp = {"H1": '1', 'electron': '12', 'positron': '13', 'H2': '15', 'H3': '16', 'He3': '17',
+                                 'He4': '18'}[projectile.replace('-', '')]
                 except KeyError:
                     self.ityp = '19'
 
@@ -194,7 +198,7 @@ class PHITS(Base):
                             # is charged particle
                             term_waiting = True
                         else:
-                            print('Uh oh....: The ptrac line: ', line)
+                            assert False, f'Expected ityp: {self.ityp}, actual ityp: {line.split()[2]}'
                 elif term_waiting:
 
                     if line[:7] == 'EC,TC,X':  # Then next line is termination position and time
@@ -209,6 +213,10 @@ class PHITS(Base):
 class MCNP(Base):
     def __init__(self, projectile: str, material: Material, energy, nps=1E4, overwrite=False):
         super().__init__(projectile, material, energy, nps, overwrite)
+        zaid = 1000*self.z + self.a
+        mode = "#"  # todo: make this compatible for protons and electrons
+        material.mat_kwargs['Hstep'] = "100"
+        #  projectile: Must be a for He4, etc. Todo
         try:
             self._load_data()
         except FileNotFoundError:
@@ -216,14 +224,8 @@ class MCNP(Base):
                 i = InputDeck.mcnp_input_deck(self.template_path, self.save_dir.parent, gen_run_script=False)
                 i.write_inp_in_scope(locals(), new_file_name=self.save_dir.name)
 
-                try:
-                    self.ityp = {"H1": '1', 'electron': '12', 'positron': '13', 'H2': '15', 'H3': '16', 'He3': 17,
-                                 'He4': 18}[projectile.replace('-', '')]
-                except KeyError:
-                    self.ityp = '19'
-
-                self._run('phits.sh')
-                self.save_data()
+                self._run('mcnp6 i=')
+                # self.save_data()  # todo
                 self.tree.Write()
 
             except Exception as e:
@@ -232,6 +234,7 @@ class MCNP(Base):
 
 
 # mat = Material.gas(['U'], atom_fractions=[1,1], pressure=1.4)
-p = PHITS('electron', DepletedUranium(), 70)
+p = MCNP('He4', DepletedUranium(), 70)
+# p = PHITS('He4', DepletedUranium(), 70)
 
 TBrowser()

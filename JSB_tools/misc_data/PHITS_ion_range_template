@@ -47,7 +47,7 @@ c Ion source in the z+ direction
 [source]
   <source> = 1
 c    proj = 54000139
-    proj = @self.zaid@
+    proj = @zaid@
     s-type = 1
     x0 = 0
     y0 = 0
