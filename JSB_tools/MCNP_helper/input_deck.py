@@ -184,7 +184,8 @@ class InputDeck:
             new_file_dir = self.inp_file_path.parent
         else:
             new_file_dir = Path(new_file_dir)
-            assert new_file_dir.exists() and new_file_dir.is_dir(), '`new_file_dir` must be a directory that exists.'
+            assert new_file_dir.exists() and new_file_dir.is_dir(), f'`new_file_dir` must be a directory that exists.\n' \
+                                                                    f'"{new_file_dir}"'
         self.inp_root_directory = new_file_dir
         self.directories_created = []
 
@@ -293,8 +294,8 @@ class InputDeck:
                     else:
                         try:
                             evaluated = eval(exp_to_process, dict_of_globals)
-                            if isinstance(evaluated, Number):
-                                _fmt = ':.{}e'.format(NDIGITS)
+                            if isinstance(evaluated, float):
+                                _fmt = ':.{}g'.format(NDIGITS)
                                 evaluated = ('{' + _fmt + '}').format(evaluated)
 
                             new_line += "{0}".format(evaluated)
@@ -418,6 +419,7 @@ class InputDeck:
 
     def __append_cmd_to_run_script__(self, script_name, new_file_full_path, mcnp_or_phits_kwargs):
         f_path = self.inp_root_directory / script_name
+        # new_file_full_path = new_file_full_path.relative_to(self.inp_root_directory)
         if mcnp_or_phits_kwargs is None:
             script_kwargs = ""
         else:

@@ -12,7 +12,7 @@ cwd = Path(__file__).parent
 
 
 class Branch:
-    all_branches: List[Branch] = []
+    all_branches: List[Branch] = []  # this is an antipattern!
 
     @staticmethod
     def order_branches(*some_names_in_order):
@@ -109,7 +109,8 @@ class _Header:
             self.ids.append(ids[i1: i2])
 
 
-def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, int] = 100, write_2_text=False):
+def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, int] = None, write_2_text=False,
+               copy_lookup_files=False):
     ptrac_path = Path(ptrac_path)
     assert ptrac_path.exists()
     file = open(ptrac_path)
@@ -146,12 +147,18 @@ def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, in
                        28: Branch('time', tree)}
 
     def dict_get(ids):
+
+        """
+        Returns a list of Branches corresponding to quantities in the order they appear in the PTRAC file.
+        A KeyError represents a PTRAC entry that is either bugged or not of interest
+        (since I didn;t include it in `var_id_to_names`).
+        """
         out = []
         for _id in ids:
             try:
                 out.append(var_id_to_names[_id])
             except KeyError:
-                out.append(None)  # represents a PTRAC entry that is either bugged or not of interest.
+                out.append(None)
         return out
 
     patterns = {9000: (dict_get(header.ids[0]),),
@@ -161,14 +168,15 @@ def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, in
                 4000: (dict_get(header.ids[7]), dict_get(header.ids[8])),
                 5000: (dict_get(header.ids[9]), dict_get(header.ids[10]))}
 
-    for k, v in patterns.items():
-        print(k, v)
+    # for k, v in patterns.items():
+    #     print(k, v)
 
     n_events = 0
     expected_event = 9000
     bnk_number_branch = Branch('bnk', tree)
     current_event_branch = Branch('event', tree)
 
+    # rorders the global set of branches for printing to text file. Not particularly important
     Branch.order_branches('nps', 'event', 'cell', 'x', 'y', 'z', 'erg', 'par', 'time', 'bnk', 'term')
 
     text_file = None
@@ -195,7 +203,7 @@ def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, in
             for branch_or_flag, value in zip(p, line.split()):
                 if isinstance(branch_or_flag, Branch):
                     branch_or_flag.fill(value)
-                elif branch_or_flag == '_next_event':
+                elif branch_or_flag == '_next_event':  # this is not a branch, but must conform to the paradigm
                     if expected_event // 1000 == 2:
                         bnk_number_branch.fill(expected_event % 1000)
                     expected_event = int(value)
@@ -216,9 +224,96 @@ def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, in
     file.close()
 
     to_copy_lookup_file_path = ptrac_path.parent/'lookup.txt'
-    if not to_copy_lookup_file_path.exists():
+    if copy_lookup_files and not to_copy_lookup_file_path.exists():
         lookup_file_path = Path(cwd / 'lookup.txt')
         shutil.copy(lookup_file_path, to_copy_lookup_file_path)
+
+    Branch.all_branches = []
+
+class TTreeHelper:
+    root_files = []
+    def __init__(self, path):
+        path = Path(path)
+        assert path.exists()
+        self.root_file = ROOT.TFile(str(path))
+        TTreeHelper.root_files.append(self.root_file)
+        self.tree = self.root_file.Get('tree')
+
+        self.__i__ = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.tree.GetEntry(self.__i__)
+
+        self.__i__ += 1
+        if self.__i__ >= self.tree.GetEntries():
+            raise StopIteration
+
+        return self
+
+    @property
+    def is_nucleus(self):
+        """Helium or larger"""
+        return 33 <= self.tree.par[0] <= 37
+
+    @property
+    def event(self):
+        return int(self.tree.event[0])
+
+    @property
+    def is_term(self):
+        return self.tree.event[0] == 5000
+
+    @property
+    def is_src(self):
+        return self.tree.event[0] == 1000
+
+    @property
+    def dirx(self):
+        return self.tree.dirx[0]
+
+    @property
+    def diry(self):
+        return self.tree.diry[0]
+
+    @property
+    def dirz(self):
+        return self.tree.dirz[0]
+
+    @property
+    def x(self):
+        return self.tree.x[0]
+
+    @property
+    def y(self):
+        return self.tree.y[0]
+
+    @property
+    def z(self):
+        return self.tree.z[0]
+
+    @property
+    def energy(self):
+        return self.tree.erg[0]
+
+    @property
+    def pos(self):
+        return np.array([self.x, self.y, self.z])
+
+    @property
+    def cell(self):
+        return self.tree.cell[0]
+
+    @property
+    def weight(self):
+        return self.tree.wgt[0]
+
+    @property
+    def time(self):
+        return self.tree.time[0]
+
 
 
 if __name__ == '__main__':

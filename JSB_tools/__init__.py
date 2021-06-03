@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Core functions like ROOT_Loop, as well as functions that I didn't know where else to put
 """
@@ -121,6 +122,8 @@ def ROOT_loop():
 
 class FileManager:
     root_files:Dict[Path, ROOT.TFile] = {}
+    # todo: make gui for deleting files
+    #  todo: male read only option
 
     def __init__(self, path_to_root_dir: Union[str, Path], recreate=False):
         """
@@ -180,40 +183,106 @@ class FileManager:
         if not self.root_directory.exists():
             print(f'Creating directory for FileContainer:\n{self.root_directory}')
             self.root_directory.mkdir()
-        self.file_lookup_data: Dict[Path, dict] = {}
+        self.__file_lookup_data: Dict[Path, dict] = {}
 
         # path to file that stores association information
         self.__save_path = self.root_directory / "__file_lookup__.pickle"
-        try:
-            with open(self.__save_path, 'rb') as f:
-                self.file_lookup_data = pickle.load(f)
-        except FileNotFoundError:
-            pass
 
         if recreate:
-            self.file_lookup_data = {}
-
-        # for path in self.file_lookup_data.copy():
-        #     if not path.exists():
-        #         warnings.warn(f'\nLink found to non-existing file, "{path}".')
+            self.__file_lookup_data: Dict[Path, Dict] = {}
+            self.__save_path.unlink()
+        else:
+            try:
+                with open(self.__save_path, 'rb') as f:
+                    self.__file_lookup_data: Dict[Path, Dict] = pickle.load(f)
+            except (EOFError, FileNotFoundError) as e:
+                assert False, f"No FileManager at {self.root_directory}"
+                # self.__file_lookup_data: Dict[Path, Dict] = {}
 
         register(self.__at_exit__)
 
     def __save_lookup_data__(self):
         with open(self.__save_path, 'wb') as f:
-            pickle.dump(self.file_lookup_data, f)
+            pickle.dump(self.__file_lookup_data, f)
 
-    def add_path(self, path, missing_ok=False, **lookup_attributes):
-        path = self.root_directory/Path(path)
+    @staticmethod
+    def auto_gen_path(attribs: Dict, root_path, extension='') -> Path:
+        """
+        Generate a simple (obscure) path, and save the attribs to a text file for reference.
+        Args:
+            attribs:
+            root_path: Root path will be prepended to name. If None, then no path is prepended
+            extension:
+
+        Returns: Absolute path
+
+        """
+        existing_paths = list(Path(root_path).iterdir())
+        root_path = Path(root_path)
+
+        def get_new_path(i):
+            out = (root_path/f"{i}").with_suffix(extension)
+            return out
+
+        i = 0
+        while (new_path := get_new_path(i)) in existing_paths:
+            i += 1
+
+        return new_path
+
+    @staticmethod
+    def __verify_attribs__(attribs: Dict):
+        for kv in attribs.items():
+            try:
+                _ = {kv}
+            except TypeError as e:
+                assert False, f"Type error for the following value: {kv}\n" \
+                              f"Make sure all attribs are hashable.\nThe error:\n" \
+                              f"\t{e}"
+
+    def add_path(self, rel_path_or_abs_path=None, missing_ok=False, overwrite_ok=False, **lookup_attributes) -> Path:
+        """
+        Add a path and lookup attributes to the list of saved files.
+        Args:
+            rel_path_or_abs_path:  Either a path relative to the self.root_directory, or an absolute path rel. to
+                sys root
+            missing_ok:  Raise error if missing?
+            **lookup_attributes: kwargs used for easy lookup later.
+        :return: Returns path to file
+
+        Returns: Returns path to file.
+
+        """
+        FileManager.__verify_attribs__(lookup_attributes)
+        assert len(lookup_attributes) != 0, \
+            "If you're not going to provide any attributes then this tool is no for you."
+        if rel_path_or_abs_path is None:
+            rel_path_or_abs_path = self.auto_gen_path(lookup_attributes, self.root_directory)
+        rel_path_or_abs_path = Path(rel_path_or_abs_path)
+        if str(rel_path_or_abs_path.anchor) != '/':
+            rel_path_or_abs_path = self.root_directory / Path(rel_path_or_abs_path)
+        abs_path = rel_path_or_abs_path
         if not missing_ok:
-            assert path.exists(), f'The path, "{path}", does not exist. Use missing_ok=True to bypass this error'
-        assert not path.is_dir(), f'The path, "{path}", is a directory.'
-        assert path not in self.file_lookup_data, f'Cannot add path, "{path}", to FileManager twice.'
-        assert lookup_attributes not in self.file_lookup_data.values(),\
-            f'FileManger requires a unique set of attributes for each file added.\n' \
-            f'"{lookup_attributes}" has already been used.'
-        self.file_lookup_data[path] = lookup_attributes
+            assert abs_path.exists(), f'The path, "{abs_path}", does not exist. Use missing_ok=True to bypass this error'
+        assert not abs_path.is_dir(), f'The path, "{abs_path}", is a directory.'
+        if abs_path in self.__file_lookup_data:
+            if lookup_attributes in self.__file_lookup_data.values():  # path and attrib identical. May overwrite
+                if overwrite_ok:  # overwrite
+                    warnings.warn(f"Overwriting {abs_path}")
+                else:  # nm don't overwrite
+                    assert False, f"Cannot overwrite {abs_path}. Set parameter `overwrite_ok` to True"
+            else:
+                warnings.warn(f"Path {abs_path} used twice. Overwriting!")
+
+        else:
+            # if paths aren't identical, no identical attribs are allowed.
+            assert lookup_attributes not in self.__file_lookup_data.values(), \
+                f'FileManger requires a unique set of attributes for each file added.\n' \
+                f'"{lookup_attributes}" has already been used.'
+
+        self.__file_lookup_data[abs_path] = lookup_attributes
         self.__save_lookup_data__()
+        return rel_path_or_abs_path
 
     def find_path(self, missing_ok=False, **lookup_attributes) -> Union[None, Path]:
         """
@@ -225,17 +294,17 @@ class FileManager:
         Returns:
 
         """
-        for path, attribs in self.file_lookup_data.items():
+        for path, attribs in self.__file_lookup_data.items():
             if lookup_attributes == attribs:
                 return path
-        available_files_string = '\n'.join(map(str, self.file_lookup_data.values()))
+        available_files_string = '\n'.join(map(str, self.__file_lookup_data.values()))
         if not missing_ok:
             raise FileNotFoundError(f"No file with the following matching keys/values:\n {lookup_attributes}\n"
                                     f"Currently linked files are:\n{available_files_string}")
 
     def find_paths(self, **lookup_attributes) -> Dict[Path, dict]:
         """
-        Find of all file paths for which `lookup_attributes` is a subset of the files attributes.
+        Find of all file paths for which the set of `lookup_attributes` is a subset of the files attributes.
         Return a dictionary who's keys are file paths, and values are the corresponding
             lookup attributes (all of them for the given file, not just the ones the user searched for)
         Args:
@@ -256,10 +325,12 @@ class FileManager:
         """
         lookup_kwargs = set(lookup_attributes.items())
         matches = {}
-        for path, attribs in self.file_lookup_data.items():
+        for path, attribs in self.__file_lookup_data.items():
             attribs_set = set(attribs.items())
             if len(lookup_kwargs - attribs_set) == 0:
-                matches[path] = attribs
+                matches[path] = {k: v for k, v in attribs.items()}
+        if len(matches) == 0:
+            warnings.warn(f"No files fiund containing the following attribs: {lookup_attributes}")
         return matches
 
     def find_tree(self, tree_name="tree", **lookup_attributes) -> ROOT.TTree:
@@ -312,13 +383,17 @@ class FileManager:
             i = 0
             while file_name := (self.root_directory / f"file_{i}.pickle"):
                 i += 1
-                if file_name not in self.file_lookup_data:
+                if file_name not in self.__file_lookup_data:
                     break
         file_name = self.root_directory / file_name
 
         with open(file_name, 'wb') as f:
             pickle.dump(data, f)
         self.add_path(file_name, **lookup_attributes)
+
+    @property
+    def all_files(self) -> Dict[Path, Dict[str, str]]:
+        return {k: v for k, v in self.__file_lookup_data.items()}
 
     def unpickle_data(self, **lookup_kwargs):
         """
@@ -337,17 +412,20 @@ class FileManager:
     def __at_exit__(self):
         self.__save_lookup_data__()
 
+    # def __del__(self):
+    #     self.__at_exit__()
+
     @property
     def available_files(self):
         outs = []
-        for path, keys_values in self.file_lookup_data.items():
+        for path, keys_values in self.__file_lookup_data.items():
 
             outs.append(f'{keys_values}   {path}  [{"exists" if path.exists() else "missing"}]')
         return '\n'.join(outs)
 
     def __repr__(self):
         outs = ['-'*80]
-        for path, keys_values in self.file_lookup_data.items():
+        for path, keys_values in self.__file_lookup_data.items():
             outs.append(f"{keys_values}\n\t{path}\n")
         outs[-1] = outs[-1][:-1]
         outs.append(outs[0] + '\n')
@@ -357,10 +435,19 @@ class FileManager:
         # return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
 
     def clean(self):
-        for path in self.file_lookup_data.keys():
+        for path in self.__file_lookup_data.keys():
             path = Path(path)
             path.unlink(missing_ok=True)
         self.__save_path.unlink(missing_ok=True)
+
+    def __iadd__(self, other: FileManager):
+        for path, attribs in other.all_files.items():
+            if path in self.__file_lookup_data:
+                assert attribs == self.__file_lookup_data[path], f"Encountered two files with identical paths and " \
+                                                                 "different attribs during merge. This is not allowed.\n" \
+                                                                 f"{attribs}"
+            self.__file_lookup_data[path] = attribs
+        return self
 
 
 def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[float], order=2):

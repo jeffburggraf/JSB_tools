@@ -1,0 +1,15 @@
+Ion Range Template
+
+c
+10 1000 -@abs(material.density)@ -1
+99 -1
+
+1 so 1E6 $
+mode @mode@
+@material@
+SDEF
+     par= @par@
+     pos= 0 0 0
+     vec = 0 0 1
+     dir= 1
+     erg = @energy@

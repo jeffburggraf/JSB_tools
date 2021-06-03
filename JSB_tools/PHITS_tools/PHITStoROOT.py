@@ -30,6 +30,7 @@ class PHITSTTreeHelper:
     e.g., adding autocomplete, the ability to look up a nuclide that's being tracked, etc.
     """
     nuclides = {}
+    root_files = set()
 
     def __init__(self, path_to_root_file_or_tree: Union[ROOT.TTree, Path, str]):
         if isinstance(path_to_root_file_or_tree, (str, Path)):
@@ -41,9 +42,10 @@ class PHITSTTreeHelper:
             self.tree = path_to_root_file_or_tree
             self.root_file = self.tree.GetCurrentFile()
             self.path = self.root_file.GetName()
+        PHITSTTreeHelper.root_files.add(self.root_file)
 
     @staticmethod
-    def t_browser(self):
+    def t_browser():
         TBrowser()
 
     @property
@@ -67,6 +69,11 @@ class PHITSTTreeHelper:
         elif 15 <= par_id <= 18:
             n = self.nuclide
             return n.name
+
+    @property
+    def is_nucleus(self):
+        """Helium or larger"""
+        return 17 <= self.tree.par_id <= 19
 
     @property
     def nuclide(self) -> Union[None, Nuclide]:

@@ -41,7 +41,7 @@ class ChemicalFormula:
         self.total_grams_peer_mole = np.sum(self.atom_numbers*self.atomic_weights)
 
 
-class IdealGas:
+class _IdealGas:
     R = 8.3144626181
 
     def __init__(self, list_of_chemicals: List[str]):
@@ -55,6 +55,7 @@ class IdealGas:
 
     @staticmethod
     def __temp_and_pressure__(temp, pressure, temp_units, press_units):
+        """Convert/Parse arguments"""
         temp_units = temp_units.lower()
         press_units = press_units.lower()
         if temp_units == 'k':
@@ -82,7 +83,7 @@ class IdealGas:
         mass_ratios = np.array(mass_ratios)
         assert len(mass_ratios) == len(self.total_grams_per_mole_list)
         norm = sum(mass_ratios)
-        p_over_r_t = pressure/(IdealGas.R*temperature)
+        p_over_r_t = pressure/(_IdealGas.R * temperature)
         _x = np.sum((mass_ratios/norm)/self.total_grams_per_mole_list)
         out = 1E-6*p_over_r_t/_x
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
@@ -96,7 +97,7 @@ class IdealGas:
         atom_fractions = np.array(atom_fractions)
         assert len(atom_fractions) == len(self.total_grams_per_mole_list)
         mean_g_per_mole = np.average(self.total_grams_per_mole_list, weights=atom_fractions)
-        p_over_r_t = pressure/(IdealGas.R*temperature)
+        p_over_r_t = pressure/(_IdealGas.R * temperature)
         out = 1E-6*p_over_r_t*mean_g_per_mole  # 1E-6 converts from g/m3 to g/cm3
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
         out = float(fmt.format(out))
@@ -135,8 +136,8 @@ class Material:
         self.__name__ = mat_name
         Material.__all_materials[self.mat_number] = self
         self.density = density
-        self.__zaids = []
-        self.__zaid_proportions = []
+        self._zaids = []
+        self._zaid_proportions = []
 
         if mat_kwargs is None:
             self.mat_kwargs = {}
@@ -159,7 +160,7 @@ class Material:
             ):
         # Todo: Use N(2) or N_2 to specify number of N atoms. Thus, allowing isotope specification normally.
 
-        g = IdealGas(list_of_chemicals)
+        g = _IdealGas(list_of_chemicals)
         if len(list_of_chemicals) == 1:
             is_weight_fraction = True
             fractions = [1]
@@ -237,27 +238,30 @@ class Material:
             assert False, 'Incorrect type, "{}", passed in `zaid_or_nuclide` argument.\n' \
                           'Must be zaid (int) or Nuclide'.format(type(zaid_or_nuclide))
 
-        self.__zaids.append(zaid_or_nuclide)
-        self.__zaid_proportions.append(fraction)
+        self._zaids.append(zaid_or_nuclide)
+        self._zaid_proportions.append(fraction)
 
     @property
     def mat_card(self, mat_kwargs=None) -> str:
         if mat_kwargs is not None:
             self.mat_kwargs.update(mat_kwargs)
 
-        assert len(self.__zaids) > 0, 'No materials added! Use Material.add_zaid'
+        assert len(self._zaids) > 0, 'No materials added! Use Material.add_zaid'
         comment = get_comment('density = {}'.format(self.density), self.name )
         outs = ['M{}  {}'.format(self.mat_number, comment)]
-        for n, zaid in zip(self.__zaid_proportions, self.__zaids):
+        for n, zaid in zip(self._zaid_proportions, self._zaids):
             outs.append('     {} {}'.format(zaid, '-{}'.format(n) if self.is_weight_fraction else n))
         outs.extend(["     {} = {}".format(k, v) for k, v in self.mat_kwargs.items()])
         return '\n'.join(outs)
+
+    def __repr__(self):
+        return self.mat_card
 
     @property
     def name(self):
         return self.__name__
 
-    def __del__(self):
+    def delete_mat(self):
         if self.mat_number in Material.__all_materials:
             del Material.__all_materials[self.mat_number]
 
@@ -329,7 +333,7 @@ class Air(Material):
             assert temperature is pressure is None, "`density` was specified. `pressure` and `temperature` must be None"
 
         else:
-            g = IdealGas(elements)
+            g = _IdealGas(elements)
             density = g.get_density_from_atom_fractions(atom_fractions=fractions,
                                  temperature=temperature, temp_units=temp_units, pressure=pressure,
                                  pressure_units=pressure_units,  n_sig_digits=n_sig_digits)

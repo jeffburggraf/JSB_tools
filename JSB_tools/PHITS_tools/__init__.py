@@ -3,6 +3,8 @@
 MANUAL LOOKUP
 Energy distribution types (e-type info): page 94, 5.3.19
 """
+import numpy as np
+from typing import List
 from JSB_tools.nuke_data_tools import Nuclide
 from typing import Union, Sized
 from dataclasses import dataclass
@@ -69,6 +71,51 @@ class CylindricalSource(Distribution):
                   "r0": self.radius, "dir": self.dir}
 
         return kwargs
+
+
+@dataclass
+class PointSource(Distribution):
+    x: float = 0
+    y: float = 0
+    z: float = 0
+    dirx: float = 0
+    diry: float = 0
+    dirz: float = 0
+
+    def __get_kwargs__(self):
+        def get_phi(x, y):
+            if x == 0:
+                if y>0:
+                    out = 90
+                elif y<0:
+                    out = -90
+                else:
+                    return 'none'
+            else:
+                out = np.arctan(y/x) - np.sign(x*y)*(x < 0)*np.pi
+                out = 180/np.pi*out
+            return out
+        isotropic = self.dirx == self.diry == self.dirz == 0
+        kwargs = {'s-type': 1, "x0": self.x, "y0": self.y, "z0": self.z, "z1": self.z,
+                  "r0": 0}
+        if not isotropic:
+            phi = get_phi(self.dirx, self.diry)
+            dir_ = self.dirz/np.linalg.norm((self.dirx, self.diry, self.dirz))
+            kwargs["dir"] = dir_
+            if isinstance(phi, Number):
+                kwargs['phi'] = phi
+
+        return kwargs
+
+
+def __get_kwargs__(self):
+    if self.dz is not None:
+        assert self.z1 is None, "cannot specify dz and z1. Use one or the other"
+        self.z1 = self.z0 + self.dz
+    kwargs = {'s-type': 1, "x0": self.x0, "y0": self.y0, "z0": self.z0, "z1": self.z1,
+              "r0": self.radius, "dir": self.dir}
+
+    return kwargs
 
 
 @dataclass
@@ -162,6 +209,40 @@ class GaussianEnergyDistribution(Distribution):
         return kwargs
 
 
+@dataclass
+class MonoEnergeticDistribution(Distribution):
+    erg: float
+
+    def __imul__(self, other):
+        self.erg *= other
+        return self
+
+    def __get_kwargs__(self):
+        return {'e0': self.erg}
+
+
+@dataclass
+class GenericEnergyDistribution(Distribution):
+    energies: Union[List[float], np.ndarray]
+    weights: Union[List[float], np.ndarray]
+
+    def __imul__(self, other):
+        self.energies = np.array(self.energies)
+        self.energies *= other
+        return self
+
+    def __get_kwargs__(self):
+        self.weights = np.array(self.weights)
+        self.weights /= sum(self.weights)
+        assert len(self.weights) == len(self.energies)
+
+        kwargs = {'e-type': 1, 'ne': len(self.weights)}
+        for i, (w, erg) in enumerate(zip(self.weights, self.energies)):
+            kwargs[f'e({i})'] = erg
+            kwargs[f'w({i})'] = w
+        return kwargs
+
+
 class NucleusSource:
     __all_sources__ = []
 
@@ -193,3 +274,6 @@ class NucleusSource:
         # print(out)
         return out
 
+if __name__ == "__main__":
+    n = NucleusSource("Xe139", MonoEnergeticDistribution(70), PointSource())
+    print(n)
