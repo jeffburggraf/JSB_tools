@@ -230,6 +230,7 @@ def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, in
 
     Branch.all_branches = []
 
+
 class TTreeHelper:
     root_files = []
     def __init__(self, path):
