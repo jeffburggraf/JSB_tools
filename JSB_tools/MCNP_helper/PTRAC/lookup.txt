@@ -1,0 +1,250 @@
+The following tables contain various variables used within the parser and their descriptions (taken from various locations in the MCNP5 manual)
+Included tables:
+	Event types
+	Variable IDs for each line
+	Output variables
+	Termination types
+	Reaction types
+	Banked event descriptions
+
+General variables:
+
+Event types:
+     Value	Event type
+      1000	         1
+      2000	         2
+      3000	         3
+      4000	         4
+      5000	         5
+
+Variable IDs:
+        ID	 Var. name	Description
+         1	       NPS	History number
+         2	   S_EVENT	Type of first history event
+         3	       NCL	Cell number
+         4	       NSF	Nearest surface headed towards
+         5	     JPTAL	Tally specifier
+         6	       TAL	TFC specifier
+         7	 NXT_EVENT	Next event type
+         8	      NODE	Number of nodes in track from source to this point
+         9	       NSR	Source number
+        10	       NXS	ZZAAA for interaction
+        11	      NYTN	Reaction type (MT)
+        12	       NSF	Surface number
+        13	       ANG	Angle with surface normal (degrees)
+        14	      NTER	Termination type
+        15	    BRANCH	Branch number
+        16	       IPT	Particle type
+        17	       NCL	Cell number
+        18	       MAT	Material number
+        19	       NCP	Number of collisions in history
+        20	       XXX	x-coordinate of event (cm)
+        21	       YYY	y-coordinate of event (cm)
+        22	       ZZZ	z-coordinate of event (cm)
+        23	       UUU	x-component of exit direction vector
+        24	       VVV	y-component of exit direction vector
+        25	       WWW	z-component of exit direction vector
+        26	       ERG	Energy of particle after event
+        27	       WGT	Weight of particle after event
+        28	       TME	Time of event
+
+Output variables:
+
+
+Variables used in output file:
+
+  Variable     Definition                                              Notes
+       NPS     History number
+     COUNT     Event number within history
+      TYPE     Source, banked, surface, collision or termination
+       NXS     ZZAAA for event                                         COL and BNK events only
+      NTYN     Reaction type (MT number)                               COL and BNK events only
+       NSF     Surface crossing                                        SUR event only
+       ANG     Angle with surface normal (degrees)                     SUR event only
+      NTER     Termination type                                        TER event only
+    BRANCH     Branch number for history                               TER event only
+       NCL     Cell number
+       MAT     Material number
+       NCP     Number of collisions to event from source
+   X, Y, Z     Co-ordinates of event (cm)
+   U, V, W     Unit vector for direction after event                   write=all only
+       ERG     Energy after event (MeV)                                write=all only
+       WGT     Particle weight after event                             write=all only
+       TME     Event time (shakes)                                     write=all only
+
+Termination types (NTER):
+       PAR      NTER	Description
+       all         1	Escape
+       all         2	Energy cut-off
+       all         3	Time cut-off
+       all         4	Weight window
+       all         5	Cell importance
+       all         6	Weight cut-off
+       all         7	Energy importance
+       all         8	DXTRAN
+       all         9	Forced collision
+       all        10	Exponential transform
+   neutron        11	Downscattering
+   neutron        12	Capture
+   neutron        13	Loss to (n,xs)
+   neutron        14	Loss to fission
+    photon        11	Compton scatter
+    photon        12	Capture
+    photon        13	Pair production
+  electron        11	Scattering
+  electron        12	Bremsstrahlung
+
+Reaction types (NTYN):
+       PAR      NTYN	Description
+   neutron         1	n_total
+   neutron         2	z_elastic
+   neutron         3	z_nonelastic
+   neutron         4	z_n
+   neutron         5	z_anything
+   neutron        10	z_continuum
+   neutron        11	z_2nd
+   neutron        16	z_2n
+   neutron        17	z_2n
+   neutron        18	z_fission
+   neutron        19	z_f
+   neutron        20	z_nf
+   neutron        21	z_2nf
+   neutron        22	z_na
+   neutron        23	z_n3a
+   neutron        24	z_2na
+   neutron        25	z_3na
+   neutron        27	z_abs
+   neutron        28	z_np
+   neutron        29	z_n2a
+   neutron        30	z_2n2a
+   neutron        32	z_nd
+   neutron        33	z_nt
+   neutron        34	z_n3He
+   neutron        35	z_nd2a
+   neutron        36	z_nt2a
+   neutron        37	z_4n
+   neutron        38	z_3nf
+   neutron        41	z_2np
+   neutron        42	z_3np
+   neutron        44	z_n2p
+   neutron        45	z_npa
+   neutron        50	z_n0
+   neutron        51	z_n1
+   neutron        52	z_n2
+   neutron        53	z_n3
+   neutron        54	z_n4
+   neutron        55	z_n5
+   neutron        56	z_n6
+   neutron        57	z_n7
+   neutron        58	z_n8
+   neutron        59	z_n9
+   neutron        60	z_n10
+   neutron        61	z_n11
+   neutron        62	z_n12
+   neutron        63	z_n13
+   neutron        64	z_n14
+   neutron        65	z_n15
+   neutron        66	z_n16
+   neutron        67	z_n17
+   neutron        68	z_n18
+   neutron        69	z_n19
+   neutron        70	z_n20
+   neutron        71	z_n21
+   neutron        72	z_n22
+   neutron        73	z_n23
+   neutron        74	z_n24
+   neutron        75	z_n25
+   neutron        76	z_n26
+   neutron        77	z_n27
+   neutron        78	z_n28
+   neutron        79	z_n29
+   neutron        80	z_n30
+   neutron        81	z_n31
+   neutron        82	z_n32
+   neutron        83	z_n33
+   neutron        84	z_n34
+   neutron        85	z_n35
+   neutron        86	z_n36
+   neutron        87	z_n37
+   neutron        88	z_n38
+   neutron        89	z_n39
+   neutron        90	z_n40
+   neutron        91	z_nc
+   neutron       101	z_disap
+   neutron       102	z_gamma
+   neutron       103	z_p
+   neutron       104	z_d
+   neutron       105	z_t
+   neutron       106	z_3He
+   neutron       107	z_a
+   neutron       108	z_2a
+   neutron       109	z_3a
+   neutron       111	z_2p
+   neutron       112	z_pa
+   neutron       113	z_t2a
+   neutron       114	z_d2a
+   neutron       115	z_pd
+   neutron       116	z_pt
+   neutron       117	z_da
+   neutron       151	resonance_params
+   neutron       451	description
+   neutron       452	fission_n
+   neutron       455	fission_n_delayed
+   neutron       456	fission_n_prompt
+   neutron       458	fission_n_energy
+   neutron       460	g_delayed
+   neutron       600	z_p0
+   neutron       601	z_p1
+   neutron       602	z_p2
+   neutron       648	z_p48
+   neutron       649	z_pc
+   neutron       650	z_d0
+   neutron       651	z_d1
+   neutron       698	z_d48
+   neutron       699	z_dc
+   neutron       700	z_t0
+   neutron       701	z_t1
+   neutron       748	z_t48
+   neutron       749	z_tc
+   neutron       750	z_3He0
+   neutron       751	z_3He1
+   neutron       798	z_3He48
+   neutron       799	z_3Hec
+   neutron       800	z_a0
+   neutron       801	z_a1
+   neutron       848	z_a48
+   neutron       849	z_ac
+    photon         1	Incoherent scatter
+    photon         2	Coherent scatter
+    photon         3	Fluorescence
+    photon         4	Double fluorescence
+    photon         5	Pair production
+
+Banked event types (±200N):
+   N value	Description
+         1	DXTRAN Track
+         2	Energy Split
+         3	Weight Window Surface Split
+         4	Weight Window Collision Split
+         5	Forced Collision-Uncollided Part
+         6	 Importance Split
+         7	Neutron from Neutron (n,xn) (n,f)
+         8	Photon from Neutron
+         9	Photon from Double Fluorescence
+        10	Photon from Annihilation
+        11	Electron from Photoelectric
+        12	Electron from Compton
+        13	Electron from Pair Production
+        14	Auger Electron from Photon/X-ray
+        15	Positron from Pair Production
+        16	Bremsstrahlung from Electron
+        17	Knock-on Electron
+        18	X-rays from Electron
+        19	Photon from Neutron - Multigroup
+        20	Neutron (n,f) - Multigroup
+        21	Neutron (n,xn) k- Multigroup
+        22	Photon from Photon - Multigroup
+        23	Adjoint Weight Split - Multigroup
+        24	Weight window time split
+        25	Neutron from photonuclear
+        26	DXTRAN annnihilation photon from pulse height tally variance reduction

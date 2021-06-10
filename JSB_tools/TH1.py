@@ -15,9 +15,10 @@ from lmfit import Model, fit_report
 from scipy.signal import find_peaks
 from pathlib import Path
 from matplotlib import pyplot as plt
-from typing import List, Union, Sequence
+from typing import List, Union, Sequence, Collection
 import re
 import os
+import matplotlib.offsetbox as offsetbox
 from scipy.stats import norm
 
 
@@ -45,9 +46,9 @@ def binned_median(bin_left_edges, weights):
     return x[index] + dx
 
 
-def rolling_median(window_width, values):
+def rolling_median(window_width, values, interpolate=False):
     """
-    Rolling median over a uniform window. Window is clipped at the edges.
+    Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
     Args:
         window_width: Size of independent arrays for median calculations.
         values: array of values
@@ -55,12 +56,13 @@ def rolling_median(window_width, values):
     Returns:
 
     """
+    window_width = int(window_width)
     n = min([window_width, len(values)])
     if not isinstance(values, np.ndarray):
         values = np.array(values)
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
 
-    medians = np.array([np.median(values[idx]) for idx in window_indicies], dtype=np.ndarray)
+    medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
 
     return medians
 
@@ -94,7 +96,6 @@ def rolling_MAD(window_width, values):
     if not isinstance(values, np.ndarray):
         values = np.array(values)
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
-    print(list(window_indicies))
     out = np.array([np.median(np.abs(values[idx] - np.median(values[idx]))) for idx in window_indicies],
                    dtype=np.ndarray)
 
@@ -144,7 +145,7 @@ class TH1F:
         if ROOT_hist is not None:
             self.__ROOT_hist__ = ROOT_hist
             self.__bin_left_edges__ = np.array(
-                [ROOT_hist.GetBinLowEdge(i) for i in range(1, ROOT_hist.GetNbinsX() + 2)], dtype=np.float)
+                [ROOT_hist.GetBinLowEdge(i) for i in range(1, ROOT_hist.GetNbinsX() + 2)], dtype=float)
             self.title = ROOT_hist.GetName()
             self.n_bins = len(self.__bin_left_edges__) - 1
         else:
@@ -156,22 +157,22 @@ class TH1F:
                 if bin_width is None:
                     assert nbins is not None, arg_error_msg
                     assert isinstance(nbins, int), '`nbins` arg must be an integer'
-                    self.__bin_left_edges__ = np.linspace(min_bin, max_bin, nbins + 1, dtype=np.float)
+                    self.__bin_left_edges__ = np.linspace(min_bin, max_bin, nbins + 1, dtype=float)
                 else:
                     assert nbins is None, arg_error_msg
                     assert isinstance(bin_width, Number), '`bin_width` arg must be a number'
-                    self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=np.float)
+                    self.__bin_left_edges__ = np.arange(min_bin, max_bin + bin_width, bin_width, dtype=float)
             else:
                 assert len(bin_left_edges) >= 2, "`bin_left_edges` argument must be iterable of length greater than 1"
-                assert all([isinstance(x, Number) for x in bin_left_edges]), 'All values of `bin_left_edges` must be a'\
-                                                                             ' number'
+                assert all([isinstance(x, Number) for x in bin_left_edges]), f'All values of `bin_left_edges` must be a'\
+                                                                             f' number, not {set(map(type, bin_left_edges))}'
                 assert all([x is None for x in [bin_width, min_bin, max_bin, nbins]]), '`bin_left_edges` was passed to'\
                                                                                        ' TH1F. Bins are fullly' \
                                                                                        ' specified.'\
                                                                                        ' No other bin specification '\
                                                                                        'arguments allowed in this case.'
 
-                self.__bin_left_edges__ = np.array(bin_left_edges, dtype=np.float)
+                self.__bin_left_edges__ = np.array(bin_left_edges, dtype=float)
 
             if title is None:
                 title = "hist{0}".format(TH1F.title_number)
@@ -183,6 +184,7 @@ class TH1F:
             self.n_bins = len(self.__bin_left_edges__) - 1
             self.__ROOT_hist__ = ROOT.TH1F(title, title, self.n_bins, self.__bin_left_edges__)
             self.title = title
+        self.is_density = False
 
         self.bin_centers = np.array(
             [0.5 * (b2 + b1) for b1, b2 in zip(self.__bin_left_edges__[:-1], self.__bin_left_edges__[1:])])
@@ -195,40 +197,86 @@ class TH1F:
         self.draw_weight = None
 
     @classmethod
-    def from_data_points(cls, data: Sequence[Number], bins=None, weights=None):
+    def from_native_ROOT_hist(cls, hist: ROOT.TH1) -> TH1F:
+        assert isinstance(hist, ROOT.TH1)
+        bin_left_edges = []
+        bin_values_n = []
+        bin_values_err = []
+
+        for i in range(1, hist.GetNbinsX()+1):
+            bin_left_edges.append(hist.GetBinLowEdge(i))
+            bin_values_n.append(hist.GetBinContent(i))
+            bin_values_err.append(hist.GetBinError(i))
+        bin_left_edges.append(bin_left_edges[-1] + hist.GetBinWidth(hist.GetNbinsX()))
+        new_hist = cls(bin_left_edges=bin_left_edges)
+        cls.SetTitle(new_hist, hist.GetName())
+        new_hist += unp.uarray(bin_values_n, bin_values_err)
+        return new_hist
+
+    @classmethod
+    def from_raw_data(cls, data: Sequence[Number], bins: Union[int, Sequence] = None,
+                      weights: Union[None, Sequence] = None) -> TH1F:
+        """
+        Generate a histogram from raw data, e.g. like np.histogram.
+        Args:
+            data: raw data points
+            bins: either the number of bins, are an array of bin left edges.
+            weights: Weights of each data point.
+
+        Returns:
+
+        """
+        assert isinstance(data, Collection)
         if bins is None:
             bins = 'auto'
-        bin_values, bin_lef_edges = np.histogram(data, bins=bins, weights=weights)
-        hist = cls(bin_left_edges=bin_lef_edges)
-        bin_errors = np.sqrt(bin_values)
-        bin_values = unp.uarray(bin_values, bin_errors)
-        hist.__set_bin_values__(bin_values)
+        bin_values, bin_left_edges = np.histogram(data, bins=bins)
+        if weights is None:
+            weights = np.ones_like(data)
+        else:
+            assert hasattr(weights, '__len__')
+            assert len(weights) == len(data)
+        hist = cls(bin_left_edges=bin_left_edges)
+
+        for w, value in zip(weights, data):
+            hist.Fill(value, w)
         return hist
 
     @classmethod
-    def from_x_and_y(cls, x: Sequence[float], y: Sequence[Union[UFloat, float]]) -> TH1F:
+    def points_to_bins(cls, x_points):
+        assert isinstance(x_points, Collection) and len(x_points) >= 2, f'`x` must be a collection with minimum length of 2, not {x}'
+        assert not isinstance(x_points[0], UFloat), 'x bust be a Number, not UFloat'
+        bin_left_edges = [x_points[0] - (x_points[1] - x_points[0]) / 2]
+        for xi in x_points:
+            bin_left_edges.append(-bin_left_edges[-1] + 2 * xi)
+        assert all([x1 - x0 > 0 for x0, x1 in zip(bin_left_edges[:-1], bin_left_edges[1:])]), \
+            'Provided bins are not increasing monotonically!'
+        return cls(bin_left_edges=bin_left_edges)
+
+    @classmethod
+    def from_x_and_y(cls, x: Collection[float], y: Collection[Union[UFloat, float]], y_err) -> TH1F:
         """
         Generate a histogram from x and y points. This generally shouldn't be used.
 
         Args:
             x: bin centers
             y: bin values (can be floats or UFloats)
+            y_err: Errors in y
 
         Returns: histogram.
 
         """
-        assert isinstance(x, Sequence) and len(x) >= 2, '`x` must be a collection with minimum length of 2'
-        assert not isinstance(x[0], UFloat), 'x bust be a Number, not UFloat'
-        y = [i.n if isinstance(i, UFloat) else i for i in y]
-        y_err = [i.std_dev if isinstance(i, UFloat) else 0 for i in y]
-        bin_left_edges = [x[0] - (x[1]-x[0])/2]
-        for xi in x:
-            bin_left_edges.append(-bin_left_edges[-1] + 2*xi)
-        assert all([x1-x0 > 0 for x0, x1 in zip(bin_left_edges[:-1], bin_left_edges[1:])]),\
-            'Provided bins are not increasing monotonically!'
 
+
+        y = [i.n if isinstance(i, UFloat) else i for i in y]
+        if y_err is not None:
+            assert isinstance(y_err, Collection)
+        else:
+            y_err = [i.std_dev if isinstance(i, UFloat) else 0 for i in y]
+
+        hist = cls.points_to_bins(x)
         bin_values = unp.uarray(y, y_err)
-        hist = cls(bin_left_edges=bin_left_edges)
+        assert all(hist.bin_centers == np.array(x))
+
         hist.__set_bin_values__(bin_values)
         return hist
 
@@ -272,7 +320,6 @@ class TH1F:
     @title.setter
     def title(self, title: str):
         self.__ROOT_hist__.SetTitle(str(title))
-        return title
 
     @property
     def bin_width(self):
@@ -303,131 +350,54 @@ class TH1F:
         return _new_hist
 
     def set_min_bin_value(self, y=0):
+        """ Set a minimum bin value. All bins with values below `y` will be set equal to `y`"""
         bin_values_n = np.where(self.bin_values >= y, unp.nominal_values(self.bin_values), y)
         new_bin_values = unp.uarray(bin_values_n, self.bin_std_devs)
         self.__set_bin_values__(new_bin_values)
 
+    def remove_bins_outside_range(self, min_x=None, max_x=None) -> TH1F:
+        """
+        Return a new hist with only bins in range min_x <= bin_center <= max_x
+        Args:
+            min_x:
+            max_x:
+
+        Returns:
+
+        """
+        assert min_x is not max_x is not None, "Must specify either a min or a max"
+        if max_x is None:
+            max_x = self.__bin_left_edges__[-1]
+        if min_x is None:
+            min_x = self.__bin_left_edges__[0]
+
+        max_bin = np.searchsorted(self.__bin_left_edges__, max_x) + 1
+        min_bin = np.searchsorted(self.__bin_left_edges__, min_x)
+        new_bins = self.__bin_left_edges__[min_bin: max_bin]
+        hist = TH1F(bin_left_edges=new_bins)
+        hist += self.bin_values[min_bin: max_bin - 1]
+        hist.is_density = self.is_density
+        return hist
+
     def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None, amplitude_fix=None, c_fix=None,
                  divide_by_bin_width=False, full_range=None):
-        if isinstance(background, str):
-            background = background.lower()
-        if divide_by_bin_width:
-            self /= self.bin_widths
+        pass
 
-        def lin_func(x, slope, intercept):
-            return intercept + slope * (x - peak_center)
-
-        if background is None:
-            model = GaussianModel()
-        elif isinstance(background, str):
-            if background == "constant":
-                model = GaussianModel() + Model(lin_func)
-            if background == "linear":
-                model = GaussianModel() + Model(lin_func)
-        else:
-            assert False, "Invalid background. Must be None, 'linear', or 'constant'. "
-
-        if full_range is False:
-            peaks_ix, peak_infos = find_peaks(unp.nominal_values(self.bin_values),
-                                              prominence=unp.std_devs(self.bin_values),
-                                              width=0, height=0)
-            prominences = peak_infos["prominences"]
-
-            widths = peak_infos["widths"]
-
-            if peak_center is None:
-                assert len(prominences) != 0, "No peaks found to fit"
-                peak_info_ix = np.argmax(prominences)
-            else:
-                peak_info_ix = np.abs(self.bin_centers[peaks_ix] - peak_center).argmin()
-            best_peak_ix = peaks_ix[peak_info_ix]
-            peak_center = self.bin_centers[best_peak_ix]
-            peak_width_ix = int(round(widths[peak_info_ix]))
-            peak_width = widths[peak_info_ix]*self.bin_widths[best_peak_ix]
-            peak_height = prominences[peak_info_ix]
-
-            valleys_ix, _ = find_peaks(-unp.nominal_values(self.bin_values) + max(unp.nominal_values(self.bin_values)),
-                                    prominence=np.abs(peak_height*0.2-2*unp.std_devs(self.bin_values)),
-                                              width=0, height=0)
-            if len(np.where(valleys_ix < best_peak_ix)[0]):
-                min_x_ix = valleys_ix[np.where(valleys_ix < best_peak_ix)[0][-1]]
-                if min_x_ix > best_peak_ix - peak_width_ix:
-                    min_x_ix = best_peak_ix - peak_width_ix
-
-            else:
-                min_x_ix = best_peak_ix - peak_width_ix
-
-            if len(np.where(valleys_ix > best_peak_ix)[0]):
-                max_x_ix = valleys_ix[np.where(valleys_ix > best_peak_ix)[0][0]]
-                if max_x_ix < best_peak_ix + peak_width_ix:
-                    max_x_ix = best_peak_ix + peak_width_ix
-            else:
-                max_x_ix = best_peak_ix + peak_width_ix
-            diff_ix = max_x_ix - min_x_ix
-
-            if diff_ix < 7:
-                max_x_ix += diff_ix//2
-                min_x_ix -= diff_ix//2
-                max_x_ix += diff_ix%2
-
-            max_x_ix = min([len(self) - 1, max_x_ix])
-            min_x_ix = max([0, min_x_ix])
-            min_x = self.bin_centers[min_x_ix]
-            max_x = self.bin_centers[max_x_ix]
-
-            fit_selector = np.where((self.bin_centers >= min_x) &
-                                    (self.bin_centers <= max_x))
-
-            _x = self.bin_centers[fit_selector]
-            _y = unp.nominal_values(self.bin_values[fit_selector])
-            _y_err = unp.std_devs(self.bin_values[fit_selector])
-
-            model_params = model.make_params()
-            sigma_guess = peak_width / 2.
-            amplitude_guess = peak_height / 0.3989423 / sigma_guess
-            c0_guess = unp.nominal_values(self.bin_values)[peaks_ix[peak_info_ix]] - peak_height
-            model_params["amplitude"].set(value=amplitude_guess)
-            model_params["sigma"].set(value=sigma_guess, min=1)
-            if background == "constant":
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=0, vary=False)
-            if background == "linear":
-                dx = self.bin_centers[fit_selector][-1] - self.bin_centers[fit_selector][0]
-                dy = unp.nominal_values(self.bin_values[fit_selector[0][-1]]) - \
-                     unp.nominal_values(self.bin_values[fit_selector[0][0]])
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=dy / dx)
-            model_params["center"].set(value=peak_center)
-        else:
-            model_params = model.make_params()
-            sigma_guess = 2
-            amplitude_guess = np.max(self.nominal_bin_values)
-            c0_guess = 0
-            model_params["amplitude"].set(value=amplitude_guess)
-            model_params["sigma"].set(value=sigma_guess, min=1)
-            if background == "constant":
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=0, vary=False)
-            if background == "linear":
-
-                model_params["intercept"].set(value=c0_guess)
-                model_params["slope"].set(value=0)
-            model_params["center"].set(value=peak_center, min=peak_center - 3.5, max=peak_center + 3.5)
-            _x = self.bin_centers
-            _y = unp.nominal_values(self.bin_values)
-            _y_err = unp.std_devs(self.bin_values)
-
-        weights = 1.0/np.where(abs(_y_err)>0, abs(_y_err),  1)
-        fit_result = model.fit(_y, x=_x, weights=weights,
-                               params=model_params)
-        eval_fit = lambda xs: model.eval(fit_result.params, x=xs)
-        if divide_by_bin_width:
-            self *= self.bin_widths
-
-        return fit_result, eval_fit
+    def get_stats_text(self):
+        counts = self.__ROOT_hist__.GetEntries()
+        quantiles = self.quantiles(4)
+        s = ["counts {:.2e}".format(counts)]
+        s += ["mean  {:.2e}".format(self.mean.n)]
+        s += ["std   {:.2e}".format(self.std.n)]
+        s += ["25%   {:.2e}".format(quantiles[0])]
+        s += ["50%   {:.2e}".format(quantiles[1])]
+        s += ["75%   {:.2e}".format(quantiles[2])]
+        return s
 
     def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
-             ylabel=None, **kwargs):
+             ylabel=None, show_stats=False, title=None, **kwargs):
+        if title is not None:
+            self.SetTitle(title)
         if ax is None:
             _, ax = plt.subplots()
         else:
@@ -451,9 +421,22 @@ class TH1F:
         if xmax is None:
             xmax = self.__bin_left_edges__[-1]
         s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_centers))
+        try:
+            ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
+                        yerr=self.bin_std_devs[s],  ds="steps-mid", label=leg_label, **kwargs)
+        except AttributeError as e:
+            warn('AttributeError on plt.errorbar. Could be due to bug in matplotlib. Try different mpl version.')
+            raise e
 
-        ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
-                    yerr=self.bin_std_devs[s], ds="steps-mid", label=leg_label, **kwargs)
+        if show_stats:
+            text = self.get_stats_text()
+            text = '\n'.join(text)
+            # ax.text(0.8, 0.95-0.03*h, text,  transform=ax.transAxes)
+            ob = offsetbox.AnchoredText(text, loc=1)
+            ax.add_artist(ob)
+        if  leg_label:
+            ax.legend()
+
         return ax
 
     def convolve_median(self, window_width):
@@ -661,19 +644,60 @@ class TH1F:
         return unp.uarray(values, errors)
 
     @property
-    def mean(self):
+    def mean(self) -> UFloat:
         if np.sum(unp.nominal_values(self.bin_values)) == 0:
             if np.sum(unp.std_devs(self.bin_values)) == 0:
-                return np.nan
+                return ufloat(np.nan, np.nan)
             else:
-                return np.average(self.bin_centers,
+                out = np.average(self.bin_centers,
                                   weights=unp.uarray(self.bin_std_devs / 2., self.bin_std_devs / 2.))
+                out = ufloat(out, 0)
+                return out
 
         return np.average(self.bin_centers, weights=np.abs(self.bin_values))
 
     @property
-    def median(self):
+    def median_x(self):
+        """Returns the median bin. For median bin value, use median_y"""
         return binned_median(self.__bin_left_edges__, self.bin_values)
+
+    @property
+    def median_y(self):
+        """returns the median bin value."""
+        return np.median(self.bin_values)
+
+    def quantiles(self, n_quantiles, bin_indicies=False) -> List[float]:
+        """
+        Returns the bin values which split the hist into sections of equal probabilities. e.g. n_quantiles = 2 gives
+         the median
+        Args:
+            n_quantiles:
+            bin_indicies: If True, returned list represents bin indicies. Otherwise, it represents interpolated points
+                on the x axis.
+
+        Returns: n_quantiles-1 length list
+        """
+        cumsum = np.concatenate(([0], np.cumsum(self.nominal_bin_values)))
+        sum_points = np.linspace(0, cumsum[-1], n_quantiles+2-1)[1:-1]
+
+        left_best_indicies = np.searchsorted(cumsum, sum_points) - 1
+        residue = sum_points - cumsum[left_best_indicies]
+        fractions = residue/self.nominal_bin_values[left_best_indicies]
+        dxs = fractions*self.bin_widths[left_best_indicies]
+        result = self.__bin_left_edges__[left_best_indicies] + dxs
+
+        if bin_indicies:
+            result = np.array(map(int, result))
+
+        return result
+
+    def quantiles_plot(self, n_quantiles, ax, label=None):
+        x_points = self.quantiles(n_quantiles)
+        if ax is plt:
+            _min, _max = ax.ylim()
+        else:
+            _min, _max = ax.get_ylim()
+        ax.vlines(x_points, _min, _max, label=label, ls='--')
 
     @property
     def rel_errors(self):
@@ -690,7 +714,7 @@ class TH1F:
 
         if np.sum(unp.nominal_values(self.bin_values)) == 0:
             if np.sum(unp.std_devs(self.bin_values)) == 0:
-                return np.nan
+                return ufloat(np.nan, 0)
             else:
                 variance = np.average((self.bin_centers - self.mean) ** 2,
                                       weights=unp.uarray(self.bin_std_devs / 2., self.bin_std_devs / 2.))
@@ -733,7 +757,9 @@ class TH1F:
     def __copy__(self):
         new_ROOT_hist = self.__ROOT_hist__.Clone("hist{0}".format(TH1F.title_number))
         TH1F.title_number += 1
-        return TH1F(ROOT_hist=new_ROOT_hist)
+        out = TH1F(ROOT_hist=new_ROOT_hist)
+        out.is_density = self.is_density
+        return out
 
     def copy(self):
         return self.__copy__()
@@ -742,10 +768,13 @@ class TH1F:
         if hasattr(other, "__iter__"):
             assert len(other) == len(self), "Multiplying hist of len {0} by iterator of len {1}".format(len(self),
                                                                                                         len(other))
+
             assert len(other), "Cannot operate on array opf length zero"
-            if isinstance(other[0], Variable):
-                other = unp.uarray([v.n for v in other], [v.std_dev for v in other])
-            else:
+            if not isinstance(other, np.ndarray):
+                #  I think the below code is unnecessary . Commenting out for now
+                # if isinstance(other[0], Variable):
+                #     other = unp.uarray([v.n for v in other], [v.std_dev for v in other])
+                # else: other = np.array(other)
                 other = np.array(other)
         if isinstance(other, ROOT.TH1):
             other = self.__get_bin_values_from_ROOT_hist__(other)
@@ -818,6 +847,9 @@ class TH1F:
     def __itruediv__(self, other):
         other = self.__convert_other_for_operator__(other)
         result = self.bin_values / other
+        # assert False
+        if other is self.bin_widths:
+            self.is_density = True
         self.__set_bin_values__(result)
         return self
 
@@ -979,9 +1011,15 @@ def ttree_and(expressions):
     return " && ".join(expressions)
 
 
+
+
 if __name__ == "__main__":
     import time
-    #
-    while True:
-        ROOT.gSystem.ProcessEvents()
-        time.sleep(0.05)
+    h = TH1F(0,1,10)
+    h.plot()
+    # plt.show()
+    plt.errorbar([1], [2], [2], ds='steps-mid')
+    plt.show()
+    # while True:
+    #     ROOT.gSystem.ProcessEvents()
+    #     time.sleep(0.05)

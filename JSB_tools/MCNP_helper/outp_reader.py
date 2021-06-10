@@ -230,8 +230,6 @@ class F4Tally(Tally):
                 _flux = float(outp.__outp_lines__[index].split()[1])
                 _flux_error = _flux * float(outp.__outp_lines__[index].split()[2])
                 self.__flux__ = ufloat(_flux, _flux_error)  # total flux
-
-
             else:
                 assert False, "Tally modifiers {} not supported yet! (from tally {})"\
                     .format(self.tally_modifiers, self.tally_number)
@@ -245,6 +243,10 @@ class F4Tally(Tally):
         if 'fm' not in self.tally_modifiers:
             assert False, 'Tally {} does not have "FM" modifier. Tally is flux, not reaction rate.' \
                 .format(self.tally_number)
+
+    @property
+    def cell_mass(self):
+        return self.cell.volume*self.cell.density
 
     @property
     def cell(self) -> Cell:
@@ -389,7 +391,7 @@ class F4Tally(Tally):
 def load_globals(pickle_path):
     # pickle_path = Path(self.input_file_path).with_suffix('.pickle')
     out = {}
-    assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(self.__f_path__)
+    assert pickle_path.exists(), 'Pickle file of globals does not exist for {}'.format(pickle_path)
     with open(pickle_path, 'rb') as f:
         while True:
             try:
@@ -609,7 +611,7 @@ class StoppingPowerData:
         return ax
 
     def plot_range(self, ax=None, label=None, title=None, material_name_4_title=None, particle_name_4_title=None,
-                   density=None, use_best_units=True):
+                   density=None, units=None):
 
         if ax is None:
             fig, ax = plt.subplots()
@@ -625,21 +627,29 @@ class StoppingPowerData:
                 y = self.ranges/density
 
         ax.set_xlabel("Energy [MeV]")
-        conversion, units = 1, 'cm'
 
         if density is None:
+            unit_conversion, units = 1, 'cm'
             ax.set_ylabel("range [g/cm2]")
         else:
-            if use_best_units:
-                y /= 100
-                mean_range_in_meters = np.max(y)
-                unit_converts = [(10**-3, 'km'), (10**1, 'm'), (10**2, 'cm'), (10**3, 'mm'), (10**6, 'μm'), (10**9, 'nm')]
-                conversion, units = \
-                    unit_converts[int(np.argmin([abs(mean_range_in_meters*c-1) for c, unit in unit_converts]))]
+            unit_names = ["nm", "um", "mm", "cm", "m", "km"]
+            orders = np.array([-7, -4, -1, 0, 2, 5])
+            if units is None:
+                test_value = np.max(y)
+                i = np.searchsorted(orders, np.log10(test_value), side='right') - 1
+                i = max([0, i])
+                units = unit_names[i]
+            else:
+                assert units in unit_names, f"Invalid units, {units}"
+                i = unit_names.index(units)
+
+            unit_conversion = 10.**-orders[i]
+            # print('test_value x: ',self.energies[len(y)//2], 'test_value', test_value, " np.log10(test_value)",
+            #       np.log10(test_value), 'i:', i, "unit_conversion: ", f"{unit_conversion:.2E}")
 
             ax.set_ylabel("range [{}]".format(units))
 
-        ax.plot(self.energies, y*conversion, label=label)
+        ax.plot(self.energies, y*unit_conversion, label=label)
 
         if label is not None:
             ax.legend()
@@ -667,8 +677,9 @@ class StoppingPowerData:
 
             if density is not None:
                 title += "; material density: {0:.4E} g/cm3".format(density)
+            title = "\n" + title
 
-            ax.set_title(title)
+            ax.set_title(title, y=1.05)
         return ax
 
     @classmethod

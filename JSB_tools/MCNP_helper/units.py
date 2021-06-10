@@ -1,0 +1,9 @@
+km = 1E5
+m = 1E2
+cm = 1
+mm = 1E-1
+um = 1E-4
+nm = 1E-7
+inch = 2.54
+foot = 2.54*12
+mile = 160934

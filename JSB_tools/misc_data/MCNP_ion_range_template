@@ -1,0 +1,18 @@
+Ion Range Template
+c
+10 1000 -@abs(material.density)@ -1  imp:@mode@ =1
+99 0       1   imp:@mode@ =0
+
+1 so 1E6   $
+
+mode @mode@
+@material@
+nps @nps@
+@phys_card@
+SDEF
+     par= @zaid@
+     pos= 0 0 0
+     vec = 0 0 1
+     dir= 1
+     erg = @energy@
+PTRAC file=ASC WRITE=ALL TYPE=@mode@ NPS 0 20E6 MAX 10E7

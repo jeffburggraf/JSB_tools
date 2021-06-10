@@ -15,8 +15,7 @@ import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
 from types import ModuleType
 from abc import abstractmethod, ABC
-
-NDIGITS = 5  # the number of digits for rounding all evaluated numbers. Helps with round-off error
+from JSB_tools.MCNP_helper import NDIGITS
 
 
 def _split_line(line):
@@ -185,7 +184,8 @@ class InputDeck:
             new_file_dir = self.inp_file_path.parent
         else:
             new_file_dir = Path(new_file_dir)
-            assert new_file_dir.exists() and new_file_dir.is_dir(), '`new_file_dir` must be a directory that exists.'
+            assert new_file_dir.exists() and new_file_dir.is_dir(), f'`new_file_dir` must be a directory that exists.\n' \
+                                                                    f'"{new_file_dir}"'
         self.inp_root_directory = new_file_dir
         self.directories_created = []
 
@@ -294,8 +294,8 @@ class InputDeck:
                     else:
                         try:
                             evaluated = eval(exp_to_process, dict_of_globals)
-                            if isinstance(evaluated, Number):
-                                _fmt = ':.{}e'.format(NDIGITS)
+                            if isinstance(evaluated, float):
+                                _fmt = ':.{}g'.format(NDIGITS)
                                 evaluated = ('{' + _fmt + '}').format(evaluated)
 
                             new_line += "{0}".format(evaluated)
@@ -336,6 +336,7 @@ class InputDeck:
                 return False
         new_file_full_path = Path(new_file_full_path)
         new_f_path = new_file_full_path.with_suffix('.pickle')
+        print('Saved globals to {}'.format(new_f_path))
         with open(new_f_path, 'wb') as f:
             for k, var in dict_of_globals.items():
                 if check_type(var):
@@ -345,7 +346,18 @@ class InputDeck:
                         pass
 
     def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
-                           **mcnp_or_phits_kwargs):
+                           **mcnp_or_phits_kwargs) -> Path:
+        """
+        Creates and fills an input deck according to a dictionary of values. Usually, just use globals()
+        Args:
+            dict_of_globals:
+            new_file_name: name of generateed input file
+            script_name: Name of script to obe created that runs (all) simulation(s) automatically.
+            **mcnp_or_phits_kwargs: Command line args for MCNP or PHITS
+
+        Returns: new_file_name
+
+        """
         self.__has_called_write_inp_in_scope__ = True
 
         assert len(self.__new_inp_lines__) == 0
@@ -386,6 +398,7 @@ class InputDeck:
         self.__pickle_globals__(new_file_full_path, dict_of_globals)
 
         self.__new_inp_lines__ = []
+        return new_file_full_path
 
     def __write_file__(self, new_file_full_path):
         assert len(self.__new_inp_lines__) > 0, "Must call 'write_inp_in_scope' before '__write_file__'"
@@ -406,6 +419,7 @@ class InputDeck:
 
     def __append_cmd_to_run_script__(self, script_name, new_file_full_path, mcnp_or_phits_kwargs):
         f_path = self.inp_root_directory / script_name
+        # new_file_full_path = new_file_full_path.relative_to(self.inp_root_directory)
         if mcnp_or_phits_kwargs is None:
             script_kwargs = ""
         else:
@@ -443,6 +457,7 @@ class InputDeck:
         if self.__has_called_write_inp_in_scope__:
             if self.is_mcnp:
                 with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
+                    print("Created 'Clean.py'. Run this script to remove PTRAC, OUTP, etc.")
                     import inspect
                     cmds = inspect.getsource(__clean__)
                     cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))

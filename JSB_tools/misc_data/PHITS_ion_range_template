@@ -1,0 +1,58 @@
+
+[title]
+Ion Range Template
+
+[parameters]
+ icntl = 0  # 7 for geometry output, Use 0 for normal calculations
+ maxcas = @nps@
+ nspred = 2
+ nedisp = 1
+ maxbch = 1
+ cmin(1)=1E6  # ignore nuclear reactions for particle i
+ cmin(2)=1E6
+ cmin(3)=1E6
+ cmin(4)=1E6
+ cmin(5)=1E6
+ cmin(6)=1E6
+ cmin(7)=1E6
+ cmin(8)=1E6
+ cmin(9)=1E6
+ cmin(10)=1E6
+ cmin(11)=1E6
+ cmin(12)=1E6
+ cmin(13)=1E6
+ cmin(14)=1E6
+ cmin(15)=1E6
+ cmin(16)=1E6
+ cmin(17)=1E6
+ cmin(18)=1E6
+ cmin(19)=1E6
+ negs=0  # ignore e+,e- and photon
+ infout=8  # max verbose in outp file
+
+[material]
+@material@
+
+[ T-Userdefined ]
+file=ptrac
+
+[cell]
+10 1000 -@abs(material.density)@ -1
+99 -1            1
+
+[surface]
+1 so 1E6 $
+
+c Ion source in the z+ direction
+[source]
+  <source> = 1
+c    proj = 54000139
+    proj = @zaid@
+    s-type = 1
+    x0 = 0
+    y0 = 0
+    z0 = 0
+    z1 = 0
+    r0 = 0
+    dir = 1.0
+    e0 = @self.erg_per_a@
