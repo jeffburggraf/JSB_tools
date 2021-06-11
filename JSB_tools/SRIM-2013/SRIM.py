@@ -21,6 +21,7 @@ if not save_dir.exists():
 def _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas):
     density = f"{density:.4E}"
     arg_sort = np.argsort(target_atoms)
+    target_atoms = np.array(target_atoms)[arg_sort]
     fractions = np.array(fractions)[arg_sort]
     fractions = fractions / sum(fractions)
     fractions = tuple(map(float, [f"{n:.3f}" for n in fractions]))
