@@ -870,7 +870,7 @@ class Nuclide:
     Available data:
         Nuclide half-life
         Gamma emmissions (energy, intensity, uncertainties)
-        Decay channels and the resulting child nuclides (branching ratios)
+        Decay channels and the resulting child nuclides (+ branching ratios)
         Proton activation cross-sections (PADF)
         Neutron activation cross-sections (ENDF)
         Neutron, photon, proton, and SF fissionXS yeilds (use caution with photon and proton data)
@@ -949,6 +949,17 @@ class Nuclide:
         self.__decay_parents_str__: List[str] = kwargs.get("__decay_parents__", [])  # self.decay_parents -> List[Nuclide]
 
         self.__decay_mode_for_print__ = None
+
+    def phits_kfcode(self) -> int:
+        """
+        Particle kf=code for the PHITS Montecarlo package.
+        Returns:
+
+        """
+        try:
+            {(1, 1): 2212, (0, 1): 2112}[(self.Z, self.A)]
+        except KeyError:
+            return int(self.Z*1E6 + self.A)
 
     def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity: float = 0.05, ax=None,
                                   log_scale: bool = False, label: Union[str, None] = None):

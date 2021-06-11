@@ -1,12 +1,13 @@
 # from plasmapy import particles
 # from astropy.units import quantity
-from srim import SR, Ion, Layer, Material, Element
+# from srim import SR, Ion, Layer, Material, Element
 from pathlib import Path
 # from mendeleev import element, Isotope
 import re
 import numpy as np
 import pickle
 from matplotlib import pyplot as plt
+from JSB_tools.nuke_data_tools import Nuclide
 
 cwd = Path(__file__).parent
 
@@ -175,14 +176,17 @@ class SRIMTable:
         ax.set_title(title)
         return ax
 
-    def save_4_phits(self, file_name, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
-        print(dedx_path)
-        #  Make a get_kf_code option in JSB_tools.PHITS_helper
-        lines = ['unit = 1'] #, f'kf = {TODO}']
-
+    def save_4_phits(self, mat_number, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
+        kf = Nuclide.from_symbol(self.proj).phits_kfcode()
+        lines = ['unit = 1', f'kf = {kf}']
         assert dedx_path.exists()
+        for erg, dedx in zip(self.ergs, self.total_dedx):
+            lines.append(f"{erg} {dedx}")
+        lines = "\n".join(lines)
+        fname = f'{mat_number}-{kf}'
 
-        return "\n".join(lines)
+        with open(fname, 'w') as f:
+            f.write(lines)
 
 
 def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
@@ -197,6 +201,8 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
         max_erg: Energy in MeV
         gas: True if gas, else False
     """
+    from srim import SR, Ion, Layer, Material, Element
+
     assert len(target_atoms) == len(fractions)
     m = re.match('([A-Za-z]{1,3})-*([0-9]+)*', projectile)
     assert m

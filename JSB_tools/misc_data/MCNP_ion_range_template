@@ -11,6 +11,7 @@ nps @nps@
 @phys_card@
 DBCN 32j 1
 CUT:@mode@ j @1E-4*energy@
+print 85
 SDEF
      par= @zaid@
      pos= 0 0 0

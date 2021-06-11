@@ -146,6 +146,13 @@ class Material:
 
         self.is_weight_fraction = None
 
+    def set_srim_dedx(self):
+        """
+        Sets the DeDx file from an SRIM output. See JSB_tools/SRIM
+        Returns:
+
+        """
+
     @classmethod
     def gas(cls, list_of_chemicals: List[str],
             mass_ratios: List[Number] = None, atom_fractions: List[Number] = None, use_natural_abundences=False,

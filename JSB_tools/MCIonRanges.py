@@ -78,7 +78,7 @@ class Base:
 
     def _run(self, run_cmd):
         """create input deck and run simulation"""
-        cmd = f'cd {self.save_dir.relative_to(cwd)};{run_cmd} {self.save_dir.name}'
+        cmd = f'cd {self.save_dir};{run_cmd} {self.save_dir.name}'
         command = subprocess.Popen(cmd, shell=True, stdout=PIPE, )
         std_out = str(command.stdout.read())
 
@@ -157,6 +157,8 @@ class Base:
                 if self.tree.GetEntries() == 0:
                     warnings.warn("Empty tree")
                     raise FileNotFoundError
+                else:
+                    print(f"loaded tree with {self.tree.GetEntries()} entries")
             except FileNotFoundError:
                 self.delete_from_cash()
                 raise
@@ -313,8 +315,10 @@ class MCNP(Base):
             phys_card = f"PHYS:e 7j 0 5j {efac}"
         elif mode == 'h':
             phys_card = f"PHYS:{mode} 13j {efac}"
+        elif mode == '#':
+            phys_card = f'PHYS:{mode} {1.1*energy} 12j {efac}'
         else:
-            phys_card = f'PHYS:{mode} 5j {efac}'
+            assert False
         # material.mat_kwargs["HSTEP"] = "200"
 
         try:
@@ -354,10 +358,10 @@ class MCNP(Base):
 
 
 # m = DepletedUranium()
-gas = Material.gas(['He', 'Ar'], atom_fractions=[1, 1], pressure=1.4, mat_kwargs={'HSTEP': '40'})
-p = MCNP('Xe139', gas, 70, overwrite=True)
-p.plot()
+# gas = Material.gas(['He', 'Ar'], atom_fractions=[1, 1], pressure=1.4, mat_kwargs={'HSTEP': '40'})
+# p = MCNP('Xe139', gas, 70, overwrite=True)
+# p.plot()
 # p2 = Base.MCNP_PHITS_Compare('Xe139', gas, 70, overwrite=True)
 
 # p2.plot()
-plt.show()
+# plt.show()
