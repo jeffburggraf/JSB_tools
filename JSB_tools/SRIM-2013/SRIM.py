@@ -238,15 +238,16 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     return SRIMTable(target_atoms, fractions, density, projectile, gas)
 
 
-
 if __name__ == '__main__':
     from JSB_tools.MCNP_helper.materials import Material
-    s = run_srim(["Si", "N"], [1, 1], 2.253, 'Mo106', 105, gas=False)
-    s = run_srim(["Si", "N"], [1, 1], 2.253, 'Ba142', 105, gas=False)
-    s = run_srim(["C"], [1], 2.2, 'Mo106', 105, gas=False)
-    s = run_srim(["C"], [1], 2.2, 'Ba142', 105, gas=False)
+    params = [(["Si", "N"], [1, 1], 2.253, 'Mo106', 105, False),
+              (["Si", "N"], [1, 1], 2.253, 'Ba142', 105, False),
+              (["C"], [1], 2.2, 'Mo106', 105, False),
+              (["C"], [1], 2.2, 'Ba142', 105, False)]
 
-    for frac in np.arange(0,1,0.1):
+    for frac in np.arange(0, 1, 0.1):
         m = Material.gas(['He', 'Ar'], atom_fractions=[frac, 1-frac], pressure=1.35, )
-        run_srim(['He', 'Ar'], [frac, 1-frac], m.density, 'Xe139', 120)
-        run_srim(['He', 'Ar'], [frac, 1-frac], m.density, 'Mo105', 120)
+        params.append((['He', 'Ar'], [frac, 1-frac], m.density, 'Xe139', 120))
+        params.append((['He', 'Ar'], [frac, 1-frac], m.density, 'Mo105', 120))
+
+    print(params)
