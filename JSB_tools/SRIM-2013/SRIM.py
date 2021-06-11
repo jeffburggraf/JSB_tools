@@ -7,7 +7,7 @@ import re
 import numpy as np
 import pickle
 from matplotlib import pyplot as plt
-from JSB_tools.nuke_data_tools import Nuclide
+# from JSB_tools.nuke_data_tools import Nuclide
 from scipy.interpolate import interp1d
 
 cwd = Path(__file__).parent
@@ -110,7 +110,6 @@ def save_output(target_atoms, fractions, density, projectile, gas):
         with open(save_dir/fname, 'wb') as f:
             pickle.dump(ergs, f)
             pickle.dump(data, f)
-            print(data)
 
 
 class SRIMTable:
@@ -239,15 +238,11 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
 
 
 if __name__ == '__main__':
-    from JSB_tools.MCNP_helper.materials import Material
-    params = [(["Si", "N"], [1, 1], 2.253, 'Mo106', 105, False),
-              (["Si", "N"], [1, 1], 2.253, 'Ba142', 105, False),
-              (["C"], [1], 2.2, 'Mo106', 105, False),
-              (["C"], [1], 2.2, 'Ba142', 105, False)]
-
-    for frac in np.arange(0, 1, 0.1):
-        m = Material.gas(['He', 'Ar'], atom_fractions=[frac, 1-frac], pressure=1.35, )
-        params.append((['He', 'Ar'], [frac, 1-frac], m.density, 'Xe139', 120))
-        params.append((['He', 'Ar'], [frac, 1-frac], m.density, 'Mo105', 120))
-
-    print(params)
+    params = [(['Si', 'N'], [1, 1], 2.253, 'Mo106', 105, False), (['Si', 'N'], [1, 1], 2.253, 'Ba142', 105, False), (['C'], [1], 2.2, 'Mo106', 105, False), (['C'], [1], 2.2, 'Ba142', 105, False), (['He', 'Ar'], [0.0, 1.0], 0.0022137, 'Xe139', 120), (['He', 'Ar'], [0.0, 1.0], 0.0022137, 'Mo105', 120), (['He', 'Ar'], [0.1, 0.9], 0.0020145, 'Xe139', 120), (['He', 'Ar'], [0.1, 0.9], 0.0020145, 'Mo105', 120), (['He', 'Ar'], [0.2, 0.8], 0.0018153, 'Xe139', 120), (['He', 'Ar'], [0.2, 0.8], 0.0018153, 'Mo105', 120), (['He', 'Ar'], [0.30000000000000004, 0.7], 0.0016162, 'Xe139', 120), (['He', 'Ar'], [0.30000000000000004, 0.7], 0.0016162, 'Mo105', 120), (['He', 'Ar'], [0.4, 0.6], 0.001417, 'Xe139', 120), (['He', 'Ar'], [0.4, 0.6], 0.001417, 'Mo105', 120), (['He', 'Ar'], [0.5, 0.5], 0.0012178, 'Xe139', 120), (['He', 'Ar'], [0.5, 0.5], 0.0012178, 'Mo105', 120), (['He', 'Ar'], [0.6000000000000001, 0.3999999999999999], 0.0010186, 'Xe139', 120), (['He', 'Ar'], [0.6000000000000001, 0.3999999999999999], 0.0010186, 'Mo105', 120), (['He', 'Ar'], [0.7000000000000001, 0.29999999999999993], 0.00081938, 'Xe139', 120), (['He', 'Ar'], [0.7000000000000001, 0.29999999999999993], 0.00081938, 'Mo105', 120), (['He', 'Ar'], [0.8, 0.19999999999999996], 0.00062019, 'Xe139', 120), (['He', 'Ar'], [0.8, 0.19999999999999996], 0.00062019, 'Mo105', 120), (['He', 'Ar'], [0.9, 0.09999999999999998], 0.000421, 'Xe139', 120), (['He', 'Ar'], [0.9, 0.09999999999999998], 0.000421, 'Mo105', 120)]
+    for p in params:
+        print(p)
+        atoms = p[0]
+        fractions = p[1]
+        if any(i == 1 for i in fractions):
+            continue
+        run_srim(*p)
