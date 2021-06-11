@@ -7,10 +7,9 @@ import re
 import numpy as np
 import pickle
 from matplotlib import pyplot as plt
-# from JSB_tools.nuke_data_tools import Nuclide
 from scipy.interpolate import interp1d
 
-cwd = Path(__file__).parent
+cwd = Path(__file__).parent/"SRIM-2013"
 
 save_dir = cwd/'srim_outputs'
 
@@ -21,6 +20,7 @@ if not save_dir.exists():
 def _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas):
     density = f"{density:.4E}"
     arg_sort = np.argsort(target_atoms)
+    target_atoms = np.array(target_atoms)[arg_sort]
     fractions = np.array(fractions)[arg_sort]
     fractions = fractions / sum(fractions)
     fractions = tuple(map(float, [f"{n:.3f}" for n in fractions]))
@@ -191,6 +191,7 @@ class SRIMTable:
         lines = ['unit = 1'] #, f'kf = {TODO}']
 
     def save_4_phits(self, mat_number, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
+        from JSB_tools.nuke_data_tools import Nuclide
         kf = Nuclide.from_symbol(self.proj).phits_kfcode()
         lines = ['unit = 1', f'kf = {kf}']
         assert dedx_path.exists()

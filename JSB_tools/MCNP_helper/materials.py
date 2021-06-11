@@ -120,6 +120,20 @@ def get_most_abundant_isotope(symbol):
 class Material:
     __all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
+    @property
+    def list_of_element_symbols(self):
+        """
+        sourted list of atomic symbols comprising material, e.g. ['Ar', 'He'
+        Returns:
+
+        """
+        out = []
+        for zaid in self._zaids:
+            z = zaid//1000
+            a = zaid%100
+            out.append(Nuclide.from_Z_A_M(z, a).atomic_symbol)
+        return np.array(out)[np.argsort(out)]
+
     @staticmethod
     def clear():
         Material.__all_materials = MCNPNumberMapping('Material', 1000, 1000)
@@ -148,10 +162,14 @@ class Material:
 
     def set_srim_dedx(self):
         """
-        Sets the DeDx file from an SRIM output. See JSB_tools/SRIM
+        Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
         Returns:
 
         """
+        from JSB_tools.SRIM import existing_outputs
+
+        print(existing_outputs())
+        print(self.list_of_element_symbols)
 
     @classmethod
     def gas(cls, list_of_chemicals: List[str],
@@ -349,4 +367,6 @@ class Air(Material):
         for zaid, f in zip(zaids, fractions):
             self.add_zaid(zaid, f)
 
-
+if __name__ == "__main__":
+    m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)
+    m.set_srim_dedx()
