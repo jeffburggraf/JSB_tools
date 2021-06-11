@@ -7,6 +7,7 @@ import re
 import numpy as np
 import pickle
 from matplotlib import pyplot as plt
+from scipy.interpolate import interp1d
 
 cwd = Path(__file__).parent
 
@@ -81,7 +82,7 @@ def save_output(target_atoms, fractions, density, projectile, gas):
                 return float(s)
             except ValueError:
                 return s
-        dist_units = {'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1*100*1000}
+        dist_units = {'A':1E-8, 'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1*100*1000}
         erg_units = {"eV": 1E-6, "keV": 1E-3, "MeV": 1, "GeV": 1E3}
         while not re.match("-+", line := f.readline()):
             erg, erg_unit, elec, nuclear, range_,  range_unit, lon_strag, lon_strag_unit, lat_strag, lat_strag_unit \
@@ -175,6 +176,15 @@ class SRIMTable:
         ax.set_title(title)
         return ax
 
+    def eval_dedx(self, ergs):
+        if not hasattr(ergs, '__iter__'):
+            ergs = [ergs]
+        ergs = np.array(ergs)
+        out = interp1d(self.ergs, self.total_dedx, kind='quadratic')(ergs)
+        if len(out) == 1:
+            return out[0]
+        return out
+
     def save_4_phits(self, file_name, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
         print(dedx_path)
         #  Make a get_kf_code option in JSB_tools.PHITS_helper
@@ -197,6 +207,8 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
         max_erg: Energy in MeV
         gas: True if gas, else False
     """
+    from plasmapy import particles
+    from astropy.units import quantity
     assert len(target_atoms) == len(fractions)
     m = re.match('([A-Za-z]{1,3})-*([0-9]+)*', projectile)
     assert m
@@ -204,6 +216,7 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     a = m.groups()[1]
     proj_mass = particles.Particle(f"{proj_symbol}-{a}").mass/quantity.Quantity(1.66053906660E-27, unit='kg')
     layer_arg = {}
+    max_erg *= 1E6
 
     for s, frac in zip(target_atoms, fractions):
         layer_arg[s] = {"stoich": frac}
@@ -211,12 +224,18 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     sr = SR(Layer(layer_arg, density, 1000, phase=int(gas)), Ion(proj_symbol, max_erg, proj_mass), output_type=5)
     sr.run(Path(__file__).parent)
     save_output(target_atoms, fractions, density, projectile, gas)
+    return SRIMTable(target_atoms, fractions, density, projectile, gas)
 
 
-# run_srim(['Ar', 'He'], [1, 1], 0.00126, 'Xe139', 100E6, gas=True)
-save_output(['Ar', 'He'], [1, 1], 0.00126, 'Xe139', gas=True)
-dedx = SRIMTable(['Ar', 'He'], [1, 1], 0.00126, 'Xe139', gas=True)
-dedx.plot_range()
-dedx.save_4_phits()
-plt.show()
-# print(existing_outputs())
+
+if __name__ == '__main__':
+    from JSB_tools.MCNP_helper.materials import Material
+    s = run_srim(["Si", "N"], [1, 1], 2.253, 'Mo106', 105, gas=False)
+    s = run_srim(["Si", "N"], [1, 1], 2.253, 'Ba142', 105, gas=False)
+    s = run_srim(["C"], [1], 2.2, 'Mo106', 105, gas=False)
+    s = run_srim(["C"], [1], 2.2, 'Ba142', 105, gas=False)
+
+    for frac in np.arange(0,1,0.1):
+        m = Material.gas(['He', 'Ar'], atom_fractions=[frac, 1-frac], pressure=1.35, )
+        run_srim(['He', 'Ar'], [frac, 1-frac], m.density, 'Xe139', 120)
+        run_srim(['He', 'Ar'], [frac, 1-frac], m.density, 'Mo105', 120)
