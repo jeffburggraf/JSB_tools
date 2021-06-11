@@ -110,6 +110,31 @@ class TBrowser:
         del tb
 
 
+def cm_2_best_unit(list_or_number):
+    """
+    Find a good units for a number expressed in centimeters.
+    e.g. 1.24E-4 cm -> 1.24 um
+    Args:
+        list_or_number:
+
+    Returns: (Number in new units, new units (str))
+
+    """
+    if hasattr(list_or_number, '__iter__'):
+        y = np.max(list_or_number)
+        list_or_number = np.array(list_or_number)
+    else:
+        y = list_or_number
+    unit_names = ["nm", "um", "mm", "cm", "m", "km"]
+    orders = np.array([-7, -4, -1, 0, 2, 5])
+    test_value = np.max(y)
+    i = np.searchsorted(orders, np.log10(test_value), side='right') - 1
+    i = max([0, i])
+    units = unit_names[i]
+    unit_conversion = 10. ** -orders[i]
+    return list_or_number*unit_conversion, units
+
+
 def ROOT_loop():
     try:
         import time

@@ -109,7 +109,7 @@ class _Header:
             self.ids.append(ids[i1: i2])
 
 
-def ptrac2root(ptrac_path: Path, root_file_name=None, max_events: Union[None, int] = None, write_2_text=False,
+def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Union[None, int] = None, write_2_text=False,
                copy_lookup_files=False):
     ptrac_path = Path(ptrac_path)
     assert ptrac_path.exists()

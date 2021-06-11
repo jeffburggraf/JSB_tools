@@ -6,23 +6,24 @@ import numpy as np
 from lmfit import Model
 from lmfit.models import GaussianModel
 from scipy.stats import norm
-from JSB_tools.TH1 import TH1F
+import JSB_tools.TH1 as TH1
 from uncertainties import UFloat, ufloat
 import uncertainties.unumpy as unp
 from lmfit.model import save_modelresult, load_modelresult
 from pathlib import Path
 import re
 from scipy.interpolate import interp1d
-from JSB_tools.TH1 import rolling_MAD, rolling_median
+# from JSB_tools.TH1 import rolling_MAD, rolling_median
 from abc import abstractmethod, ABCMeta
 from lmfit.model import ModelResult
 from lmfit.models import PolynomialModel
 from lmfit import Parameters, fit_report
 from uncertainties.umath import log as ulog
 from scipy.odr import Model as ODRModel
-from scipy.odr import RealData,ODR, polynomial, Output
+from scipy.odr import RealData, ODR, polynomial, Output
 from scipy.odr.models import _poly_fcn
 from lmfit import minimize
+
 
 class FitBase(metaclass=ABCMeta):
     @property
@@ -181,7 +182,7 @@ class PeakFit(FitBase):
         return np.where((x >= min_) & (x <= max_))
 
     @classmethod
-    def from_hist(cls, hist: TH1F, peak_center_guess, window_width=None):
+    def from_hist(cls, hist, peak_center_guess, window_width=None):
         if not hist.is_density:
             warnings.warn('Histogram supplied to PeakFit is may not be a density. Divide by bin values to correct.')
         return cls(peak_center_guess=peak_center_guess, x=hist.bin_centers, y=hist.nominal_bin_values,
@@ -242,7 +243,7 @@ class PeakFit(FitBase):
         else:
             window_width = window_width//2  # full width -> half width
 
-        self.bg_est = rolling_median(window_width=window_width, values=self.y)
+        self.bg_est = TH1.rolling_median(window_width=window_width, values=self.y)
         self.__cut__(peak_center_guess - window_width, peak_center_guess + window_width)
         bg_guess = np.mean(self.bg_est)
         bg_subtracted = self.y - self.bg_est
@@ -563,9 +564,9 @@ if __name__ == '__main__':
     n = 0
     data_true = np.random.exponential(hl/np.log(2), 500)+20
     noise = np.random.uniform(0, max(data_true), int(max(data_true)*n))
-    h_data = TH1F.from_raw_data(data_true)
+    h_data = TH1.TH1F.from_raw_data(data_true)
 
-    h_noise = TH1F.from_raw_data(noise, bins=h_data.__bin_left_edges__)
+    h_noise = TH1.TH1F.from_raw_data(noise, bins=h_data.__bin_left_edges__)
     h_tot = h_data + h_noise
     h_tot.plot(leg_label="total")
     h_noise.plot(leg_label="noise")

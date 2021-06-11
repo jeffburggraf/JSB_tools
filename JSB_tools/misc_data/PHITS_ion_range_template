@@ -27,7 +27,7 @@ Ion Range Template
  cmin(17)=1E6
  cmin(18)=1E6
  cmin(19)=1E6
- negs=0  # ignore e+,e- and photon
+c negs=0  # ignore e+,e- and photon
  infout=8  # max verbose in outp file
 
 [material]
@@ -37,7 +37,7 @@ Ion Range Template
 file=ptrac
 
 [cell]
-10 1000 -@abs(material.density)@ -1
+10 @material.mat_number@ -@abs(material.density)@ -1
 99 -1            1
 
 [surface]
@@ -46,8 +46,7 @@ file=ptrac
 c Ion source in the z+ direction
 [source]
   <source> = 1
-c    proj = 54000139
-    proj = @zaid@
+    proj = @kfcode@
     s-type = 1
     x0 = 0
     y0 = 0

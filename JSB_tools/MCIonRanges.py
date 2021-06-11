@@ -1,6 +1,7 @@
 import pickle
 import warnings
-
+from JSB_tools import cm_2_best_unit
+import matplotlib.pyplot as plt
 import numpy as np
 
 from JSB_tools.MCNP_helper.materials import Material, DepletedUranium
@@ -106,6 +107,7 @@ class Base:
             for p in self.save_dir.iterdir():
                 p.unlink(missing_ok=True)
             self.save_dir.rmdir()
+            self.cash_path.unlink()
 
         except FileNotFoundError:
             pass
@@ -121,7 +123,7 @@ class Base:
         self.tree.Branch('t', self._t)
 
     def get_next_dir(self):
-        """Get next unused directory to store result.
+        """Get next unused directory to store the path in self.save_dir attribute
            Also create the tree"""
         cls_name = self.__class__.__name__.lower()
         paths = [p.name for p in self.data_dir.iterdir() if re.match(f'{cls_name}_[0-9]+', p.name) and p.is_dir()]
@@ -134,13 +136,13 @@ class Base:
         return path_name
 
     def load_from_cash(self):
-        """Load from cahs and set save dir.
+        """Load from cash and set save dir.
         Otherwise raise FIleNotFound"""
         try:
             self.save_dir = self.cash[self.__param_tuples]
             root_file_path = self.save_dir/'stop_points.root'
             if not root_file_path.exists():
-                warnings.warn("Cash existed but directory did not")
+                warnings.warn(f"Cash existed but directory did not.")
                 self.delete_from_cash()
                 raise FileNotFoundError
             root_file = ROOT.TFile(str(root_file_path))
@@ -177,21 +179,143 @@ class Base:
         with open(self.cash_path, 'wb') as f:
             pickle.dump(self.cash, f)
 
+        with open(self.save_dir/"params.txt", 'w') as f:  # just for human readability
+            f.write(str(self.__param_tuples))
+
+    @cached_property
+    def raw_z_data(self):
+        a = []
+        n_entries = self.tree.GetEntries()
+        for i in range(n_entries):
+            self.tree.GetEntry(i)
+            a.append(self.tree.z[0])
+        return np.array(a)
+
+    @cached_property
+    def mean_range(self):
+        return np.mean(self.raw_z_data)
+
+    @cached_property
+    def max_range(self):
+        return np.max(self.raw_z_data)
+
+    @cached_property
+    def min_range(self):
+        return np.min(self.raw_z_data)
+
+    def plot(self, ax=None, bins='auto', xtitle=None, units='cm', **ax_kwargs):
+        if ax is None:
+            ax = plt.subplot()
+            _min = self.min_range
+            _max = self.max_range
+        else:
+            _min = min([ax.get_xlim()[0], self.min_range])
+            _max = max([ax.get_xlim()[1], self.max_range])
+        _min *= 0.9
+        _max *= 1.1
+        y, bin_edges = np.histogram(self.raw_z_data, bins)
+        x = [(x1 + x2)/2 for x1, x2 in zip(bin_edges[:-1], bin_edges[1:])]
+        # x, units = cm_2_best_unit(x)
+
+        ax.plot(x, y, **ax_kwargs)
+        # ax.set_xlabel(f'{xtitle} [{units}]')
+        ax.set_ylabel('counts')
+        ax.legend()
+        return ax
+
+    @staticmethod
+    def MCNP_PHITS_Compare(projectile: str, material: Material, energy, nps=5000, overwrite=False, bins='auto'):
+        phits = PHITS(projectile, material, energy, nps, overwrite)
+        mcnp = MCNP(projectile, material, energy, nps, overwrite)
+        ax = phits.plot(bins=bins, label='PHITS')
+        mcnp.plot(ax=ax, bins=bins, label='MCNP')
+        return ax
+
+
+class PHITS(Base):
+    def __init__(self, projectile: str, material: Material, energy, nps=5000, overwrite=False):
+        super().__init__(projectile, material, energy)
+        try:
+            kfcode = {'electron': '11', 'positron': '-11', 'h1': '2212'}[projectile.lower()]
+
+        except KeyError:  # this mean nucleus, or invalid projectile
+            kfcode = 1000000 * self.z + self.a
+
+        try:
+            self.ityp = {"proton": '1', 'h1': '1', 'electron': '12', 'positron': '13', 'h2': '15', 'h3': '16',
+                         'he3': '17', 'he4': '18'}[projectile.lower()]
+        except KeyError:
+            self.ityp = '19'
+
+        try:
+            self.load_from_cash()
+            if overwrite:
+                self.delete_from_cash()
+                raise FileNotFoundError
+        except FileNotFoundError:
+            try:
+                self.get_next_dir()
+                i = InputDeck.phits_input_deck(self.template_path, self.save_dir.parent, gen_run_script=False)
+                i.write_inp_in_scope(locals(), new_file_name=self.save_dir.name)
+
+                self._run('phits.sh')
+                self.save_data()  # todo
+                self.tree.Write()
+                self.set_cash()
+
+            except Exception as e:
+                self.delete_from_cash()
+                raise
+
+    def save_data(self):
+        f_path = self.save_dir/"ptrac"
+        assert f_path.exists(), f"No PTRAC file found for {self.__class__.__name__} simulation! Simulation had an error." \
+                                f"\n File path: {f_path}"
+
+        with open(f_path) as f:
+            term_waiting = False
+            while (line := f.readline()) != '':
+                if line[:5] == 'NCOL=':
+                    if f.readline() == ' 11\n':  # check for ncol == 11 (term by erg cut off)
+                        f.readline()
+                        line = f.readline()
+                        if line.split()[2] == self.ityp:
+                            # is charged particle
+                            term_waiting = True
+                        else:
+                            assert False, f'Expected ityp: {self.ityp}, actual ityp: {line.split()[2]}'
+                elif term_waiting:
+
+                    if line[:7] == 'EC,TC,X':  # Then next line is termination position and time
+                        line = f.readline()
+                        _, t, x, y, z,  = tuple(map(float, line.replace('D', 'E').split()))
+                        self.fill(x, y, z, t)
+                        term_waiting = False
+
+        if self.tree is not None and self.tree.GetEntries() == 0:
+            warnings.warn("TTree was empty! Something went wrong. Not cashing result.")
+            self.delete_from_cash()
+        self.set_cash()
+
 
 class MCNP(Base):
     def __init__(self, projectile: str, material: Material, energy, nps=5000, overwrite=False):
 
         super().__init__(projectile, material, energy)
         try:
-            mode = {"He4": 'a', "He3": "s", 'H3': 't', "H2": "d", "H": 'h', 'electron': 'e'}[projectile]
+            mode = {"He4": 'a', "He3": "s", 'H3': 't', "H2": "d", "H1": 'h', 'electron': 'e'}[projectile]
             zaid = mode
-        except KeyError:  # this measn nucleus, or invalid projectile
+        except KeyError:  # this mean nucleus, or invalid projectile
             zaid = 1000*self.z + self.a
             mode = "#"
+        efac = 0.98
         if mode == 'e':
-            phys_card = "PHYS:e 7j 0 5j 0.98"
+            phys_card = f"PHYS:e 7j 0 5j {efac}"
+        elif mode == 'h':
+            phys_card = f"PHYS:{mode} 13j {efac}"
         else:
-            phys_card = f"PHYS:{mode} 13j 0.98"
+            phys_card = f'PHYS:{mode} 5j {efac}'
+        # material.mat_kwargs["HSTEP"] = "200"
 
         try:
             self.load_from_cash()
@@ -223,14 +347,17 @@ class MCNP(Base):
         for t in tree:
             if t.is_term:
                 self.fill(t.x, t.y, t.z, t.time)
-        ptrac2root_path.unlink()
+        # ptrac2root_path.unlink()
         self.root_file.cd()
         self.set_cash()
 
 
 
-# mat = Material.gas(['U'], atom_fractions=[1,1], pressure=1.4)
-p = MCNP('Xe139', DepletedUranium(), 70, overwrite=True)
-# p = PHITS('He4', DepletedUranium(), 70)
+# m = DepletedUranium()
+gas = Material.gas(['He', 'Ar'], atom_fractions=[1, 1], pressure=1.4, mat_kwargs={'HSTEP': '40'})
+p = MCNP('Xe139', gas, 70, overwrite=True)
+p.plot()
+# p2 = Base.MCNP_PHITS_Compare('Xe139', gas, 70, overwrite=True)
 
-TBrowser()
+# p2.plot()
+plt.show()

@@ -263,7 +263,7 @@ class InputDeck:
         if len(old_line.lstrip()) == 0:
             return old_line, exception_msg
 
-        if len(l_stripped_line) > 0 and l_stripped_line[0].lower() == "c":
+        if re.match('c .*', l_stripped_line):  # is comment line. No processing
             return old_line, exception_msg
 
         if "$" in old_line:

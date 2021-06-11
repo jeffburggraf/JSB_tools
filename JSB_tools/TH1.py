@@ -20,6 +20,7 @@ import re
 import os
 import matplotlib.offsetbox as offsetbox
 from scipy.stats import norm
+from JSB_tools.regression import PeakFit
 
 
 class HistoBinMerger:
@@ -379,9 +380,8 @@ class TH1F:
         hist.is_density = self.is_density
         return hist
 
-    def peak_fit(self, peak_center=None, model="gaussian", background="constant", sigma_fix=None, amplitude_fix=None, c_fix=None,
-                 divide_by_bin_width=False, full_range=None):
-        pass
+    def peak_fit(self, peak_center=None):
+        return PeakFit(peak_center, self.bin_centers, self.bin_values)
 
     def get_stats_text(self):
         counts = self.__ROOT_hist__.GetEntries()
