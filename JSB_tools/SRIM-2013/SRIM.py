@@ -48,7 +48,7 @@ def existing_outputs():
     return out
 
 
-def save_file_attribs(attribs_dict):
+def _save_file_attribs(attribs_dict):
     lines = []
     for k, v in attribs_dict.items():
         lines.append(f"{k} __--__ {v}\n")
@@ -56,7 +56,7 @@ def save_file_attribs(attribs_dict):
         f.writelines(lines)
 
 
-def save_output(target_atoms, fractions, density, projectile, gas):
+def _save_output(target_atoms, fractions, density, projectile, gas):
     file_attribs = _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas)
     all_file_attribs = existing_outputs()
     try:
@@ -69,7 +69,7 @@ def save_output(target_atoms, fractions, density, projectile, gas):
         i += 1
 
     all_file_attribs[file_attribs] = fname
-    save_file_attribs(all_file_attribs)
+    _save_file_attribs(all_file_attribs)
 
     data = []
     ergs = []
@@ -106,7 +106,6 @@ def save_output(target_atoms, fractions, density, projectile, gas):
                      'lat_strag': lat_strag}
             data.append(entry)
             ergs.append(erg)
-            # print(erg, unit, elec, nuclear, range_,  range_unit, lon_strag, lon_strag_unit, lat_strag, lat_strag_unit)
 
         with open(save_dir/fname, 'wb') as f:
             pickle.dump(ergs, f)
@@ -114,10 +113,9 @@ def save_output(target_atoms, fractions, density, projectile, gas):
 
 
 class SRIMTable:
-    def __init__(self, target_atoms, fractions, density, projectile, gas=False):
+    def __init__(self, target_atoms, fractions, density, projectile, gas: int=0):
         attribs = _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas)
         try:
-            print(existing_outputs())
             file_name = existing_outputs()[attribs]
         except KeyError:
             assert False, f"No SRIM data for the following configuration:\n{attribs}\nAdd data on a windows machine" \
@@ -186,22 +184,17 @@ class SRIMTable:
             return out[0]
         return out
 
-    def save_4_phits(self, file_name, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
-        print(dedx_path)
-        #  Make a get_kf_code option in JSB_tools.PHITS_helper
-        lines = ['unit = 1'] #, f'kf = {TODO}']
 
-    def save_4_phits(self, mat_number, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
-        kf = Nuclide.from_symbol(self.proj).phits_kfcode()
-        lines = ['unit = 1', f'kf = {kf}']
-        assert dedx_path.exists()
-        for erg, dedx in zip(self.ergs, self.total_dedx):
-            lines.append(f"{erg} {dedx}")
-        lines = "\n".join(lines)
-        fname = f'{mat_number}-{kf}'
+def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False):
+    assert hasattr(target_atoms, '__iter__')
+    assert hasattr(fractions, '__iter__'), "Fractions must be an integer"
 
-        with open(fname, 'w') as f:
-            f.write(lines)
+    assert isinstance(max_erg, (float, int))
+    assert isinstance(density, (float, int))
+
+    assert len(target_atoms) == len(fractions)
+
+    assert 0 not in fractions, "0 cannot be used as an atom fraction"
 
 
 def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
@@ -216,25 +209,31 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
         max_erg: Energy in MeV
         gas: True if gas, else False
     """
-    from srim import SR, Ion, Layer, Material, Element
-
+    from srim import SR, Ion, Layer
     from plasmapy import particles
-    from astropy.units import quantity
-    assert len(target_atoms) == len(fractions)
+
+    _check_args(target_atoms, fractions, density, projectile, max_erg, gas)
+
     m = re.match('([A-Za-z]{1,3})-*([0-9]+)*', projectile)
-    assert m
+    assert m, f"Invalid projectile specification, '{projectile}'. Example: Xe139"
     proj_symbol = m.groups()[0]
     a = m.groups()[1]
-    proj_mass = particles.Particle(f"{proj_symbol}-{a}").mass/quantity.Quantity(1.66053906660E-27, unit='kg')
+
+    # Below isd to deal with the pesky Unit object (no float method?!?! blasphemy)
+    proj_mass = float(re.match('([0-9.]+e[-+0-9]+)', str(particles.Particle(f"{proj_symbol}-{a}").mass)).groups()[0]) \
+                / 1.66053906660E-27
+
     layer_arg = {}
     max_erg *= 1E6
 
     for s, frac in zip(target_atoms, fractions):
         layer_arg[s] = {"stoich": frac}
+    gas = int(gas)
 
     sr = SR(Layer(layer_arg, density, 1000, phase=int(gas)), Ion(proj_symbol, max_erg, proj_mass), output_type=5)
     sr.run(Path(__file__).parent)
-    save_output(target_atoms, fractions, density, projectile, gas)
+    _save_output(target_atoms, fractions, density, projectile, gas)
+
     return SRIMTable(target_atoms, fractions, density, projectile, gas)
 
 
@@ -243,12 +242,18 @@ if __name__ == '__main__':
     params.append((["U"], [1], 19.1, 'Xe139',105, False))
     params.append((["U"], [1], 19.1, 'Mo105', 105, False))
     for p in params:
-        print(p)
         atoms = p[0]
+        if "He" in atoms:
+            p = list(p)
+            p.append(True)
+            # p[-1] = True
+            p = tuple(p)
+
         fractions = p[1]
-        # if any(i == 1 for i in fractions):
-        #     continue
+        if any(i == 1 for i in fractions):
+            continue
         try:
             run_srim(*p)
         except Exception:
-            pass
+            print('Exception: ',p)
+            raise
