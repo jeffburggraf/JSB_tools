@@ -1,3 +1,7 @@
+import warnings
+
+import matplotlib.pyplot as plt
+from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
@@ -7,6 +11,7 @@ import re
 from typing import List
 from numbers import Number
 import openmc.material
+from typing import Tuple, List
 # Todo: Revamp the IdealGas interface.
 
 
@@ -121,18 +126,28 @@ class Material:
     __all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
     @property
-    def list_of_element_symbols(self):
+    def _get_elements_and_fractions(self) -> Tuple[List[str], List[float]]:
         """
-        sourted list of atomic symbols comprising material, e.g. ['Ar', 'He'
-        Returns:
-
+        sorted list of atomic symbols comprising material, e.g. ['Ar', 'He'], as well as the fractions.
+        When isotopes appear, add up the fractions for the given element.
+        (used for PHITS SRIM incorporation)
+        Returns: (elements, fractions)
         """
-        out = []
-        for zaid in self._zaids:
+        elements_dict = {}
+        for zaid, frac in zip(self._zaids, self._zaid_proportions):
             z = zaid//1000
-            a = zaid%100
-            out.append(Nuclide.from_Z_A_M(z, a).atomic_symbol)
-        return np.array(out)[np.argsort(out)]
+            a = zaid%1000
+            s = Nuclide.from_Z_A_M(z, a).atomic_symbol
+            try:
+                elements_dict[s] += frac
+            except KeyError:
+                elements_dict[s] = frac
+        fractions = np.array(list(elements_dict.values()))
+        elements = np.array(list(elements_dict.keys()))
+        arg_sort = np.argsort(elements)
+        fractions = fractions[arg_sort] / sum(fractions)
+        elements = elements[arg_sort]
+        return elements, fractions
 
     @staticmethod
     def clear():
@@ -159,17 +174,83 @@ class Material:
             self.mat_kwargs = mat_kwargs
 
         self.is_weight_fraction = None
+        self.is_gas = False
 
-    def set_srim_dedx(self):
+    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
         """
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
         Returns:
 
         """
-        from JSB_tools.SRIM import existing_outputs
+        assert dedx_path.exists()
 
-        print(existing_outputs())
-        print(self.list_of_element_symbols)
+        from JSB_tools.SRIM import existing_outputs, SRIMTable
+
+        elements, fractions = self._get_elements_and_fractions
+
+        class _SrimRun:
+            def __init__(self, atoms, fractions, density, projectile, is_gas):
+                self.atoms = atoms
+                self.fractions = np.array(fractions)
+                self.density = float(density)
+                self.projectile = projectile
+                self.is_gas = is_gas
+                self.args = atoms, fractions, self.density, projectile, is_gas
+
+            def __repr__(self):
+                f'elements: {self.atoms}, %s: {100*np.array(list(map(int, self.fractions)))}, density: {self.density}, gas = {self.is_gas}'
+                return str(self.args)
+
+        options = [_SrimRun(*args) for args in existing_outputs()]
+
+        # remove SRIM entries without the same element composition
+        options = list(filter(lambda x: tuple(x.atoms) == tuple(elements), options))
+
+        # remove SRIM entries without the similar fractional element composition
+        options = list(filter(lambda x: all(np.isclose(x.fractions, fractions)), options))
+
+        # filter for gaseous state or not
+        for o in options:
+            print(o.is_gas == self.is_gas, o)
+        # options = list(filter(lambda x: x.is_gas == self.is_gas, options))
+
+        _srim_outputs = {}
+        for option in options:  # group SRIM entries by same target (but different projectile)
+            try:
+                _srim_outputs[option.projectile].append(option)
+            except KeyError:
+                _srim_outputs[option.projectile] = [option]
+        srim_outputs = {}
+        lines = ['unit = 1']
+        if not len(_srim_outputs.items()):
+            assert False, f"No SRIM data available for the following material: \n{self}." \
+                          f"\nSee JSB_tools.SRIM to add this data."
+
+        # within each group of SRIM entries with same projectile, chose one with best density.
+        # Warn if density is not exact.
+        # Then, write lines for PHITS dedx file.
+        for proj, options in _srim_outputs.items():
+            if len(options):
+                arg_min = np.argmin([o.density-self.density for o in options])
+                best_option: _SrimRun = options[arg_min]
+                srim_outputs[proj] = best_option
+                if not np.isclose(best_option.density, self.density, rtol=0.02):
+                    warnings.warn(f"\n ------------------ DENSITY WARNING ----------------"
+                                  f"\nSRIM run for projectile {best_option.projectile} in material,\n"
+                                  f"elements:  {best_option.atoms}\n"
+                                  f"fractions: {best_option.fractions},'\n"
+                                  f"has a density of {best_option.density}\n"
+                                  f"instead of       {self.density}  (the intended density)")
+                srim_table = SRIMTable(*best_option.args)
+
+                lines.append(f"kf = {Nuclide.from_symbol(best_option.projectile).phits_kfcode()}")
+                for erg, dedx in zip(srim_table.ergs, srim_table.total_dedx):
+                    lines.append(f"{erg:.3E} {dedx:.4E}")
+        dedxfile = (dedx_path/str(self.mat_number)).with_suffix('.txt')
+        with open(dedxfile, 'w') as f:
+            f.write('\n'.join(lines))
+
+        self.mat_kwargs['dedxfile'] = f'{dedxfile} $ - dedx from SRIM'
 
     @classmethod
     def gas(cls, list_of_chemicals: List[str],
@@ -230,7 +311,7 @@ class Material:
             else:
                 assert False, 'Invalid atomic symbol, "{}"'.format(s)
             out.add_zaid(n, fraction, is_weight_fraction)
-
+        out.is_gas = True
         return out
 
     def add_element_natural(self, element_symbol, fraction: float = 1.) -> None:
@@ -368,5 +449,7 @@ class Air(Material):
             self.add_zaid(zaid, f)
 
 if __name__ == "__main__":
-    m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)
-    m.set_srim_dedx()
+    # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)
+    # m.set_srim_dedx()
+    # print(m)
+    print(DepletedUranium()._get_elements_and_fractions)

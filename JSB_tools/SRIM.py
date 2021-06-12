@@ -185,24 +185,6 @@ class SRIMTable:
             return out[0]
         return out
 
-    def save_4_phits(self, file_name, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
-        print(dedx_path)
-        #  Make a get_kf_code option in JSB_tools.PHITS_helper
-        lines = ['unit = 1'] #, f'kf = {TODO}']
-
-    def save_4_phits(self, mat_number, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
-        from JSB_tools.nuke_data_tools import Nuclide
-        kf = Nuclide.from_symbol(self.proj).phits_kfcode()
-        lines = ['unit = 1', f'kf = {kf}']
-        assert dedx_path.exists()
-        for erg, dedx in zip(self.ergs, self.total_dedx):
-            lines.append(f"{erg} {dedx}")
-        lines = "\n".join(lines)
-        fname = f'{mat_number}-{kf}'
-
-        with open(fname, 'w') as f:
-            f.write(lines)
-
 
 def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     """
