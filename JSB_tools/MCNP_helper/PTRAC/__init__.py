@@ -7,6 +7,7 @@ import numpy as np
 import time
 from typing import List, Union
 import shutil
+from JSB_tools import ProgressReport
 
 cwd = Path(__file__).parent
 
@@ -124,8 +125,10 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
     tree = ROOT.TTree("tree", "tree")
 
     # mat is just an integer starting from 1, ie not the material number
-    #
-    var_id_to_names = {1: Branch('nps', tree),
+
+    #  Below  is a dict mapping variable IDs to branch containers. Uninteresting variables,  e.g. _next_event, are
+    #   are stings  and thus are not stored in TTree.
+    var_id_to_branches = {1: Branch('nps', tree),
                        2: '_next_event',
                        4: Branch('next_sur', tree),
                        7: "_next_event",
@@ -151,12 +154,12 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         """
         Returns a list of Branches corresponding to quantities in the order they appear in the PTRAC file.
         A KeyError represents a PTRAC entry that is either bugged or not of interest
-        (since I didn;t include it in `var_id_to_names`).
+        (since I didn;t include it in `var_id_to_branches`).
         """
         out = []
         for _id in ids:
             try:
-                out.append(var_id_to_names[_id])
+                out.append(var_id_to_branches[_id])
             except KeyError:
                 out.append(None)
         return out
@@ -184,18 +187,23 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         text_file = open(ptrac_path.with_suffix('.csv'), 'w')
         text_file.write(Branch.text_heading())
 
-    t0 = time.time()
+    finish_point = file.tell() if max_events is None else max_events
+    current_position = (lambda: file.tell()) if not max_events else (lambda: n_events)
+    proj = ProgressReport(finish_point)  # for printing remaining time to stdout
+
     while max_events is None or n_events < max_events:
         # For each event type (SRC, BNK, stc) `pattern` is a mapping between variable positions
-        # (for first and second lines if needed) in the PTRAC file, and their corresponding Branch instances.
+        #  (of the first (and second) event line(s)) in the PTRAC file, and their corresponding TTree Branch instances.
         pattern = patterns[1000 * (expected_event // 1000)]
-        lines = [file.readline() for i in range(len(pattern))]
+
+        lines = [file.readline() for _ in range(len(pattern))]  # for all evt types  except 1000, read two lines.
+
         if lines[-1] == '':  # end of file
             break
-        if expected_event == 9000:
-            Branch.clear_all_except()
+        if expected_event == 9000:  # end of particle history
+            Branch.clear_all_except()  # don't spare any branches, clear them all
         else:
-            Branch.clear_all_except(['nps'])
+            Branch.clear_all_except(['nps'])  # nps shouldn't be reset until end of particle history
 
         current_event_branch.value = expected_event
 
@@ -216,6 +224,7 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
             Branch.fill_tree()
             n_events += 1
 
+        proj.log(current_position())
         if max_events is not None and n_events > max_events:
             break
     tree.Write()

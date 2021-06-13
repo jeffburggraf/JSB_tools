@@ -10,7 +10,7 @@ Example usage:
 from JSB_tools.MCNP_helper.PTRAC import ptrac2root
 from JSB_tools import ROOT_loop
 
-path_to_ptrac_file = "p ath/to/file" 
+path_to_ptrac_file = "path/to/file" 
 ptrac2root(cwd / 'ptrac', max_events=None)
 
 tb = ROOT.TBrowser()
