@@ -170,6 +170,9 @@ class PHITSTTreeHelper:
     def cell_before_crossing(self):
         return self.tree.cell_before_crossing
 
+    def to_text(self):  # todo
+        return f'pos: {self.pos}, cell: {self.cell}, erg: {self.energy} '
+
     @property
     def ncol(self):
         return self.tree.ncol

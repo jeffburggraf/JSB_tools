@@ -395,7 +395,7 @@ class TH1F:
         return s
 
     def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
-             ylabel=None, show_stats=False, title=None, **kwargs):
+             ylabel=None, show_stats=False, title=None, show_errors=True,  **kwargs):
         if title is not None:
             self.SetTitle(title)
         if ax is None:
@@ -423,7 +423,7 @@ class TH1F:
         s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_centers))
         try:
             ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
-                        yerr=self.bin_std_devs[s],  ds="steps-mid", label=leg_label, **kwargs)
+                        yerr=self.bin_std_devs[s] if show_errors else None,  ds="steps-mid", label=leg_label, **kwargs)
         except AttributeError as e:
             warn('AttributeError on plt.errorbar. Could be due to bug in matplotlib. Try different mpl version.')
             raise e
@@ -438,6 +438,17 @@ class TH1F:
             ax.legend()
 
         return ax
+
+    def latex_quantiles(self, ax, unit=None):
+        if unit is None:
+            unit = ''
+        else:
+            unit = f'[{unit}]'
+        lines = [f'Quantiles {unit}'] + [f"{25 * (i + 1)}\%  \hspace{{1cm}}  {q:.2g}" for i, q in
+                 enumerate(self.quantiles(4))]
+        t = ('\n'.join(lines))
+        ob = offsetbox.AnchoredText(t, loc=1)
+        ax.add_artist(ob)
 
     def convolve_median(self, window_width):
         """

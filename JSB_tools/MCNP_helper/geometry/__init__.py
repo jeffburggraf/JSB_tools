@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 
 """
@@ -12,7 +14,7 @@ class MCNPNumberMapping(dict):
         self.class_name: type = class_name
         self.starting_number: int = starting_number
         super(MCNPNumberMapping, self).__init__()  # initialize empty dict
-        self.__auto_picked_numbers__ = []  # numbers that have been chosen automatically.
+        self.auto_picked_numbers = []  # numbers that have been chosen automatically.
 
     def number_getter(self, item):
         if self.class_name == 'Cell':
@@ -50,7 +52,7 @@ class MCNPNumberMapping(dict):
             else:
                 assert False, 'WTF?!'
 
-        self.__auto_picked_numbers__.append(num)
+        self.auto_picked_numbers.append(num)
         return num
 
     def names_used(self):
@@ -63,19 +65,24 @@ class MCNPNumberMapping(dict):
             assert len(item.__name__) > 0, 'Blank name used in {} {}'.format(self.class_name, item)
         if item.__name__ is not None:
             if item.__name__ in self.names_used():
-                raise Exception('{} name `{}` has already been used.'.format(self.class_name, item.__name__))
-        else:
-            item.__name__ = None
-
+                old_name = item.__name__
+                i = 1
+                while (new_name := f'{item.__name__}_{i}') in self.names_used():
+                    i += 1
+                item.__name__ = new_name
+                warnings.warn(f'{self.class_name} name `{old_name}` has already been used.\n'
+                              f'Changing to "{item.__name__}"')
+        # else:
+        #     item.__name__ = None
         if number is not None:  # do not pick number automatically
             if number in self.keys():  # there is a numbering conflict, not allowed in MCNP. Try to resolve conflict
                 conflicting_item = self[number]  # Item with numbering conflict.
 
-                if number in self.__auto_picked_numbers__:  # Can we fix the numbering conflict by changing a number?
+                if number in self.auto_picked_numbers:  # Can we fix the numbering conflict by changing a number?
                     # Yes, we can, because the conflicting instance's number was not user chosen, but this one was.
-                    self.__auto_picked_numbers__.remove(number)
+                    self.auto_picked_numbers.remove(number)
                     new_number = self.get_number_auto()
-                    del self[number]  # unlink conflicting number from `number` or else naming conflict may be raised
+                    del self[number]  # unlink conflicting item from its original number to avoid naming conflict later.
                     self[new_number] = conflicting_item  # re-assign old cell to new number, resolving the conflict
                     self.number_setter(conflicting_item, new_number)  # change conflicting instances number
 

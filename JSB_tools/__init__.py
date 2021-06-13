@@ -19,17 +19,24 @@ import time
 from matplotlib import pyplot as plt
 # from JSB_tools.TH1 import TH1F
 import sys
-
+import matplotlib as mpl
 import traceback
 from JSB_tools.nuke_data_tools import Nuclide
+import matplotlib.ticker as ticker
 
 cwd = Path(__file__).parent
+
+style_path = cwd/'mpl_style.txt'
+
+def mpl_style():
+    plt.style.use(style_path)
 
 try:
     import ROOT
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
+
 
 
 class __TracePrints(object):
@@ -258,14 +265,15 @@ class FileManager:
         return new_path
 
     @staticmethod
-    def __verify_attribs__(attribs: Dict):
-        for kv in attribs.items():
-            try:
-                _ = {kv}
-            except TypeError as e:
-                assert False, f"Type error for the following value: {kv}\n" \
-                              f"Make sure all attribs are hashable.\nThe error:\n" \
-                              f"\t{e}"
+    def __verify_attribs__(attribs: Dict):  #why was this here again?
+        pass
+        # for kv in attribs.items():
+        #     try:
+        #         _ = {kv}
+        #     except TypeError as e:
+        #         assert False, f"Type error for the following value: {kv}\n" \
+        #                       f"Make sure all attribs are hashable.\nThe error:\n" \
+        #                       f"\t{e}"
 
     def add_path(self, rel_path_or_abs_path=None, missing_ok=False, overwrite_ok=False, **lookup_attributes) -> Path:
         """
@@ -294,10 +302,10 @@ class FileManager:
         assert not abs_path.is_dir(), f'The path, "{abs_path}", is a directory.'
         if abs_path in self.__file_lookup_data:
             if lookup_attributes in self.__file_lookup_data.values():  # path and attrib identical. May overwrite
-                if overwrite_ok:  # overwrite
-                    warnings.warn(f"Overwriting {abs_path}")
-                else:  # nm don't overwrite
-                    assert False, f"Cannot overwrite {abs_path}. Set parameter `overwrite_ok` to True"
+                # if overwrite_ok:  # overwrite
+                #     warnings.warn(f"Overwriting FileManager reference to {abs_path}")
+                if not overwrite_ok:
+                    assert False, f"Cannot overwrite reference {abs_path}. Set parameter `overwrite_ok` to True"
             else:
                 warnings.warn(f"Path {abs_path} used twice. Overwriting!")
 
@@ -350,11 +358,12 @@ class FileManager:
         Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
 
         """
-        lookup_kwargs = set(lookup_attributes.items())
+        lookup_kwargs = lookup_attributes.items()
         matches = {}
         for path, attribs in self.__file_lookup_data.items():
-            attribs_set = set(attribs.items())
-            if len(lookup_kwargs - attribs_set) == 0:
+            all_attribs_list = list(attribs.items())
+            if all(a in all_attribs_list for a in lookup_kwargs):
+            # if len(lookup_kwargs - attribs_set) == 0:
                 matches[path] = {k: v for k, v in attribs.items()}
         if len(matches) == 0:
             warnings.warn(f"No files fiund containing the following attribs: {lookup_attributes}")
@@ -514,4 +523,13 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-   pass
+    x = np.arange(100)
+    y = 1+x**2
+    # fig, ax = GoodMPL.get_fig_ax(usetex=True,ncols=2, xlabel='X [cm]', ylabel='y [s]', y_major_tick_dist=1000, y_minor_tick_dist=250, x_major_tick_dist=10, x_minor_tick_dist=2.5)
+    fig, ax = GoodMPL.get_fig_ax(usetex=True, xlabel='X [cm]', ylabel='y [s]', tick_width=1, y_minor_tick_dist=None)
+    # plt.style.use('mpl_style.txt')
+    # plt.plot(x, y)
+    ax.plot(x, y)
+
+    plt.show()
+

@@ -1,6 +1,7 @@
 # from plasmapy import particles
 # from astropy.units import quantity
 # from srim import SR, Ion, Layer, Material, Element
+import warnings
 from pathlib import Path
 # from mendeleev import element, Isotope
 import re
@@ -193,9 +194,18 @@ def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False
 
     assert len(target_atoms) == len(fractions)
 
-    if 0 in fractions:
-        np.where()
-    assert 0 not in fractions, "0 cannot be used as an atom fraction"
+    bad = (np.where(np.array(fractions) == 0))
+    good = (np.where(np.array(fractions) != 0))
+    if bad:
+        warnings.warn(f"Removing the following elements due to zero atom fractions provided: {elements[bad]}")
+    assert len(good) > 0, "No non-zero atom fractions!"
+    target_atoms = target_atoms[good]
+    fractions = fractions[good]
+    m = re.match('([A-Za-z]{1,3})-*([0-9]+)*', projectile)
+    assert m, f"Invalid projectile specification, '{projectile}'. Example: Xe139"
+    proj_symbol = m.groups()[0]
+    a = m.groups()[1]
+    return target_atoms, fractions, density, (proj_symbol, a), max_erg, gas
 
 
 def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
@@ -213,16 +223,13 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     from srim import SR, Ion, Layer
     from plasmapy import particles
 
-    _check_args(target_atoms, fractions, density, projectile, max_erg, gas)
+    target_atoms, fractions, density, projectile_info, max_erg, gas = \
+        _check_args(target_atoms, fractions, density, projectile, max_erg, gas)
+    proj_symbol, a = projectile_info
 
-    m = re.match('([A-Za-z]{1,3})-*([0-9]+)*', projectile)
-    assert m, f"Invalid projectile specification, '{projectile}'. Example: Xe139"
-    proj_symbol = m.groups()[0]
-    a = m.groups()[1]
-
-    # Below isd to deal with the pesky Unit object (no float method?!?! blasphemy)
+    # Deal with the pesky astropy.Unit object (it has no float method?!?! blasphemy)
     proj_mass = float(re.match('([0-9.]+e[-+0-9]+)', str(particles.Particle(f"{proj_symbol}-{a}").mass)).groups()[0]) \
-                / 1.66053906660E-27
+                / 1.66053906660E-27  # convert kg to amu
 
     layer_arg = {}
     max_erg *= 1E6
@@ -239,32 +246,23 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
 
 
 if __name__ == '__main__':
-    # params = [(['Si', 'N'], [1, 1], 2.253, 'Mo106', 105, False), (['Si', 'N'], [1, 1], 2.253, 'Ba142', 105, False), (['C'], [1], 2.2, 'Mo106', 105, False), (['C'], [1], 2.2, 'Ba142', 105, False), (['He', 'Ar'], [0.0, 1.0], 0.0022137, 'Xe139', 120), (['He', 'Ar'], [0.0, 1.0], 0.0022137, 'Mo105', 120), (['He', 'Ar'], [0.1, 0.9], 0.0020145, 'Xe139', 120), (['He', 'Ar'], [0.1, 0.9], 0.0020145, 'Mo105', 120), (['He', 'Ar'], [0.2, 0.8], 0.0018153, 'Xe139', 120), (['He', 'Ar'], [0.2, 0.8], 0.0018153, 'Mo105', 120), (['He', 'Ar'], [0.30000000000000004, 0.7], 0.0016162, 'Xe139', 120), (['He', 'Ar'], [0.30000000000000004, 0.7], 0.0016162, 'Mo105', 120), (['He', 'Ar'], [0.4, 0.6], 0.001417, 'Xe139', 120), (['He', 'Ar'], [0.4, 0.6], 0.001417, 'Mo105', 120), (['He', 'Ar'], [0.5, 0.5], 0.0012178, 'Xe139', 120), (['He', 'Ar'], [0.5, 0.5], 0.0012178, 'Mo105', 120), (['He', 'Ar'], [0.6000000000000001, 0.3999999999999999], 0.0010186, 'Xe139', 120), (['He', 'Ar'], [0.6000000000000001, 0.3999999999999999], 0.0010186, 'Mo105', 120), (['He', 'Ar'], [0.7000000000000001, 0.29999999999999993], 0.00081938, 'Xe139', 120), (['He', 'Ar'], [0.7000000000000001, 0.29999999999999993], 0.00081938, 'Mo105', 120), (['He', 'Ar'], [0.8, 0.19999999999999996], 0.00062019, 'Xe139', 120), (['He', 'Ar'], [0.8, 0.19999999999999996], 0.00062019, 'Mo105', 120), (['He', 'Ar'], [0.9, 0.09999999999999998], 0.000421, 'Xe139', 120), (['He', 'Ar'], [0.9, 0.09999999999999998], 0.000421, 'Mo105', 120)]
-    # params.append((["U"], [1], 19.1, 'Xe139',105, False))
-    # params.append((["U"], [1], 19.1, 'Mo105', 105, False))
-    # for p in params:
-    #     atoms = p[0]
-    #     fractions = p[1]
-    #
-    #     if "He" in atoms:
-    #         p = list(p)
-    #         p.append(True)
-    #         # p[-1] = True
-    #         p = tuple(p)
-    #         if any(i == 1 for i in fractions):
-    #             continue
-    #
-    #
-    #     try:
-    #         run_srim(*p)
-    #     except Exception:
-    #         print('Exception: ',p)
-    #         raise
-    fractions = np.array([0, 1, 2, 3, 0])
-    elements = np.array([1, 2, 3, 4, 5])
-    bad = (np.where(np.array(fractions) == 0))
-    good = (np.where(np.array(fractions) != 0))
-    print(f"Removing the following elemnts due to zero atom fractions provided: {elements[bad]}")
-    elements = elements[good]
-    fractions = fractions[good]
-    print(elements, fractions)
+    params = [(['Si', 'N'], [1, 1], 2.253, 'Mo106', 105, False), (['Si', 'N'], [1, 1], 2.253, 'Ba142', 105, False), (['C'], [1], 2.2, 'Mo106', 105, False), (['C'], [1], 2.2, 'Ba142', 105, False), (['He', 'Ar'], [0.0, 1.0], 0.0022137, 'Xe139', 120), (['He', 'Ar'], [0.0, 1.0], 0.0022137, 'Mo105', 120), (['He', 'Ar'], [0.1, 0.9], 0.0020145, 'Xe139', 120), (['He', 'Ar'], [0.1, 0.9], 0.0020145, 'Mo105', 120), (['He', 'Ar'], [0.2, 0.8], 0.0018153, 'Xe139', 120), (['He', 'Ar'], [0.2, 0.8], 0.0018153, 'Mo105', 120), (['He', 'Ar'], [0.30000000000000004, 0.7], 0.0016162, 'Xe139', 120), (['He', 'Ar'], [0.30000000000000004, 0.7], 0.0016162, 'Mo105', 120), (['He', 'Ar'], [0.4, 0.6], 0.001417, 'Xe139', 120), (['He', 'Ar'], [0.4, 0.6], 0.001417, 'Mo105', 120), (['He', 'Ar'], [0.5, 0.5], 0.0012178, 'Xe139', 120), (['He', 'Ar'], [0.5, 0.5], 0.0012178, 'Mo105', 120), (['He', 'Ar'], [0.6000000000000001, 0.3999999999999999], 0.0010186, 'Xe139', 120), (['He', 'Ar'], [0.6000000000000001, 0.3999999999999999], 0.0010186, 'Mo105', 120), (['He', 'Ar'], [0.7000000000000001, 0.29999999999999993], 0.00081938, 'Xe139', 120), (['He', 'Ar'], [0.7000000000000001, 0.29999999999999993], 0.00081938, 'Mo105', 120), (['He', 'Ar'], [0.8, 0.19999999999999996], 0.00062019, 'Xe139', 120), (['He', 'Ar'], [0.8, 0.19999999999999996], 0.00062019, 'Mo105', 120), (['He', 'Ar'], [0.9, 0.09999999999999998], 0.000421, 'Xe139', 120), (['He', 'Ar'], [0.9, 0.09999999999999998], 0.000421, 'Mo105', 120)]
+    params.append((["U"], [1], 19.1, 'Xe139',105, False))
+    params.append((["U"], [1], 19.1, 'Mo105', 105, False))
+    for p in params:
+        atoms = p[0]
+        fractions = p[1]
+
+        if "He" in atoms:
+            p = list(p)
+            p.append(True)
+            # p[-1] = True
+            p = tuple(p)
+            if any(i == 1 for i in fractions):
+                continue
+
+        try:
+            run_srim(*p)
+        except Exception:
+            print('Exception: ',p)
+            raise

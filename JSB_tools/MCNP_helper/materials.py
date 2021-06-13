@@ -12,6 +12,7 @@ from typing import List
 from numbers import Number
 import openmc.material
 from typing import Tuple, List
+from inspect import signature
 # Todo: Revamp the IdealGas interface.
 
 
@@ -55,6 +56,7 @@ class _IdealGas:
         Args:
             list_of_chemicals: e.g., ['O2', 'He'] for O2 and helium. ["O", "H2"] for free O and He.
         """
+        print(list_of_chemicals)
         list_of_chemical_formulas = [ChemicalFormula(s) for s in list_of_chemicals]
         self.total_grams_per_mole_list = np.array([a.total_grams_peer_mole for a in list_of_chemical_formulas])
 
@@ -176,9 +178,13 @@ class Material:
         self.is_weight_fraction = None
         self.is_gas = False
 
-    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx'):
+    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx', scaling=None):
         """
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
+        Args:
+            dedx_path: Path where PHITS looks for user supplied stopping powers
+            scaling: A function or a constant. If a constant, scale sopping powers by this value.
+                If function, scale the stopping powers by f(e)
         Returns:
 
         """
@@ -198,8 +204,9 @@ class Material:
                 self.args = atoms, fractions, self.density, projectile, is_gas
 
             def __repr__(self):
-                f'elements: {self.atoms}, %s: {100*np.array(list(map(int, self.fractions)))}, density: {self.density}, gas = {self.is_gas}'
-                return str(self.args)
+                out = f'elements: {self.atoms}, %s: {100*np.array(list(map(int, self.fractions)))}, ' \
+                      f'density: {self.density}, gas = {self.is_gas}'
+                return out
 
         options = [_SrimRun(*args) for args in existing_outputs()]
 
@@ -210,9 +217,7 @@ class Material:
         options = list(filter(lambda x: all(np.isclose(x.fractions, fractions)), options))
 
         # filter for gaseous state or not
-        for o in options:
-            print(o.is_gas == self.is_gas, o)
-        # options = list(filter(lambda x: x.is_gas == self.is_gas, options))
+        options = list(filter(lambda x: x.is_gas == self.is_gas, options))
 
         _srim_outputs = {}
         for option in options:  # group SRIM entries by same target (but different projectile)
@@ -225,6 +230,16 @@ class Material:
         if not len(_srim_outputs.items()):
             assert False, f"No SRIM data available for the following material: \n{self}." \
                           f"\nSee JSB_tools.SRIM to add this data."
+
+        if scaling is None:
+            scaling = lambda erg: 1
+        else:
+            if isinstance(scaling, Number):
+                c = scaling  # avoid infinite recursion
+                scaling = lambda erg: c
+            else:
+                assert hasattr(scaling, '__call__'), "Invalid type for `scaling` parameter. Must be Number of callable."
+                assert len(signature(scaling).parameters) == 1, "`scaling` function should take only one argument"
 
         # within each group of SRIM entries with same projectile, chose one with best density.
         # Warn if density is not exact.
@@ -245,12 +260,12 @@ class Material:
 
                 lines.append(f"kf = {Nuclide.from_symbol(best_option.projectile).phits_kfcode()}")
                 for erg, dedx in zip(srim_table.ergs, srim_table.total_dedx):
-                    lines.append(f"{erg:.3E} {dedx:.4E}")
+                    lines.append(f"{erg:.3E} {scaling(erg)*dedx:.4E}")
         dedxfile = (dedx_path/str(self.mat_number)).with_suffix('.txt')
         with open(dedxfile, 'w') as f:
             f.write('\n'.join(lines))
 
-        self.mat_kwargs['dedxfile'] = f'{dedxfile} $ - dedx from SRIM'
+        self.mat_kwargs['dedxfile'] = f'{dedxfile.name} $ - dedx from SRIM'
 
     @classmethod
     def gas(cls, list_of_chemicals: List[str],
@@ -368,8 +383,9 @@ class Material:
         return self.__name__
 
     def delete_mat(self):
-        if self.mat_number in Material.__all_materials:
-            del Material.__all_materials[self.mat_number]
+        raise NotImplementedError("Don't do this! Modify the features of an existing material instead. ")
+        # if self.mat_number in Material.__all_materials:
+        #     del Material.__all_materials[self.mat_number]
 
 
 class PHITSOuterVoid:

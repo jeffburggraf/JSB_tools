@@ -35,13 +35,9 @@ __speed_of_light__ = 299792458   # c in m/s
 #   * make cross section pulls be implemented in a nuke_data.cross_secion file. Let the endf to pickle also be
 #     implemented there
 #   * Make a Nuclide.fromreaction('parent_nuclide_name', inducing particle, daughter_nuclide_name )
-#   * Implement FissionProductYields object, similar to CrossSection1D
-#   * Add a custom exception, not AssertionError, when an unknown symbol is passed to Nuclide.
-#   * Add doc strings.
 #   * Add documentation, and exception messages, to explain where the data can be downloaded and how to regenerate
 #     the pickle files.
-#   * Get rid of <additional_nuclide_data> functionality. too complex.
-#   * Why no uncertainty in xs values for CrossSection1D.plot? (some) xs values are ufloats. (no ufloat for PADF?)
+#   * Get rid of <additional_nuclide_data> functionality. too complex and stupid
 #   * Find a way to include data files in the pip package, maybe create a separate repository.
 
 
@@ -218,7 +214,7 @@ def rest_mass(z=None, a=None, n=None):
     elif n is None:
         assert (z is not a is not None), 'Incomplete nucleon number specification'
         n = a-z
-    assert z + n == a, 'Invalid nucleon number specification'
+    assert z + n == a, 'Invalid nucleon number specification (Z + N != A)'
 
     c = 931.494102  # 1 AMU = 931.494102 MeV/c^2
     try:
@@ -237,6 +233,10 @@ alpha_mass = 3727.37
 
 
 class RawFissionYieldData:
+    """
+    Container for marshal'd fission yield data.
+    Internal use only.
+    """
     instances: Dict[Path, RawFissionYieldData] = {}
 
     def __new__(cls, *args, **kwargs):
@@ -277,7 +277,6 @@ class RawFissionYieldData:
 
 
 class FissionYields:
-    # todo: add fill value optoin. Finish from_neutron. Clean up.
     """
     Retrieve fission yield data, if available. In some cases, the code will convert neutron yield
         to the desired yield by adjusting the nucleus and energies accordingly
@@ -285,7 +284,7 @@ class FissionYields:
     Attributes:
         energies: Energies at which the yield is determined
         library: Library where data was taken from, e.g. ukfy, or gef
-        weights: If weighting was performed, there are the weights.
+        weights: Yields can be weighted by a quantity, e.g. flux, cross-sections
 
     """
     FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': ['ukfy', None],
@@ -361,6 +360,10 @@ class FissionYields:
         return l / len(xnew)
 
     def __find_best_library__(self):
+        """
+        Find fission yield library that has the most data points within the desired energy range.
+
+        """
         scores = []
         libraries = []
         datums = []
@@ -392,11 +395,11 @@ class FissionYields:
         """
         Interp fission yield for a given nuclide. Todo: consider other extrapolation methods.
         Args:
-            xnew:
-            x:
-            y:
+            xnew: Desired energy points.
+            x: Energy at which yield data exists.
+            y: The yield Data
 
-        Returns:
+        Returns: interpolated yields.
 
         """
         interp_func = interp1d(x, y, fill_value='extrapolate', bounds_error=False)
@@ -413,7 +416,7 @@ class FissionYields:
 
         Args:
             target: Fission target nucleus
-            inducing_par: None for SF.
+            inducing_par: None for SF. Or, e.g., 'proton', 'neutron', 'gamma'
             energies: If None, use energies from the data file.
             library: Fission yield library. See FissionYields.FISSION_YIELD_SUBDIRS for available yield libraries.
             independent_bool:
@@ -1641,9 +1644,3 @@ if __name__ == "__main__":
 
 
     plt.show()
-
-
-
-
-
-

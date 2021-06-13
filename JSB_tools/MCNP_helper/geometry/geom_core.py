@@ -43,6 +43,14 @@ class Surface(ABC, GeomSpecMixin):
     def surface_card(self):
         pass
 
+    def delete_surface(self):
+        raise NotImplementedError("Don't do this! Modify the features of an existing surface instead. ")
+
+        # if self.surface_number in Surface.all_surfs.auto_picked_numbers:
+        #     Surface.all_surfs.auto_picked_numbers.remove(self.surface_number)
+        #
+        # del Surface.all_surfs[self.surface_number]
+
 
 class Tally:
     all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
@@ -171,7 +179,12 @@ class Cell(GeomSpecMixin):
         Cell.all_cells = MCNPNumberMapping('Cell', 10)
 
     def delete_cell(self):
-        del Cell.all_cells[self.cell_number]
+        raise NotImplementedError("Don't do this! Modify the features of an existing cell instead. ")
+    # def delete_cell(self):
+    #     if self.cell_number in Cell.all_cells.auto_picked_numbers:
+    #         Cell.all_cells.auto_picked_numbers.remove(self.cell_number)
+    #
+    #     del Cell.all_cells[self.cell_number]
 
     def __init__(self, material: Union[int, Material, PHITSOuterVoid] = 0,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
@@ -399,40 +412,6 @@ class Cell(GeomSpecMixin):
 
     def __str__(self):
         return self.cell_card
-
-
-class CellGroup:
-    def __init__(self, *cells: Cell):
-        self.cells = list(cells)
-
-    def add_cells(self, *cells):
-        for x in cells:
-            assert isinstance(x, Cell), 'Only Cell instances can be used in CellGroup, not "{}"'.format(type(x))
-            assert x not in self.cells, 'Cell (#{}, name: {} added twice to cell group.'.format(x.cell_number,
-                                                                                                x.cell_name)
-        self.cells.extend(cells)
-
-    def remove_cell(self, cell_obj: Cell):
-        self.cells.remove(cell_obj)
-
-    def __invert__(self):
-        geom = None
-        assert len(self.cells) > 0, 'No cells in group!'
-
-        def f(cells):
-            nonlocal geom
-            if len(cells) == 0:
-                return
-            else:
-                cell = cells[0]
-                if geom is None:
-                    geom = ~cell
-                else:
-                    geom = geom & ~cell
-                f(cells[1:])
-
-        f(self.cells)
-        return geom
 
 
 class CellGroup:
