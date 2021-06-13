@@ -5,7 +5,7 @@ import re
 import ROOT
 import numpy as np
 import time
-from typing import List, Union
+from typing import List, Union,  Dict
 import shutil
 from JSB_tools import ProgressReport
 
@@ -149,12 +149,12 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
                        27: Branch('wgt', tree),
                        28: Branch('time', tree)}
 
-    def dict_get(ids):
+    def dict_get(ids) -> List[int, Union[Branch, str, None]]:
 
         """
         Returns a list of Branches corresponding to quantities in the order they appear in the PTRAC file.
         A KeyError represents a PTRAC entry that is either bugged or not of interest
-        (since I didn;t include it in `var_id_to_branches`).
+        (since I didn't include it in `var_id_to_branches`).
         """
         out = []
         for _id in ids:
@@ -171,15 +171,12 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
                 4000: (dict_get(header.ids[7]), dict_get(header.ids[8])),
                 5000: (dict_get(header.ids[9]), dict_get(header.ids[10]))}
 
-    # for k, v in patterns.items():
-    #     print(k, v)
-
     n_events = 0
     expected_event = 9000
     bnk_number_branch = Branch('bnk', tree)
     current_event_branch = Branch('event', tree)
 
-    # rorders the global set of branches for printing to text file. Not particularly important
+    # re-orders the global set of branches for printing to text file. Not really important
     Branch.order_branches('nps', 'event', 'cell', 'x', 'y', 'z', 'erg', 'par', 'time', 'bnk', 'term')
 
     text_file = None
@@ -215,7 +212,7 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
                     if expected_event // 1000 == 2:
                         bnk_number_branch.fill(expected_event % 1000)
                     expected_event = int(value)
-                else:
+                else:    # Not a branch or otherwise interesting value. No processing needed.
                     assert branch_or_flag is None, f"BAD TROUBLE. type of branch_or_flag: {type(branch_or_flag)}"
 
         if current_event_branch.value != 9000.:
@@ -232,16 +229,17 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         text_file.close()
     file.close()
 
-    to_copy_lookup_file_path = ptrac_path.parent/'lookup.txt'
-    if copy_lookup_files and not to_copy_lookup_file_path.exists():
+    copied_lookup_file_path = ptrac_path.parent/'lookup.txt'
+    if copy_lookup_files and not copied_lookup_file_path.exists():
         lookup_file_path = Path(cwd / 'lookup.txt')
-        shutil.copy(lookup_file_path, to_copy_lookup_file_path)
+        shutil.copy(lookup_file_path, copied_lookup_file_path)
 
     Branch.all_branches = []
 
 
 class TTreeHelper:
     root_files = []
+
     def __init__(self, path):
         path = Path(path)
         assert path.exists()
@@ -323,7 +321,6 @@ class TTreeHelper:
     @property
     def time(self):
         return self.tree.time[0]
-
 
 
 if __name__ == '__main__':
