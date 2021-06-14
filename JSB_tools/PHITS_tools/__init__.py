@@ -1,7 +1,5 @@
 """
-(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)(*)
-MANUAL LOOKUP
-Energy distribution types (e-type info): page 94, 5.3.19
+Helper functions for creating PHITS sources, among other things.
 """
 import numpy as np
 from typing import List
@@ -11,23 +9,6 @@ from dataclasses import dataclass
 from abc import abstractmethod
 from numbers import Number
 
-"""a
-[source]
-<source> = 2.093994E-02
-proj = 54000139
-s-type = 1
-x0=0
-y0=0
-z0=3
-z1=3.001
-r0=0.5
-dir=all
-e-type = 2
-eg0=0.4934776448218808
-eg1=0.03608536507547426
-eg2=0.4475090268913403
-eg3=0.5394462627524212
-"""
 
 def rotate_zhat_to_v(v):
     # Todo

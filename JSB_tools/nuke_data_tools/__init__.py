@@ -1082,7 +1082,7 @@ class Nuclide:
             except FileNotFoundError:
                 assert False, 'No proton induced fissionXS data for {0}. Download it and integrate it if it is ' \
                               'available. The conversion to pickle is done in `endf_to_pickle.py`. See "{1}" for' \
-                              ' instructions.'.format(self, pwd/'endf_files'/'FissionXS'/'readme')
+                              ' instructions.'.format(self, pwd/'endf_files'/'FissionXS'/'readme.md')
 
         return PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
 

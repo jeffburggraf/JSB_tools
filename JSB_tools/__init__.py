@@ -356,14 +356,13 @@ class FileManager:
             will match with
 
         Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
-
+        Todo: Find a way to make debugging not found easier.
         """
         lookup_kwargs = lookup_attributes.items()
         matches = {}
         for path, attribs in self.__file_lookup_data.items():
             all_attribs_list = list(attribs.items())
             if all(a in all_attribs_list for a in lookup_kwargs):
-            # if len(lookup_kwargs - attribs_set) == 0:
                 matches[path] = {k: v for k, v in attribs.items()}
         if len(matches) == 0:
             warnings.warn(f"No files fiund containing the following attribs: {lookup_attributes}")

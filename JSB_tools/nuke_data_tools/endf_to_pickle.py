@@ -28,7 +28,7 @@ cwd = Path(__file__).parent
 # download decay data from https://fispact.ukaea.uk/nuclear-data/downloads/. You should find a file titled
 # 'general decay data' in the list.
 #  Second set of decay files (JEFF) can be found at  https://www.nndc.bnl.gov/endf/b8.0/download.html
-#  See endf_files/decay/readme for more information.
+#  See endf_files/decay/readme.md for more information.
 # decay_data_dir = parent_data_dir / 'decay'
 
 # Download Proton Activation Data File from: https://www-nds.iaea.org/padf/
@@ -347,7 +347,7 @@ class ProtonENDFFile:
 
 #  Special case implemented in pickle_proton_fission_xs_data() for proton induced fission cross-sections.
 #  As of now, they must be manually copy-pasted :(
-#  See 'JSB_tools/nuke_data_tools/endf_files/FissionXS/Proton/readme' for instructions.
+#  See 'JSB_tools/nuke_data_tools/endf_files/FissionXS/Proton/readme.md' for instructions.
 proton_fission_xs = {}
 
 

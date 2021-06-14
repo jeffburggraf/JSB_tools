@@ -439,12 +439,12 @@ class TH1F:
 
         return ax
 
-    def latex_quantiles(self, ax, unit=None):
+    def latex_quartiles(self, ax, unit=None):
         if unit is None:
             unit = ''
         else:
             unit = f'[{unit}]'
-        lines = [f'Quantiles {unit}'] + [f"{25 * (i + 1)}\%  \hspace{{1cm}}  {q:.2g}" for i, q in
+        lines = [f'Quartiles {unit}'] + [f"{25 * (i + 1)}\%  \hspace{{1cm}}  {q:.2g}" for i, q in
                  enumerate(self.quantiles(4))]
         t = ('\n'.join(lines))
         ob = offsetbox.AnchoredText(t, loc=1)
