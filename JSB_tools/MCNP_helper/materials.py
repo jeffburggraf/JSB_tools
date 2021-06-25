@@ -162,7 +162,8 @@ class Material:
             cards.append(mat.mat_card)
         return '\n'.join(cards)
 
-    def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None,
+                 is_mcnp=True):
         self.mat_number = mat_number
         self.__name__ = mat_name
         Material.__all_materials[self.mat_number] = self
@@ -177,6 +178,7 @@ class Material:
 
         self.is_weight_fraction = None
         self.is_gas = False
+        self.is_mcnp = is_mcnp
 
     def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx', scaling=None):
         """
@@ -278,6 +280,7 @@ class Material:
             mat_number: int = None,
             mat_name: str = None,
             mat_kwargs: Dict[str, str] = None,
+            is_mcnp=True
             ):
         # Todo: Use N(2) or N_2 to specify number of N atoms. Thus, allowing isotope specification normally.
 
@@ -309,7 +312,7 @@ class Material:
             assert isinstance(mat_kwargs, dict)
             mat_kwargs['GAS'] = "1"
 
-        out = Material(density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        out = Material(density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs, is_mcnp=is_mcnp)
 
         for s, fraction in zip(list_of_chemicals, fractions):
             if m := chemical_regex.match(s):
@@ -372,7 +375,9 @@ class Material:
         outs = ['M{}  {}'.format(self.mat_number, comment)]
         for n, zaid in zip(self._zaid_proportions, self._zaids):
             outs.append('     {} {}'.format(zaid, '-{}'.format(n) if self.is_weight_fraction else n))
+
         outs.extend(["     {} = {}".format(k, v) for k, v in self.mat_kwargs.items()])
+
         return '\n'.join(outs)
 
     def __repr__(self):

@@ -10,12 +10,14 @@ from uncertainties import UFloat
 from numbers import Number
 from JSB_tools.TH1 import TH1F
 import pickle
+from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping
 import sys
 import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
 from types import ModuleType
 from abc import abstractmethod, ABC
-from JSB_tools.MCNP_helper import NDIGITS
+
+NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
 
 
 def _split_line(line):
@@ -153,6 +155,99 @@ class MCNPSICard:
     @classmethod
     def si_k_for_each_value_in_si_0(cls, si_0, si_ks):
         pass
+
+
+
+class TallyBase:
+    all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+
+    @staticmethod
+    def clear():
+        TallyBase.all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+
+    @staticmethod
+    def get_all_tally_cards():
+        outs = []
+        for tally in TallyBase.all_f4_tallies.values():
+            outs.append(tally.tally_card)
+        return '\n'.join(outs)
+
+
+class F4Tally(TallyBase):
+    def __init__(self, cell: Cell, particle: str, tally_number=None, tally_name=None, tally_comment=None):
+        """
+        Args:
+            cell: Cell instance for which the tally will be applied
+            particle: MCNP particle designator
+            tally_number: Must end in a 4. Or, just leave as None and let the code pick for you
+            tally_name:  Used in JSB_tools.outp_reader to fetch tallies by name.
+            tally_comment:
+        """
+        self.cell = cell
+        assert isinstance(particle, str), 'Particle argument must be a string, e.g. "n", or, "p", or, "h"'
+        self.erg_bins_array = None
+        self.tally_number = tally_number
+        if self.tally_number is not None:
+            assert str(self.tally_number)[-1] == '4', 'F4 tally number must end in a "4"'
+        self.__name__ = tally_name
+        self.tally_comment = tally_comment
+        TallyBase.all_f4_tallies[self.tally_number] = self
+        self.__modifiers__ = []
+
+        assert isinstance(particle, str), '`particle` argument must be a string.'
+        particle = particle.lower()
+        for key, value in {'photons': 'p', 'protons': 'h', 'electrons': 'e', 'neutrons': 'n',
+                           'alphas': 'a'}.items():
+            if particle == key or particle == key[:-1]:
+                particle = value
+                break
+
+        self.particle = particle
+
+    @property
+    def name(self):
+        return self.__name__
+
+    def add_fission_rate_multiplier(self, mat: int) -> None:
+        """
+        Makes this tally a fissionXS rate tally [fissions/(src particle)/cm3] for neutrons and protons
+        Args:
+            mat: Material number
+
+        Returns: None
+
+        """
+        mod = 'FM{} -1 {mat} -2'.format(self.mcnp_tally_number, mat=mat)
+        self.__modifiers__.append(mod)
+
+    @property
+    def mcnp_tally_number(self):
+        return int(str(self.tally_number) + '4')
+
+    def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
+        if erg_bins_array is not None:
+            assert hasattr(erg_bins_array, '__iter__')
+            assert len(erg_bins_array) >= 2
+            assert erg_min == erg_max == n_erg_bins, 'Can either specify energy bins by an array of values, or by ' \
+                                                     'erg_min, erg_max, and the number of bins, n_erg_bins.'
+            self.erg_bins_array = erg_bins_array
+
+        else:
+            assert erg_bins_array is None, "Can't specify bins by using an array and a min, max, and number of bins." \
+                                           "Set erg_bins_array to None."
+            self.erg_bins_array = np.linspace(erg_min, erg_max, n_erg_bins)
+        self.erg_bins_array = np.array([round(x, _round) for x in self.erg_bins_array])
+
+    @property
+    def tally_card(self):
+        comment = get_comment(self.tally_comment, self.__name__)
+        out = 'F{num}:{par} {cell} {comment}'.format(num=self.mcnp_tally_number, par=self.particle,
+                                                     cell=self.cell.cell_number, comment=comment)
+        if self.erg_bins_array is not None:
+            out += '\nE{num} {bins}'.format(num=self.mcnp_tally_number, bins=' '.join(map(str, self.erg_bins_array)))
+
+        out += '\n'.join(self.__modifiers__)
+        return out
 
 
 class InputDeck:

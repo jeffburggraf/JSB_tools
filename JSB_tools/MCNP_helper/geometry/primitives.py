@@ -1,16 +1,22 @@
+"""
+For the creation of surfaces and cells in MCNP. Cell/surface numbers can be managed automatically,
+or manually specified.
+"""
+
 from __future__ import annotations
-from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, F4Tally, CellGroup
+
+from abc import ABC
+
+from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, TRCL, get_comment, CellGroup
 from typing import Union, List, Dict, Tuple, Sized, Iterable
 import numpy as np
 from JSB_tools.MCNP_helper.materials import Material as mat
 from JSB_tools.MCNP_helper.materials import PHITSOuterVoid
-from JSB_tools.MCNP_helper import NDIGITS
-"""
-For the creation of surfaces and cells in MCNP. Cell/surface numbers can be managed automatically, 
-or manually specified.
-"""
 
-__all__ = ['clear_all', 'clear_all_but_materials', 'clear_cells', 'clear_surfaces', 'clear_tallys']
+NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
+
+
+__all__ = ['clear_all', 'clear_all_but_materials', 'clear_cells', 'clear_surfaces']
 
 
 def clear_cells():
@@ -21,14 +27,10 @@ def clear_surfaces():
     Surface.clear()
 
 
-def clear_tallys():
-    F4Tally.clear()
-
 
 def clear_all_but_materials():
     clear_cells()
     clear_surfaces()
-    clear_tallys()
 
 
 def clear_all():
@@ -40,7 +42,6 @@ def clear_all():
     mat.clear()
     Cell.clear()
     Surface.clear()
-    F4Tally.clear()
 
 
 class CuboidSurface(Surface):
@@ -86,12 +87,31 @@ class CuboidSurface(Surface):
     @property
     def surface_card(self):
         comment = get_comment(self.surface_comment, self.surface_name)
-        out = f'{self.surface_number} {self.xmin:.{NDIGITS}g} {self.xmax:.{NDIGITS}g}  ' \
+        out = f'{self.surface_number} RPP {self.xmin:.{NDIGITS}g} {self.xmax:.{NDIGITS}g}  ' \
               f'{self.ymin:.{NDIGITS}g} {self.ymax:.{NDIGITS}g}  {self.zmin:.{NDIGITS}g} {self.zmax:.{NDIGITS}g}' \
               f' {comment}'
         # return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
         #     .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=zmin,
         #             zmax=self.zmax, comment=comment)  # old
+        return out
+
+
+class SphereSurface(Surface):
+    def __init__(self, radius, x=0, y=0, z=0, surf_name=None, surf_num=None, comment=None):
+        super(SphereSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+        self.radius = radius
+        self.x = x
+        self.y = y
+        self.z = z
+
+    @property
+    def volume(self):
+        return 4/3*np.pi*self.radius**3
+
+    @property
+    def surface_card(self):
+        comment = get_comment(self.surface_comment, self.surface_name)
+        out = f'{self.surface_number} SPH {self.x:.{NDIGITS}g} {self.y:.{NDIGITS}g} {self.z:.{NDIGITS}g} {comment}'
         return out
 
 
@@ -105,7 +125,7 @@ class CuboidCell(Cell, CuboidSurface):
         c1.surface_card  # string of the surface card
 
     """
-    def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax,
+    def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax=None, dz=None,
                  material: Union[int, mat, PHITSOuterVoid] = 0,
                  cell_name: str = None,
                  importance: Union[None, Tuple[str, int]] = None,
@@ -120,6 +140,7 @@ class CuboidCell(Cell, CuboidSurface):
             ymax: ...
             zmin: ...
             zmax: ...
+            dz: If zmax is None, then zmx = zmin + dz
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
             material: MCNP material number
             cell_name:  For use in outpreader.py for looking up cell and tallies by name.
@@ -130,6 +151,10 @@ class CuboidCell(Cell, CuboidSurface):
             surf_comment:
             cell_kwargs:  Additional keyword arguments to be used in cell card, i.g. vol=1
         """
+
+        assert not (zmax is dz is None), 'Must specify either `zmax` or `dz`.'
+        if zmax is None:
+            zmax = zmin + dz
 
         if cell_name is not None:
             if surf_name is None:
@@ -256,13 +281,24 @@ class RightCylinder(Cell, RightCylinderSurface):
         if cell_comment is not None:
             if surf_comment is None:
                 surf_comment = cell_comment
+        if dz < 0:
+            z0 = z0+dz
+            dz = -dz
+        if dy < 0:
+            y0 = y0+dy
+            dy = -dy
+        if dx < 0:
+            x0 = x0+dx
+            dx = -dx
 
         super(RightCylinder, self).__init__(material=material, importance=importance,
                                             cell_number=cell_num, cell_name=cell_name, cell_comment=cell_comment,
                                             cell_kwargs=cell_kwargs)
         super(Cell, self).__init__(x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, radius=radius, surf_name=surf_name,
                                    surf_num=surf_number, comment=surf_comment)
-
+    @property
+    def z_mid(self):
+        return self.z0 + self.dz/2
 
 if __name__ == '__main__':
     m_Ar = mat.gas(['Ar'], [1], pressure=1.4)

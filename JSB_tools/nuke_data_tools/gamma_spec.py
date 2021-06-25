@@ -92,8 +92,8 @@ def gamma_search(erg_center: float,
          be infinity.
         half_life_min: Min cut off for half life
         half_life_max:  Max cut off for half life
-        nuclide_weighting_function: A weighting function that accepts a nuclide name (str) and returns a number used to weight
-         the sorter. e.g.: weight by fissionXS yield when searching for fissionXS fragments.
+        nuclide_weighting_function: Must be a weighting function that accepts a nuclide name (str) and returns a number
+        used to weight the sorter. e.g., weight by fission yield when searching for fission fragments.
 
     Returns:
 

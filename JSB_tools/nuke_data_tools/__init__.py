@@ -409,7 +409,7 @@ class FissionYields:
         result = np.where(result >= 0, result, 0)
         return result
 
-    def __init__(self, target: str, inducing_par: str, energies: Union[Collection[float], None] = None,
+    def __init__(self, target: str, inducing_par: Union[None, str], energies: Union[Collection[float], None] = None,
                  library: Union[str, None] = None, independent_bool: bool=True):
         """
         Load fission yield data into class instance. If `library` is None, find the best option for `energies`.
@@ -1208,7 +1208,18 @@ class Nuclide:
         return cls.from_symbol(name)
 
     @classmethod
-    def from_symbol(cls, symbol: str):
+    def from_symbol(cls, symbol: str, discard_meta_state=False):
+        """
+
+        Args:
+            symbol: e.g. 'Xe139', 'Ta180_m1"
+            discard_meta_state: If True, discard meta stable state.
+
+        Returns:
+
+        """
+        if discard_meta_state:
+            symbol = symbol.split('_')[0]
         assert isinstance(symbol, str), '`symbol` argument must be a string.'
         if '-' in symbol:
             symbol = symbol.replace('-', '')
@@ -1280,57 +1291,57 @@ class Nuclide:
     #         result[n_name]: UFloat = ufloat(data['yield'], data['yield_err'])
     #     return result
 
-    def independent_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle='gamma', eval_ergs=ergs, data_source=data_source,
-                          independent_bool=True)
-        return y
-
-    def cumulative_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle='gamma', eval_ergs=ergs, data_source=data_source,
-                          independent_bool=False)
-        return y
-
-    def independent_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle='proton', eval_ergs=ergs, data_source=data_source,
-                          independent_bool=True)
-        return y
-
-    def cumulative_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle='proton', eval_ergs=ergs, data_source=data_source,
-                          independent_bool=False)
-        return y
-
-    def independent_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle='neutron', eval_ergs=ergs, data_source=data_source,
-                          independent_bool=True)
-        return y
-
-    def cumulative_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle='neutron', eval_ergs=ergs, data_source=data_source,
-                          independent_bool=False)
-        return y
-
-    def independent_sf_fission_yield(self, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle=None, data_source=data_source,
-                          independent_bool=True)
-        return y
-
-    def cumulative_sf_fission_yield(self, data_source=None) -> FissionYields:
-        y = FissionYields(nuclide=self, inducing_particle=None,  data_source=data_source,
-                          independent_bool=False)
-        return y
-
-    def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
-        return self.__get_parents__('proton', a_z_hl_cut, is_stable_only)
-
-    def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-        return self.__get_daughters__('proton', a_z_hl_cut, is_stable_only)
-
-    def get_incident_gamma_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-        return self.__get_daughters__('gamma', a_z_hl_cut, is_stable_only)
-
-    def get_incident_gamma_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
-        return self.__get_parents__('gamma', a_z_hl_cut, is_stable_only)
+    # def independent_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def cumulative_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def independent_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def cumulative_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def independent_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def cumulative_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def independent_sf_fission_yield(self, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def cumulative_sf_fission_yield(self, data_source=None) -> FissionYields:
+    #     y = FissionYields(target=self.name, inducing_par=None, library=data_source,
+    #                       independent_bool=True)
+    #     return y
+    #
+    # def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+    #     return self.__get_parents__('proton', a_z_hl_cut, is_stable_only)
+    #
+    # def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+    #     return self.__get_daughters__('proton', a_z_hl_cut, is_stable_only)
+    #
+    # def get_incident_gamma_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+    #     return self.__get_daughters__('gamma', a_z_hl_cut, is_stable_only)
+    #
+    # def get_incident_gamma_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+    #     return self.__get_parents__('gamma', a_z_hl_cut, is_stable_only)
 
     def __get_daughters__(self, projectile, a_z_hl_cut='', is_stable_only=False):
         """

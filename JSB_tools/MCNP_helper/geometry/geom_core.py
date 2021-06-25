@@ -1,18 +1,23 @@
 from __future__ import annotations
+
+import re
 from typing import Union, List, Dict, Tuple, Sized, Iterable, Type
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, ABCMeta
 from JSB_tools.MCNP_helper.geometry import get_rotation_matrix, GeomSpecMixin, BinaryOperator,\
     get_comment, MCNPNumberMapping
 from warnings import warn
 from numbers import Number
 import numpy as np
 from JSB_tools.MCNP_helper.materials import Material, PHITSOuterVoid
+from pathlib import Path
+import io
 """
 Base class definitions for geometry primitives defined in primitives.py
 """
+#  todo: In outp_reader, return a Cell instance (the one defnied here). Impliment this in the Cell class,
+#   e.g. a from_outp method
 
-
-class Surface(ABC, GeomSpecMixin):
+class Surface(GeomSpecMixin, metaclass=ABCMeta):
     all_surfs = MCNPNumberMapping('Surface', 1)
 
     @staticmethod
@@ -26,6 +31,7 @@ class Surface(ABC, GeomSpecMixin):
         self.surface_number = surface_number
         self.surface_comment = surface_comment
         Surface.all_surfs[self.surface_number] = self
+        self.surface = self
         super().__init__()
 
     @property
@@ -39,6 +45,7 @@ class Surface(ABC, GeomSpecMixin):
             outs.append(surf.surface_card)
         return '\n'.join(outs)
 
+    @property
     @abstractmethod
     def surface_card(self):
         pass
@@ -50,98 +57,6 @@ class Surface(ABC, GeomSpecMixin):
         #     Surface.all_surfs.auto_picked_numbers.remove(self.surface_number)
         #
         # del Surface.all_surfs[self.surface_number]
-
-
-class Tally:
-    all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
-
-    @staticmethod
-    def clear():
-        Tally.all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
-
-    @staticmethod
-    def get_all_tally_cards():
-        outs = []
-        for tally in Tally.all_f4_tallies.values():
-            outs.append(tally.tally_card)
-        return '\n'.join(outs)
-
-
-class F4Tally(Tally):
-    def __init__(self, cell: Cell, particle: str, tally_number=None, tally_name=None, tally_comment=None):
-        """
-        Args:
-            cell: Cell instance for which the tally will be applied
-            particle: MCNP particle designator
-            tally_number: Must end in a 4. Or, just leave as None and let the code pick for you
-            tally_name:  Used in JSB_tools.outp_reader to fetch tallies by name.
-            tally_comment:
-        """
-        self.cell = cell
-        assert isinstance(particle, str), 'Particle argument must be a string, e.g. "n", or, "p", or, "h"'
-        self.erg_bins_array = None
-        self.tally_number = tally_number
-        if self.tally_number is not None:
-            assert str(self.tally_number)[-1] == '4', 'F4 tally number must end in a "4"'
-        self.__name__ = tally_name
-        self.tally_comment = tally_comment
-        Tally.all_f4_tallies[self.tally_number] = self
-        self.__modifiers__ = []
-
-        assert isinstance(particle, str), '`particle` argument must be a string.'
-        particle = particle.lower()
-        for key, value in {'photons': 'p', 'protons': 'h', 'electrons': 'e', 'neutrons': 'n',
-                           'alphas': 'a'}.items():
-            if particle == key or particle == key[:-1]:
-                particle = value
-                break
-
-        self.particle = particle
-
-    @property
-    def name(self):
-        return self.__name__
-
-    def add_fission_rate_multiplier(self, mat: int) -> None:
-        """
-        Makes this tally a fissionXS rate tally [fissions/(src particle)/cm3] for neutrons and protons
-        Args:
-            mat: Material number
-
-        Returns: None
-
-        """
-        mod = 'FM{} -1 {mat} -2'.format(self.mcnp_tally_number, mat=mat)
-        self.__modifiers__.append(mod)
-
-    @property
-    def mcnp_tally_number(self):
-        return int(str(self.tally_number) + '4')
-
-    def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
-        if erg_bins_array is not None:
-            assert hasattr(erg_bins_array, '__iter__')
-            assert len(erg_bins_array) >= 2
-            assert erg_min == erg_max == n_erg_bins, 'Can either specify energy bins by an array of values, or by ' \
-                                                     'erg_min, erg_max, and the number of bins, n_erg_bins.'
-            self.erg_bins_array = erg_bins_array
-
-        else:
-            assert erg_bins_array is None, "Can't specify bins by using an array and a min, max, and number of bins." \
-                                           "Set erg_bins_array to None."
-            self.erg_bins_array = np.linspace(erg_min, erg_max, n_erg_bins)
-        self.erg_bins_array = np.array([round(x, _round) for x in self.erg_bins_array])
-
-    @property
-    def tally_card(self):
-        comment = get_comment(self.tally_comment, self.__name__)
-        out = 'F{num}:{par} {cell} {comment}'.format(num=self.mcnp_tally_number, par=self.particle,
-                                                     cell=self.cell.cell_number, comment=comment)
-        if self.erg_bins_array is not None:
-            out += '\nE{num} {bins}'.format(num=self.mcnp_tally_number, bins=' '.join(map(str, self.erg_bins_array)))
-
-        out += '\n'.join(self.__modifiers__)
-        return out
 
 
 class TRCL:
@@ -179,12 +94,11 @@ class Cell(GeomSpecMixin):
         Cell.all_cells = MCNPNumberMapping('Cell', 10)
 
     def delete_cell(self):
-        raise NotImplementedError("Don't do this! Modify the features of an existing cell instead. ")
-    # def delete_cell(self):
-    #     if self.cell_number in Cell.all_cells.auto_picked_numbers:
-    #         Cell.all_cells.auto_picked_numbers.remove(self.cell_number)
-    #
-    #     del Cell.all_cells[self.cell_number]
+        raise NotImplementedError("No, bad idea. Don't delete Cells, modify the features of an existing cell instead."
+                                  "You can do this in every case.")
+
+    def __repr__(self):
+        return f'Cell {self.cell_number}; {self.cell_card}'
 
     def __init__(self, material: Union[int, Material, PHITSOuterVoid] = 0,
                  geometry: Union[type(None), GeomSpecMixin, BinaryOperator, str] = None,
@@ -193,28 +107,36 @@ class Cell(GeomSpecMixin):
                  cell_name: Union[str, None] = None,
                  cell_comment: Union[str, type(None)] = None,
                  cell_kwargs: Dict = None,
-                 trcl: Union[None, TRCL] = None):
+                 trcl: Union[None, TRCL] = None,
+                 **kwargs):
         """
+        MCNP cell assistant.
         Args:
+            material: MCNP material number or Material instance
+            geometry: Cell geom. spec. Can use Surfaces/Cells with operators ~, &, +, and -.
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
-            material: MCNP material number
-            cell_name:  Name tagging for use in outpreader.py for looking up cells, surfaces, and tallies by name.
             cell_number: Cell number. If None, automatically choose a cell number.
+            cell_name: Name tagging for use in outpreader.py for looking up cells, surfaces, and tallies by name.
             cell_comment: Comment for cell
-            cell_kwargs:  Additional keyword arguments to be used in cell card, i.g. vol=1
+            cell_kwargs: Additional keyword arguments to be used in cell card, e.g. vol=1
             trcl: TRCL instance.
         """
+
+        self.cell = self
         self.__name__ = cell_name
         self.cell_number = cell_number
         if importance is not None:
             assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
                                                                              "for example, ('np', 1)"
-            self.importance = importance[0].replace(',', ''), importance[1]  # remove commas added by the user.
+            self.importance = [importance[0], importance[1]]
+            self.importance[0] = self.importance[0].replace(' ', '')
+
+            self.importance[0] = self.importance[0].replace(',', '')  # remove commas added by the user.
         else:
             self.importance = importance
 
         self.material = material
-        if not isinstance(self.material, (Material, PHITSOuterVoid)):
+        if not isinstance(self.material, (int, Material, PHITSOuterVoid)):
             assert material in ['0', 0, None], "`material` argument must be either a Material instance, or, a" \
                                                " PHITSVoid instance or 0/None for void."
 
@@ -227,10 +149,18 @@ class Cell(GeomSpecMixin):
             self.cell_kwargs = {}
         self.cell_comment = cell_comment
         self.trcl = trcl
-        Cell.all_cells[cell_number] = self
+        if 'from_outp' not in kwargs:
+            self.__from_outp__ = False  # For cells reconstructed from MCNP outp
+            Cell.all_cells[cell_number] = self
+        else:
+            self.__from_outp__ = True
         GeomSpecMixin.__init__(self)
         self.__like_but_kwargs__ = {}
         self.__like_but_number__ = None
+
+        if self.importance is None and not self.__from_outp__:
+            warn(f'Importance of cell {self.cell_name if self.cell_name is not None else self.cell_number}'
+                 f' is not specified')
 
     @property
     def cell_mass(self):
@@ -358,10 +288,8 @@ class Cell(GeomSpecMixin):
         kwargs = ' '.join(kwargs)
         return f'{self.cell_number} LIKE {self.__like_but_number__} BUT {kwargs}'
 
-    def __get_imp_str__(self, imp=None):
-
-        if imp is None:
-            imp = self.importance
+    @staticmethod
+    def __get_imp_str__(imp=None):
         if imp is None:
             return ''
         assert hasattr(imp, '__iter__') and len(imp) == 2 and isinstance(imp[0], str), \
@@ -393,7 +321,7 @@ class Cell(GeomSpecMixin):
         else:
             out = f'{self.cell_number} {self.material.mat_number} -{abs(self.material.density)}'
 
-        imp = self.__get_imp_str__()
+        imp = self.__get_imp_str__(self.importance)
 
         out += f' {self.geometry} {imp}'
         for key, arg in self.cell_kwargs.items():
@@ -431,7 +359,7 @@ class CellGroup:
         self.cells.remove(cell_obj)
 
     def __invert__(self):
-        geom = None
+        geom: Union[Cell, Surface] = None
         assert len(self.cells) > 0, 'No cells in group!'
 
         def f(cells):
@@ -441,9 +369,11 @@ class CellGroup:
             else:
                 cell = cells[0]
                 if isinstance(cell, Surface):
-                    additional_geom = +cell
-                else:
+                    additional_geom = +cell.surface
+                elif isinstance(cell, Cell):
                     additional_geom = ~cell
+                else:
+                    assert False
                 if geom is None:
                     geom = additional_geom
                 else:
@@ -452,3 +382,9 @@ class CellGroup:
 
         f(self.cells)
         return geom
+
+
+if __name__ == '__main__':
+    p = '/Users/burggraf1/PycharmProjects/PHELIX/IAC/2021Sim/0_inp/outp'
+    p = Cell.from_outp(p, cell_name='    Convertor, 0.3 cm       ')
+    print(p)

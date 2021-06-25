@@ -25,29 +25,36 @@ class Tally:
         self.energies: Sized
         self.flux: UFloat
         self.fluxes: Sized
-        self.cells: Set[Cell]
+        self.cells: Set[OutpCell]
         self.rates: Sized
         self.rate: UFloat
         self.tally_name: str
         self.tally_modifiers: Set[str]
 
 
-class Cell:
+class OutpCell:
     def __init__(self, data, outp=None):
-        self.cell_num = int(data[1])
+        self.number = int(data[1])
         self.mat = int(data[2])
         self.atom_density = float(data[3])  # atoms/barn*cm
         self.density = float(data[4])
         self.volume = float(data[5])
         self.outp = outp
+        self.name = None
 
         if self.outp is not None:
             assert isinstance(outp, OutP)
 
     def __repr__(self):
-        return "Cell {0}, mat:{1}".format(self.cell_num, self.mat)
+        return "Cell {0}, mat:{1}, name: {2}".format(self.number, self.mat, self.name)
 
-    def get_tallys(self) -> List[Tally]:
+    def get_tally(self):
+        assert len(self.tallys) <= 1, f'Multiple tallys for cell {self.number}. Use `get_tallys`.'
+        assert len(self.tallys) > 0, f'No tally for cell {self.number}.'
+        return self.tallys[0]
+
+    @cached_property
+    def tallys(self) -> List[F4Tally]:
         tallies = []
         for line in self.outp.input_deck:
             _m = re.match(' *f([0-9]*([0-9])): *. +([0-9]+)', line)
@@ -58,7 +65,7 @@ class Cell:
                 if tally_type != 4:
                     warn('Tally other than 4 not implemented yet (from Cell.get_tallys)')
                 else:
-                    if cell_num == self.cell_num:
+                    if cell_num == self.number:
                         tallies.append(self.outp.get_tally(tally_num))
         return tallies
 
@@ -125,7 +132,7 @@ class F4Tally(Tally):
             tally_modifier_match1 = re.compile('^([etc]){}:?'.format(self.tally_number))
             tally_modifier_match2 = re.compile('(fm|em|tm|cm){}'.format(self.tally_number))
 
-            __cell__: Cell = None
+            __cell__: OutpCell = None
             self.particle: str = None
             #  Todo: make fm, em, ect compatible. Do these multipliers change the form of the outp?
             for card in outp.input_deck:
@@ -142,7 +149,7 @@ class F4Tally(Tally):
                 elif _m := tally_modifier_match2.match(card):
                     self.tally_modifiers.add(_m.groups()[0])
 
-            self.cells: Set[Cell] = {__cell__}  # list of cells for when self.__add__ etc. is used
+            self.cells: Set[OutpCell] = {__cell__}  # list of cells for when self.__add__ etc. is used
 
             if not found_tally:
                 assert False, "Could not find tally {} in input deck!".format(self.tally_number)
@@ -178,11 +185,14 @@ class F4Tally(Tally):
             else:
                 assert False, "Tally modifiers {} not yet supported!".format(self.tally_modifiers)
             if (self.tally_modifiers - {'fm'}) == set():
+                print(self.tally_modifiers)
                 if 'fm' in self.tally_modifiers:
                     index += 1
                 self.underflow = None
                 self.energies = np.array([])
                 self.__fluxes__ = np.array([])
+                if not re.match('.+[0-9.E+-]+ [0-9.E+-]+', outp.__outp_lines__[index+2]):  # bug? Whatever.
+                    index += 1
                 flux_out_put = outp.__outp_lines__[index+2].split()
                 _flux = float(flux_out_put[0])
                 _flux_error = _flux*float(flux_out_put[1])
@@ -245,11 +255,15 @@ class F4Tally(Tally):
                 .format(self.tally_number)
 
     @property
+    def density(self):
+        return self.cell_mass/self.total_volume
+
+    @property
     def cell_mass(self):
         return self.cell.volume*self.cell.density
 
     @property
-    def cell(self) -> Cell:
+    def cell(self) -> OutpCell:
         assert len(self.cells) == 1,\
             'Multiple cells are used for this tally since __add__, ect was used. Use self.cells instead'
         return next(iter(self.cells))
@@ -308,8 +322,9 @@ class F4Tally(Tally):
         return out
 
     def __repr__(self):
-        return 'F4 Tally ({2}) in cell {0}, With {1} modifier.'.format(self.__cell__.cell_num, self.tally_modifiers,
+        return 'F4 Tally ({2}) in cell {0}, With {1} modifier.'.format(self.cell.number, self.tally_modifiers,
                                                                        self.tally_number)
+
     def __copy__(self):
         return F4Tally(None, None, self)
 
@@ -440,10 +455,28 @@ class OutP:
                 if self.__outp_lines__[index].split():
                     data = self.__outp_lines__[index].split()
                     cell_num = int(data[1])
-                    self.cells[cell_num] = Cell(data, self)
+                    self.cells[cell_num] = OutpCell(data, self)
                 else:
                     break
                 index += 1
+        cell_match = re.compile(r'([0-9]+).*(?:name: (.+))')
+        for card in self.input_deck:  # wet cell names
+            if m := cell_match.match(card):
+                cell_num = int(m.groups()[0])
+                self.cells[cell_num].name = m.groups()[1]
+
+            if re.match(r'^\s*$', card):
+                break
+
+    def get_cell_by_name(self, name: str):
+        match = name.rstrip().lstrip()
+        for _, cell in self.cells.items():
+            if match == cell.name:
+                out = cell
+                break
+        else:
+            assert False, f"No cell named {name} found!"
+        return out
 
     def get_tally(self, tally_number_or_name):
         return F4Tally(tally_number_or_name, self)
@@ -858,20 +891,21 @@ class StoppingPowerData:
 
 
 if __name__ == "__main__":
+    o = OutP('/Users/burggraf1/PycharmProjects/PHELIX/IAC/2021Sim/0_inp/outp')
     # test_outp = (Path(__file__).parent.parent / "FFandProtonSims" / "Protons" / "outp_saved")
     # o = OutP(test_outp)
     # d = o.read_stopping_powers("proton", 2000)
     # d.plot_dedx()
     # d.plot_range()
     # plt.show()
-    s_h = StoppingPowerData.get_stopping_power('Cs133', ['U'], 19, material_atom_percents=[1, 2])
-    s_l = StoppingPowerData.get_stopping_power('Tc99', ['U'], 19, material_atom_percents=[1, 2])
-
-    ax = s_h.plot_range(material_name_4_title='U', label='Cs133')
-    s_l.plot_range(ax, material_name_4_title='U', label='Tc99')
-    ax.set_title("Range of typical light and heavy FF's in U238")
-    print('Heavy fragment range in U: {} um'.format( s_h.get_range_at_erg(70)*1E4))
-    print('Light fragment range in U {} um'.format( s_l.get_range_at_erg(105)*1E4))
-    plt.show()
+    # s_h = StoppingPowerData.get_stopping_power('Cs133', ['U'], 19, material_atom_percents=[1, 2])
+    # s_l = StoppingPowerData.get_stopping_power('Tc99', ['U'], 19, material_atom_percents=[1, 2])
+    #
+    # ax = s_h.plot_range(material_name_4_title='U', label='Cs133')
+    # s_l.plot_range(ax, material_name_4_title='U', label='Tc99')
+    # ax.set_title("Range of typical light and heavy FF's in U238")
+    # print('Heavy fragment range in U: {} um'.format( s_h.get_range_at_erg(70)*1E4))
+    # print('Light fragment range in U {} um'.format( s_l.get_range_at_erg(105)*1E4))
+    # plt.show()
 
 

@@ -193,6 +193,7 @@ class GaussianEnergyDistribution(Distribution):
 @dataclass
 class MonoEnergeticDistribution(Distribution):
     erg: float
+    __is_energy_dist__ = True
 
     def __imul__(self, other):
         self.erg *= other

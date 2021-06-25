@@ -7,7 +7,7 @@ Define functions used thought MCNP related code.
 """
 
 class MCNPNumberMapping(dict):
-    """Used for automatically assigning numbers to MCNP cells and surfaces. """
+    """Used for automatically assigning numbers to MCNP cells, surfaces, tallies, etc. """
 
     def __init__(self, class_name, starting_number: int, step=1):
         self.step = step
@@ -25,6 +25,8 @@ class MCNPNumberMapping(dict):
             return getattr(item, 'tally_number')
         elif self.class_name == 'Material':
             return getattr(item, 'mat_number')
+        elif self.class_name == 'CylFMESH':
+            return getattr(item, '__fmesh_number__')
         else:
             assert False
 
@@ -37,6 +39,8 @@ class MCNPNumberMapping(dict):
             return setattr(item, 'tally_number', num)
         elif self.class_name == 'Material':
             return setattr(item, 'mat_number', num)
+        elif self.class_name == 'CylFMESH':
+            return setattr(item, '__fmesh_number__', num)
         else:
             assert False
 
@@ -96,8 +100,10 @@ class MCNPNumberMapping(dict):
         self.number_setter(item, number)  # set the cell or surf instance's number attribute to the correct value
 
 
-def get_comment(comment, name):
+def get_comment(comment, name: str):
     if name is not None:
+        assert isinstance(name, str)
+        name = name.rstrip().lstrip()
         return_comment = " name: {}".format(name)
     else:
         return_comment = ''
