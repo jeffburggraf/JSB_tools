@@ -25,7 +25,7 @@ class CylFMESH(TallyBase):
     # all_meshes = F4Tally.all_f4_tallies
 
     def __init__(self, particle: str, rmax, axis_length, origin=(0, 0, 0), rbins=10, axis_bins=10, axs_hat=(0, 0, 1),
-                 radius_hat=(1, 0, 0), tally_number=None, fmesh_name=None,theta_bins=1, theta_max=1):
+                 radius_hat=(1, 0, 0), tally_number=None, fmesh_name=None,theta_bins=1, theta_max=1, ref=None):
         """
 
 
@@ -38,10 +38,11 @@ class CylFMESH(TallyBase):
             axis_bins: Number of bins along the axis
             axs_hat:
             radius_hat:
-            fmesh_number:
+            tally_number:
             fmesh_name:
             theta_bins: Number of bins in theta. Pretty much always should be 1.
             theta_max:
+            ref: REF keyword for mesh weight windows
         """
         super(CylFMESH, self).__init__()
 
@@ -67,6 +68,8 @@ class CylFMESH(TallyBase):
 
         self.all_f4_tallies[self.tally_number] = self
 
+        self.ref = ref
+
     @property
     def fmesh_number(self):
         return int(str(self.tally_number) + '4')
@@ -78,9 +81,10 @@ class CylFMESH(TallyBase):
     def __repr__(self):
         def f(a):  # iter to MCNP input
             return " ".join(map(str, a))
-
+        optional = {}  # for any optional kwargs. None implemented yet...
+        optional = ' '.join(f'{k}={v}' for k, v in optional.items())
         out = f'FMESH{self.fmesh_number}:{self.particle} GEOM=cyl ORIGIN={f(self.origin)} AXS={f(self.axs_hat)} ' \
-              f'VEC={f(self.radius_hat)}  $ {self.__name__}\n' \
+              f'VEC={f(self.radius_hat)} {optional} $ {self.__name__}\n' \
               f'     IMESH {self.rmax}  IINTS {self.rbins}\n' \
               f'     JMESH {self.axis_length}  JINTS {self.axis_bins}\n' \
               f'     KMESH {self.theta_max}  KINTS {self.theta_bins}'

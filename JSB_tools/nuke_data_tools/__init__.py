@@ -22,7 +22,7 @@ from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTO
 from functools import cached_property
 from scipy.interpolate import interp1d
 
-__all__ = ['Nuclide', 'avogadros_number']
+__all__ = ['Nuclide', 'avogadros_number', 'FissionYields']
 
 
 #  Units

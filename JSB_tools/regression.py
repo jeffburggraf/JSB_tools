@@ -182,11 +182,11 @@ class PeakFit(FitBase):
         return np.where((x >= min_) & (x <= max_))
 
     @classmethod
-    def from_hist(cls, hist, peak_center_guess, window_width=None):
+    def from_hist(cls, hist, peak_center_guess, fix_center=False, fix_sigma=None, window_width=None):
         if not hist.is_density:
             warnings.warn('Histogram supplied to PeakFit is may not be a density. Divide by bin values to correct.')
         return cls(peak_center_guess=peak_center_guess, x=hist.bin_centers, y=hist.nominal_bin_values,
-                   yerr=hist.bin_std_devs, window_width=window_width)
+                   yerr=hist.bin_std_devs, fix_center=fix_center, fix_sigma=fix_sigma, window_width=window_width)
 
     @staticmethod
     def gen_fake_data(center=0, n_counts=10000, bg_const=10, bg_linear=5, sigma=1, xrange=(-15, 15), nbins=100):
@@ -224,7 +224,7 @@ class PeakFit(FitBase):
     def model_func(x, center, amp, sigma, bg):
         return amp * norm(loc=center, scale=sigma).pdf(x) + bg
 
-    def __init__(self, peak_center_guess, x, y, yerr=None, window_width=None):
+    def __init__(self, peak_center_guess, x, y, yerr=None, fix_center=False, fix_sigma=None, window_width=None):
         """
         Fit a peak near `peak_center_guess`.
         It's recommended to supply the whole spectrum so that the code can use broader spectrum in order to estimate
@@ -234,6 +234,7 @@ class PeakFit(FitBase):
             x:
             y:
             yerr:
+            fix_center: If True, fix center to `peak_center_guess`
             window_width: Should be about 3x the width (base to base) of peak to be fit
         """
         super().__init__(x, y, yerr)
@@ -247,7 +248,7 @@ class PeakFit(FitBase):
         self.__cut__(peak_center_guess - window_width, peak_center_guess + window_width)
         bg_guess = np.mean(self.bg_est)
         bg_subtracted = self.y - self.bg_est
-        # plt.plot(self.x, bg_subtracted, label='bg sub')
+
         guess_model = GaussianModel()
         params = guess_model.guess(data=self.y, x=self.x)  # guess parameters by fitting simple gaussian
         guess_model.fit(x=self.x, data=bg_subtracted, params=params, weights=self.__weights__)
@@ -255,16 +256,23 @@ class PeakFit(FitBase):
         params['sigma'].min = 1E-4
         params['amp'] = params['amplitude']
         del params['amplitude']
+        if fix_center:
+            params['center'].set(value=peak_center_guess, vary=False)
+        if fix_sigma is not None:
+            params['sigma'].set(value=fix_sigma, vary=False)
 
         model = Model(self.model_func)
         self.fit_result = model.fit(x=self.x, data=self.y, params=params,  weights=self.__weights__, scale_covar=False)
-        # self.params = self.fit_result.params
+
         self.amp: UFloat = None  # are set later
         self.center: UFloat = None
         self.sigma: UFloat = None
         self.fwhm: UFloat = None
         self.bg: UFloat = None
         self.set_params()
+
+    def fit_report(self):
+        return self.fit_result.fit_report()
 
 
 class LogPolyFit(FitBase):

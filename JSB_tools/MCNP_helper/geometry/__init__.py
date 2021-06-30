@@ -246,3 +246,6 @@ class GeomSpecMixin:
 
     def __str__(self):
         return self.__to_str__()
+
+    def __repr__(self):
+        return self.__str__()

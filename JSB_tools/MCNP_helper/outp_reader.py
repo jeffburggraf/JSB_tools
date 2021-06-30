@@ -428,7 +428,7 @@ class OutP:
         self.nps = None
         self.input_file_path = None
         for line in self.__outp_lines__:
-            _m = re.match("^ {0,9}[0-9]+- {7}(.+)", line)
+            _m = re.match("^ {0,9}[0-9]+- {7}(.*)", line)
             if _m:
                 card = _m.group(1).rstrip().lower()
                 self.input_deck.append(card)
@@ -460,13 +460,12 @@ class OutP:
                     break
                 index += 1
         cell_match = re.compile(r'([0-9]+).*(?:name: (.+))')
-        for card in self.input_deck:  # wet cell names
+        for card in self.input_deck:  # get cell names
+            if re.match(r'^\s*$', card):
+                break
             if m := cell_match.match(card):
                 cell_num = int(m.groups()[0])
                 self.cells[cell_num].name = m.groups()[1]
-
-            if re.match(r'^\s*$', card):
-                break
 
     def get_cell_by_name(self, name: str):
         match = name.rstrip().lstrip()
@@ -475,7 +474,7 @@ class OutP:
                 out = cell
                 break
         else:
-            assert False, f"No cell named {name} found!"
+            assert False, f"No cell named {name} found! {[c.name for c in self.cells.values()]}"
         return out
 
     def get_tally(self, tally_number_or_name):

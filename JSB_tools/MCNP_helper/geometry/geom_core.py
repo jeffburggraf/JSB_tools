@@ -33,6 +33,7 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
         Surface.all_surfs[self.surface_number] = self
         self.surface = self
         super().__init__()
+        self.enabled = True
 
     @property
     def surface_name(self):
@@ -42,7 +43,8 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
     def get_all_surface_cards():
         outs = []
         for surf in Surface.all_surfs.values():
-            outs.append(surf.surface_card)
+            if surf.enabled:
+                outs.append(surf.surface_card)
         return '\n'.join(outs)
 
     @property
@@ -61,7 +63,9 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
 
 class TRCL:
     def __init__(self, offset_vector=(0, 0, 0), rotation_theta=0., rotation_axis=(0, 0, 1), _round=3):
-        """Creates TRCL cards for MCNP. rotation_theta is in degrees."""
+        """Creates TRCL cards for MCNP. rotation_theta is in degrees.
+        MCNP will first rotate the cell, AND THEN apply the translate operation.
+        """
 
         assert hasattr(offset_vector, '__iter__'), '`offset_vector` must be an iterator, not "{}"'.format(offset_vector)
         assert len(offset_vector) == 3, f'`offset_vector` length must be 3, not {len(offset_vector)}: "{offset_vector}"'
@@ -73,6 +77,12 @@ class TRCL:
             self.rotation_matrix = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
         else:
             self.rotation_matrix = get_rotation_matrix(rotation_theta, *rotation_axis, _round=_round)
+
+    def cell_form(self):
+        return f'({self})'
+
+    def card_form(self):
+        assert False, 'Todo'
 
     def __str__(self) -> str:
         offset = ' '.join(map(str, self.offset_vector))
@@ -87,7 +97,7 @@ class Cell(GeomSpecMixin):
         surface_card: Property returning the surface card
         like_but: Create a new cell using MCNP's LIKE BUT feature.
     """
-    all_cells = MCNPNumberMapping('Cell', 10)
+    all_cells: Dict[int, Cell] = MCNPNumberMapping('Cell', 10)
 
     @staticmethod
     def clear():
@@ -96,6 +106,20 @@ class Cell(GeomSpecMixin):
     def delete_cell(self):
         raise NotImplementedError("No, bad idea. Don't delete Cells, modify the features of an existing cell instead."
                                   "You can do this in every case.")
+
+    def enable(self):
+        self.enabled = True
+        try:
+            self.surface.enabled = True  # for macros (sub classes of Cell) which create surfaces automatically.
+        except AttributeError:
+            pass
+
+    def disable(self):
+        self.enabled = False
+        try:
+            self.surface.enabled = False  # for macros (sub classes of Cell) which create surfaces automatically.
+        except AttributeError:
+            pass
 
     def __repr__(self):
         return f'Cell {self.cell_number}; {self.cell_card}'
@@ -162,6 +186,8 @@ class Cell(GeomSpecMixin):
             warn(f'Importance of cell {self.cell_name if self.cell_name is not None else self.cell_number}'
                  f' is not specified')
 
+        self.enabled = True
+
     @property
     def cell_mass(self):
         if isinstance(self.density, Number) and hasattr(self, "volume"):
@@ -187,7 +213,8 @@ class Cell(GeomSpecMixin):
         """
         outs = []
         for cell in sorted(Cell.all_cells.values(), key=lambda x: x.cell_number):
-            outs.append(cell.cell_card)
+            if cell.enabled:
+                outs.append(cell.cell_card)
         return '\n'.join(outs)
 
     @property
@@ -284,7 +311,7 @@ class Cell(GeomSpecMixin):
         assert len(self.__like_but_kwargs__) != 0
         kwargs = ['{} = {}'.format(k, v) for k, v in self.__like_but_kwargs__.items()]
         if self.trcl is not None:  # todo: this is ugly. Incorporate it differently
-            kwargs += ['TRCL = {}'.format(self.trcl)]
+            kwargs += ['TRCL = {}'.format(self.trcl.cell_form())]
         kwargs = ' '.join(kwargs)
         return f'{self.cell_number} LIKE {self.__like_but_number__} BUT {kwargs}'
 
@@ -327,7 +354,7 @@ class Cell(GeomSpecMixin):
         for key, arg in self.cell_kwargs.items():
             out += ' {}={}'.format(key, arg)
         if self.trcl is not None:  # todo: this is ugly. Incorporate it differently
-            out += ' TRCL = {} '.format(self.trcl)
+            out += ' TRCL = {} '.format(self.trcl.cell_form())
         comment = get_comment(self.cell_comment, self.cell_name)
         return out + comment
 
@@ -345,6 +372,14 @@ class Cell(GeomSpecMixin):
 class CellGroup:
     def __init__(self, *cells: Union[Cell, Surface]):
         self.cells = list(cells)
+
+    def disable(self):
+        for c in self.cells:
+            c.enabled = False
+
+    def enable(self):
+        for c in self.cells:
+            c.enabled = True
 
     def add_cells(self, *cells):
         for x in cells:

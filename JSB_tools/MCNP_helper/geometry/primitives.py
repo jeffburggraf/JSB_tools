@@ -44,17 +44,41 @@ def clear_all():
     Surface.clear()
 
 
+class SphereSurface(Surface):
+    def __init__(self, radius, x=0, y=0, z=0, surf_name=None, surf_num=None, comment=None):
+        super(SphereSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+        self.radius = radius
+        self.x = x
+        self.y = y
+        self.z = z
+
+    @property
+    def volume(self):
+        return 4/3*np.pi*self.radius**3
+
+    @property
+    def surface_card(self):
+        comment = get_comment(self.surface_comment, self.surface_name)
+        out = f'{self.surface_number} SPH {self.x:.{NDIGITS}g} {self.y:.{NDIGITS}g} {self.z:.{NDIGITS}g} {self.radius} ' \
+              f'{comment}'
+        return out
+
+
 class CuboidSurface(Surface):
     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax, surf_name=None, surf_num=None, comment=None):
         super(CuboidSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+        for kmin, kmax in zip([xmin, ymin, zmin], [xmax, ymax, zmax]):
+            assert kmin != kmax, 'Cuboid with minimum coordinate equals maximum coordinate: "} == {}'.format(kmax, kmax)
+
         self.xmin = xmin
         self.xmax = xmax
         self.ymin = ymin
         self.ymax = ymax
-        self.zmin = zmin
-        self.zmax = zmax
-        for kmin, kmax in zip([xmin, ymin, zmin], [xmax, ymax, zmax]):
-            assert kmin < kmax, 'Cuboid with minimum coordinate >= maximum coordinate: {} is >= {}'.format(kmax, kmax)
+        self._zmin = zmin
+        self._zmax = zmax
+
+        if self._zmin > self._zmax:
+            self._zmax, self._zmin = self._zmin, self._zmax
 
     @classmethod
     def from_thickness_and_widths(cls, z0, dz, x_width, y_width, x_center=0, y_center=0, orientation='xyz', surf_name=None, surf_num=None,
@@ -76,9 +100,42 @@ class CuboidSurface(Surface):
 
         """
         #  todo: orientation
+        assert dz != 0
+        if dz <= 0:
+            dz = abs(dz)
+            z0 = z0 - dz
+
         return CuboidSurface(xmin=x_center-x_width/2, ymin=y_center-y_width/2, zmin=z0, xmax=x_center + x_width/2,
                              ymax=y_center+y_width/2, zmax=z0+dz, surf_name=surf_name, surf_num=surf_num,
                              comment=comment)
+
+    @property
+    def dz(self):
+        return self._zmax - self._zmin
+
+    @dz.setter
+    def dz(self, other):
+        self._zmax = self._zmin + other
+
+    @property
+    def zmax(self):
+        return self._zmax
+
+    @zmax.setter
+    def zmax(self, other):
+        dz = self.dz
+        self._zmax = other
+        self._zmin = self.zmax - dz
+
+    @property
+    def zmin(self):
+        return self._zmin
+
+    @zmin.setter
+    def zmin(self, other):
+        dz = self.dz
+        self._zmin = other
+        self._zmax = self.zmin + dz
 
     @property
     def volume(self):
@@ -93,25 +150,6 @@ class CuboidSurface(Surface):
         # return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
         #     .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=zmin,
         #             zmax=self.zmax, comment=comment)  # old
-        return out
-
-
-class SphereSurface(Surface):
-    def __init__(self, radius, x=0, y=0, z=0, surf_name=None, surf_num=None, comment=None):
-        super(SphereSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
-        self.radius = radius
-        self.x = x
-        self.y = y
-        self.z = z
-
-    @property
-    def volume(self):
-        return 4/3*np.pi*self.radius**3
-
-    @property
-    def surface_card(self):
-        comment = get_comment(self.surface_comment, self.surface_name)
-        out = f'{self.surface_number} SPH {self.x:.{NDIGITS}g} {self.y:.{NDIGITS}g} {self.z:.{NDIGITS}g} {comment}'
         return out
 
 
@@ -180,7 +218,7 @@ class CuboidCell(Cell, CuboidSurface):
 
     @property
     def volume(self):
-        return self.volume
+        return super(Cell, self).volume
 
     @property
     def cell_card(self):
@@ -229,13 +267,30 @@ class RightCylinderSurface(Surface):
         return cls(radius=radius, x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, surf_name=surf_name, surf_num=surf_num,
                    comment=comment)
 
+    def set_z_limits(self, zmin, zmax):
+        assert zmin < zmax
+        self.dz = zmax-zmin
+        self.z0 = zmin
+
+    @property
+    def z_mid(self):
+        return (self.zmin + self.zmax)/2
+
     @property
     def zmax(self):
         return self.z0 + self.dz
 
+    @zmax.setter
+    def zmax(self, other):
+        self.z0 = other-self.dz
+
     @property
     def zmin(self):
         return self.z0
+
+    @zmin.setter
+    def zmin(self, other):
+        self.z0 = other
 
     @property
     def xmax(self):
@@ -296,9 +351,7 @@ class RightCylinder(Cell, RightCylinderSurface):
                                             cell_kwargs=cell_kwargs)
         super(Cell, self).__init__(x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, radius=radius, surf_name=surf_name,
                                    surf_num=surf_number, comment=surf_comment)
-    @property
-    def z_mid(self):
-        return self.z0 + self.dz/2
+
 
 if __name__ == '__main__':
     m_Ar = mat.gas(['Ar'], [1], pressure=1.4)

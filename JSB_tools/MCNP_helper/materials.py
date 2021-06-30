@@ -435,6 +435,32 @@ class Aluminum(Material):
         self.add_element_natural('Al')
 
 
+class Lead(Material):
+    def __init__(self, density=11.43, mat_number: int = None, mat_name: str = "Lead",
+                 elemental=True,
+                 mat_kwargs: Dict[str, str] = None):
+        """
+        Lead material. All examples use only zaid=82000. I don;t know why this is, but that's why `elemental` is True
+        by default.
+        Args:
+            density:
+            mat_number:
+            mat_name:
+            elemental:
+            mat_kwargs:
+        """
+        super(Lead, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+
+        if elemental:
+            zaids = [82000]
+            fractions = [1]
+        else:
+            zaids = [82204, 82206, 82207, 82208]
+            fractions = np.array([1.4, 24.1, 22.1, 52.4])/100
+
+        [self.add_zaid(z, f) for z, f in zip(zaids, fractions)]
+
+
 class Mylar(Material):
     def __init__(self, density=1.38, mat_number: int = None, mat_name: str = "Mylar",
                  mat_kwargs: Dict[str, str] = None, elemental_zaids=False):

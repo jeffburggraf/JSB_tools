@@ -380,8 +380,9 @@ class TH1F:
         hist.is_density = self.is_density
         return hist
 
-    def peak_fit(self, peak_center=None):
-        return PeakFit(peak_center, self.bin_centers, self.bin_values)
+    def peak_fit(self, peak_center=None, fix_center=False, fix_sigma=None, window_width=None):
+        return PeakFit.from_hist(self, peak_center, fix_center=fix_center, fix_sigma=fix_sigma,
+                                 window_width=window_width)
 
     def get_stats_text(self):
         counts = self.__ROOT_hist__.GetEntries()
@@ -398,11 +399,14 @@ class TH1F:
              ylabel=None, show_stats=False, title=None, show_errors=True,  **kwargs):
         if title is not None:
             self.SetTitle(title)
+
         if ax is None:
             _, ax = plt.subplots()
         else:
             if ax is plt:
                 ax = ax.gca()
+            if ax.get_title().rstrip().lstrip():
+                self.SetTitle(ax.get_title())
         if xlabel is not None:
             ax.set_xlabel(xlabel)
         if ylabel is not None:
@@ -812,6 +816,8 @@ class TH1F:
         other = self.__convert_other_for_operator__(other)
         result = self.bin_values * other
         self.__set_bin_values__(result)
+        if other is self.bin_widths and self.is_density:  # user is undoing density.
+            self.is_density = False
         return self
 
     def __neg__(self):
@@ -860,6 +866,8 @@ class TH1F:
         result = self.bin_values / other
         # assert False
         if other is self.bin_widths:
+            if self.is_density:
+                warn('Density histogram is divided by bin_widths twice! Advise.')
             self.is_density = True
         self.__set_bin_values__(result)
         return self

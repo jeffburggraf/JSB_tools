@@ -224,14 +224,14 @@ class FileManager:
 
         if recreate:
             self.__file_lookup_data: Dict[Path, Dict] = {}
-            self.__save_path.unlink()
+            self.__save_path.unlink(missing_ok=True)
         else:
             try:
                 with open(self.__save_path, 'rb') as f:
                     self.__file_lookup_data: Dict[Path, Dict] = pickle.load(f)
             except (EOFError, FileNotFoundError) as e:
-                assert False, f"No FileManager at {self.root_directory}"
-                # self.__file_lookup_data: Dict[Path, Dict] = {}
+                raise Exception(f"No FileManager at {self.root_directory}. "
+                                f"Maybe you meant to set `recreate` arg to True") from e
 
         register(self.__at_exit__)
 
