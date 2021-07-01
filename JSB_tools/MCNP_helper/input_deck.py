@@ -263,6 +263,7 @@ class InputDeck:
 
         self.warn_msg_in_cleanpy = kwargs.get('warn_msg_in_cleanpy', True)
         self.is_mcnp = kwargs.get("is_mcnp", True)
+        self.sch_cmd = kwargs.get('sch_cmd')
 
         self.__num_writes__ = 0
 
@@ -488,6 +489,9 @@ class InputDeck:
             self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
         if self.gen_run_script is True:
             self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs)
+            if self.sch_cmd:
+                self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs,
+                                                  csh_cmd=True)
         self.__write_file__(new_file_full_path)
 
         self.__pickle_globals__(new_file_full_path, dict_of_globals)
@@ -512,8 +516,12 @@ class InputDeck:
         self.__num_writes__ += 1
         self.__files_written_so_far__.append(new_file_full_path)
 
-    def __append_cmd_to_run_script__(self, script_name, new_file_full_path, mcnp_or_phits_kwargs):
-        f_path = self.inp_root_directory / script_name
+    def __append_cmd_to_run_script__(self, script_name, new_file_full_path, mcnp_or_phits_kwargs, csh_cmd=False):
+        if csh_cmd:
+            f_path = (self.inp_root_directory / script_name).with_suffix('.csh')
+        else:
+            f_path = (self.inp_root_directory / script_name).with_suffix('.sh')
+
         # new_file_full_path = new_file_full_path.relative_to(self.inp_root_directory)
         if mcnp_or_phits_kwargs is None:
             script_kwargs = ""
@@ -521,26 +529,37 @@ class InputDeck:
             assert isinstance(mcnp_or_phits_kwargs, dict)
             script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in mcnp_or_phits_kwargs.items()])
         new_file_name = new_file_full_path.name
-        cd_cmd = "cd {0}".format(new_file_full_path.parent)
+        if csh_cmd:
+            cd_path = new_file_full_path.parent.relative_to(self.inp_root_directory)
+        else:
+            cd_path = new_file_full_path.parent
+
+        cd_cmd = "cd {0}".format(cd_path)
 
         run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, new_file_name, script_kwargs) if self.is_mcnp else \
             "{0};phits.sh {1} {2}".format(cd_cmd, new_file_name, script_kwargs)
-
-        if self.platform == "Darwin":
-            new_cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0} 2>&1 | tee -i log_{1}.txt;exit\"\nend " \
-                      "tell'\n".format(run_cmd, new_file_full_path.name)
-        elif self.platform == "Linux":
-            new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd,
-                                                                                             new_file_full_path.name)
-        elif self.platform == "Windows":
-            warnings.warn("Currently no implementation of the creation of a .bat file to automatically run the "
-                          "simulations on Windows. ")
-            return
+        if csh_cmd:
+            new_cmd = "{0} < /dev/null > ! log_{1}.txt &\n"\
+                .format(run_cmd, new_file_full_path.name)
         else:
-            warnings.warn("Run script not generated. Platform not supported.")
-            return
+            if self.platform == "Darwin":
+                new_cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0} 2>&1 | tee -i log_{1}.txt;exit\"\nend " \
+                          "tell'\n".format(run_cmd, new_file_full_path.name)
+            elif self.platform == "Linux":
+                new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd,
+                                                                                                 new_file_full_path.name)
+            elif self.platform == "Windows":
+                warnings.warn("Currently no implementation of the creation of a .bat file to automatically run the "
+                              "simulations on Windows. ")
+                return
+            else:
+                warnings.warn("Run script not generated. Platform not supported.")
+                return
 
         with open(f_path, "w" if self.__num_writes__ == 0 else "a") as f:
+            if self.__num_writes__ == 0:
+                if csh_cmd:
+                    f.write('#!/bin/csh -f\n')
             f.write(new_cmd)
 
         if self.__num_writes__ == 0:
@@ -551,16 +570,21 @@ class InputDeck:
     def __del(self):
         if self.__has_called_write_inp_in_scope__:
             if self.is_mcnp:
-                with open(Path(self.inp_root_directory)/'Clean.py', 'w') as clean_file:
-                    print("Created 'Clean.py'. Run this script to remove PTRAC, OUTP, etc.")
+                clean_fname = f"Clean-{self.inp_root_directory.name}.py"
+
+                with open(Path(self.inp_root_directory)/clean_fname, 'w') as clean_file:
+                    print(f"Created '{clean_fname}'. Run this script to remove PTRAC, OUTP, etc.")
                     import inspect
                     cmds = inspect.getsource(__clean__)
-                    cmds += '\n\n' + "paths = {}\n".format(list(map(str, self.directories_created)))
+                    rel_directories_created = [d.relative_to(self.inp_root_directory) for d in self.directories_created]
+                    # cmds += f'root_path = Path("{self.inp_root_directory}")\n'
+                    cmds += '\n\n' + "paths = {}\n".format(list(map(str, rel_directories_created)))
                     cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
                     clean_file.write(cmds)
 
-            print('Run the following commands in terminal to automatically run the simulation(s) just prepared:')
-            print('cd {0}\n./cmd\n'.format(self.inp_root_directory))
+            print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
+            print('cd {0}\n./cmd.sh'.format(self.inp_root_directory))
+            print('*or if using csh: ./cmd.csh   \n')
             if self.is_mcnp:
                 print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
         else:
@@ -569,34 +593,44 @@ class InputDeck:
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
-                        warn_msg_in_cleanpy=True):
+                        warn_msg_in_cleanpy=True, sch_cmd=False):
         return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy)
+                         is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy,
+                         sch_cmd=sch_cmd)
 
     @classmethod
-    def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True):
+    def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
+                         sch_cmd=False):
         return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=False, __internal__=True)
+                         is_mcnp=False, __internal__=True, sch_cmd=sch_cmd)
 
 
 def __clean__(paths, warn_message):
     import re
     from pathlib import Path
     from tkinter import messagebox, Tk
-    root = Tk()
-    root.withdraw()
-    parent_dirs = set(str(Path(p).parent) for p in paths)
-    if warn_message:
-        yes_or_no = messagebox.askquestion('Deleting files!', 'Are you sure you want to clean files (outp, ptrac, runtpe, etc.) from '
-                                           'simulations performed in:\n "{}" ?'.format(parent_dirs))
+    cwd = Path(__file__).parent
 
-        yes_or_no = (yes_or_no == "yes")
+    try:
+        root = Tk()
+        root.withdraw()
+    except Exception:
+        user = input(f'Remove outp, ptrac, etc from "{cwd}" (y or n):')
+        if user.lstrip().rstrip().lower() == 'y':
+            return
     else:
-        yes_or_no = True
+        if warn_message:
+            yes_or_no = messagebox.askquestion('Deleting files!',
+                                               'Are you sure you want to clean files (outp, ptrac, runtpe, etc.) from '
+                                               f'simulations performed in:\n "{cwd}" ?')
+            if not (yes_or_no == "yes"):
+                return
+
     m = re.compile("(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)")
+
     for p in paths:
         for f_path in Path(p).iterdir():
-            if m.match(f_path.name) and yes_or_no:
+            if m.match(f_path.name):
                 Path(f_path).unlink()
 
 
