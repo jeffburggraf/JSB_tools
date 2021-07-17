@@ -2,11 +2,29 @@ import struct
 from struct import unpack, calcsize
 from pathlib import Path
 import datetime
-
+from bitstring import BitStream
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.stats import norm
+from datetime import timezone
+from dateutil import tz
+import filetime
+HERE = tz.tzlocal()
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
+
+EPOCH_AS_FILETIME = 116444736000000000  # January 1, 1970 as MS file time
+HUNDREDS_OF_NANOSECONDS = 10000000
+
+
+def filetime_to_dt(ft):
+    """Converts a Microsoft filetime number to a Python datetime. The new
+    datetime object is time zone-naive but is equivalent to tzinfo=utc.
+    >>> filetime_to_dt(116444736000000000)
+    datetime.datetime(1970, 1, 1, 0, 0)
+    >>> filetime_to_dt(128930364000000000)
+    datetime.datetime(2009, 7, 25, 23, 0)
+    """
+    return datetime.datetime((ft - EPOCH_AS_FILETIME) / HUNDREDS_OF_NANOSECONDS)
 
 
 def ole2datetime(oledt):
@@ -93,7 +111,7 @@ class ListFile:
         elif word[:8] == '00000000':
             hrd_time = int(word[16:], 2)
             if debug:
-                word_debug = f"Hardware time: {hrd_time}"
+                word_debug = f"Hdw Time: {hrd_time}"
 
         elif word[:8] == '00000100':
             adc_crm = int(word[16:], 2)
@@ -104,30 +122,63 @@ class ListFile:
         elif word[:8] == '00000101':
             counter_1 = int(word[16:], 2)
             if debug:
-                word_debug = f"counter 1: {counter_1}"
+                word_debug = f"Counter A (Sample Ready): {counter_1}"
 
         elif word[:8] == '00000110':
             counter_2 = int(word[16:], 2)
             if debug:
-                word_debug = f"counter 2: {counter_2}"
+                word_debug = f"Counter B (Gate): {counter_2}"
 
-        elif word[:8] == '00000111':
-            gm_counter = int(word[16:], 2)
-            if debug:
-                word_debug = f"gm counter: {gm_counter}"
-        # elif word[:8] == '00000001':
-        #     self.wintime = [word[-8:],word[16:24],word[8:16],0,0,0,0,0]
-        #
-        # elif self.wintime:
-        #     if word[:8] == '00000010':
-        #         self.wintime[3] = word[-8:]
-        #         self.wintime[4] = word[16:24]
-        #         self.wintime[5] = word[8:16]
-        #     if word[:8] == '00000011':
-        #         self.wintime[7] = word[16:24]
-        #         self.wintime[6] = word[-8:]
-        #     print('WINTIME: ', self.wintime)
-        #     self.wintime = None
+        elif word[:6] == '000000':
+            if word[:8] == '00000001':
+                # self.wintime = [word[-8:], word[16:24],word[8:16],0,0,0,0,0]
+                self.wintime[0] = word[-8:]
+                self.wintime[1] = word[-16:-8]
+                self.wintime[2] = word[8:16]
+                if debug:
+                    word_debug = f"Connections Time (1): {word[:8], word[8:16], word[16:24], word[24:]}"
+
+            elif word[:8] == '00000010':
+                if debug:
+                    if debug:
+                        word_debug = f"Connections Time (2): {word[:8], word[8:16], word[16:24], word[24:]}"
+                    self.wintime[3] = word[-8:]
+                    self.wintime[4] = word[-16:-8]
+                    self.wintime[5] = word[8:16]
+            elif word[:8] == '00000011':
+                if debug:
+                    word_debug = f"Connections Time (3): {word[:8], word[8:16], word[16:24], word[24:]}"
+                    self.wintime[6] = word[-8:]
+                    self.wintime[7] = word[-16:-8]
+            else:
+                assert False, f"Unexpected word: {word}"
+
+            if all([a is not None for a in self.wintime]):
+                self.wintime.reverse()
+                # high = "".join(self.wintime[:4])
+                # high = high
+                w_time = "".join(self.wintime)
+                w_time = BitStream(bin=w_time).unpack('uintbe:64')[0]
+                w_time = filetime.to_datetime(w_time)
+                # high = BitStream(bin=w_time[:len(w_time)//2])
+                # low = BitStream(bin=w_time[len(w_time)//2:])
+                # high = w_time[len(w_time)//2]
+                # low = w_time[len(w_time)//2:]
+                # w_time = high.unpack('uintbe:32')[0]*2**32 + low.unpack('uintbe:32')[0]
+                # w_time = w_time.unpack('uintbe:64')[0]
+
+                # low = low[::-1]
+                # high = int(high, 2)*2**32
+                # print(high)
+                # low = int(low, 2)
+                # print(low)
+                # w_time = filetime_to_dt(w_time)
+                # w_time = datetime.datetime(1601, 1,1) + datetime.timedelta(microseconds=w_time/10)
+                # w_time = w_time.astimezone(HERE)
+                print(f"WinTime: {w_time.astimezone(HERE)}")
+
+
+                self.wintime = [None] * 8
 
         else:
             if debug:
@@ -137,7 +188,7 @@ class ListFile:
             print(word_debug)
         return True
 
-    def __init__(self, path, debug=False):
+    def __init__(self, path, max_events=None, debug=False):
         path = Path(path)
         assert path.exists()
         with open(path, 'rb') as f:
@@ -169,19 +220,25 @@ class ListFile:
         self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
         # we see an RT word indicating the number of roll overs.
         self.dont_roll_over = False
-        self.wintime = None
+        self.wintime = [None] * 8
 
         self.livetimes = []
         self.realtimes = []
 
         self.times = []
+
+        i=0
         while self.process_32(debug):
-            pass
+            if max_events is not None and i > max_events:
+                break
+            i += 1
 
         if debug:
+            print("Start time: ", self.start_time)
             print("Live time: ", self.total_live_time)
             print("Real time: ", self.total_real_time)
             print("Total % live: ", self.total_live_time/self.total_real_time)
+            print("N events/s = ", len(self.times) / self.total_real_time)
 
         self.adc_values = np.array(self.adc_values)
         self.energies = np.sum([self.adc_values**i*c for i, c in enumerate(self.erg_calibration)], axis=0)
@@ -200,14 +257,25 @@ class ListFile:
         plt.figure()
         plt.plot(self.realtimes, self.percent_live)
         plt.figure()
-        print(np.mean(self.percent_live))
         plt.hist(self.percent_live, bins=40)
         # plt.hist(self.energies, bins=600)
-        plt.show()
 
 
 
 
-# l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', True)
-l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', True)
-#1000010111010011001000000 print(bin(10))
+# l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis',  max_events=10000, debug=True)
+l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_events=2000, debug=True)
+print(l.serial_number)
+# 2021-07-15 14:12:13.000
+
+plt.show()
+# WinTime: ['01110000', '11011110', '01011001', '11000010', '10110101', '01111001', '11010111', '00000001']
+# 132708535574930000
+# 132708535587430000
+# 132708535592430000  2021-07-14 11:26:19.000
+#  2021-07-15 14:12:13.000
+#  20:12:16.420000-06:00
+
+
+
+#  True 11:26:19.000
