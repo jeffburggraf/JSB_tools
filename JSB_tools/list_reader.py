@@ -2,29 +2,21 @@ import struct
 from struct import unpack, calcsize
 from pathlib import Path
 import datetime
+
+import pytz
 from bitstring import BitStream
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.stats import norm
 from datetime import timezone
 from dateutil import tz
+from pytz import common_timezones
+# print(common_timezones)
 import filetime
-HERE = tz.tzlocal()
+HERE = pytz.timezone('US/Mountain')
+print(HERE )
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 
-EPOCH_AS_FILETIME = 116444736000000000  # January 1, 1970 as MS file time
-HUNDREDS_OF_NANOSECONDS = 10000000
-
-
-def filetime_to_dt(ft):
-    """Converts a Microsoft filetime number to a Python datetime. The new
-    datetime object is time zone-naive but is equivalent to tzinfo=utc.
-    >>> filetime_to_dt(116444736000000000)
-    datetime.datetime(1970, 1, 1, 0, 0)
-    >>> filetime_to_dt(128930364000000000)
-    datetime.datetime(2009, 7, 25, 23, 0)
-    """
-    return datetime.datetime((ft - EPOCH_AS_FILETIME) / HUNDREDS_OF_NANOSECONDS)
 
 
 def ole2datetime(oledt):
@@ -32,6 +24,12 @@ def ole2datetime(oledt):
 
 
 class ListFile:
+    """
+    Start time is determined by the Connections Win_64 time sent right after the header. This clock doesn't
+    necessarily start with the 10ms rolling-over clock, so the accuracy of the start time is +/- 5ms.
+    The SAMPLE READY and GATE counters are also +/- 5 ms.
+    Relative times between ADC events are supposedly +/- 200ns. I will need to confirm this.
+    """
     def read(self, byte_format, debug=False):
         s = calcsize(byte_format)
         _bytes = self.bytes[self.index: self.index + s]
@@ -51,19 +49,10 @@ class ListFile:
 
     def read_32(self):
         out = f"{self.read('I'):032b}"
-        self.index += 4
         return out
 
     def process_32(self, debug=False):
         """
-        Details of Clock Rollover:
-        Every 10ms the number of 200ns clock ticks is reset to zero. Determining when this happens is not straightforward.
-        The manual is incorrect when it claims that there is an RT word every time the clock rolls over.
-        There is one SOMETIMES. However, whenever there is not an RT word during a clock rollover, there appears to be
-        an LT word. So both LT and RT words are used to increment the number of rollovers.
-        When RT words do appear, they are consistently equal to the # of clock rollovers, so the value of
-        self.n_rollovers is tethered to the value of each RT word when it appears, but to correct for missing RT words,
-        self.n_rollovers is incremented in the presence of an LT word.
         Args:
             debug:
 
@@ -74,39 +63,29 @@ class ListFile:
             word = self.read_32()
         except struct.error:
             return False
-
         word_debug = None
         if word[:2] == "11":  # ADC word
             adc_value = int(word[2:16], 2)
             self.adc_values.append(adc_value)
             n_200ns_ticks = int(word[16:], 2)
-            real_time = self.n_rollovers * 10E-3 + n_200ns_ticks * 200E-9
-            self.times.append(real_time)
+            adc_time = self.n_rollovers * 10E-3 + n_200ns_ticks * 200E-9
+            self.times.append(adc_time)
             if debug:
-                word_debug = f"ADC word, Value = {adc_value}, n_200ns_ticks = {n_200ns_ticks}, real time: {real_time}," \
+                word_debug = f"ADC word, Value = {adc_value}, n_200ns_ticks = {n_200ns_ticks}, real time: {adc_time}," \
                              f"n rollovers: {self.n_rollovers}"
-            self.dont_roll_over = False
 
         elif word[:2] == "01":  # LT word
             live_time_10ms = int(word[2:], 2)
+            self.livetimes.append(10E-3*live_time_10ms)
             if debug:
                 word_debug = f"LT word: {live_time_10ms}"
-            # self.dont_roll_over is to prevent from incrementing again on RT word in case RT & LT ever occur together
-            # (I haven't seen this happen yet)
-            if not self.dont_roll_over:
-                self.n_rollovers += 1
-            if len(self.times):
-                self.realtimes.append(self.times[-1])
-            else:
-                self.realtimes.append(0)
-            self.livetimes.append(10E-3*live_time_10ms)
 
         elif word[:2] == "10":  # RT word
             real_time_10ms = int(word[2:], 2)
+            self.realtimes.append(10E-3*real_time_10ms)
+            self.n_rollovers = real_time_10ms
             if debug:
                 word_debug = f"RT word: {real_time_10ms}"
-            self.n_rollovers = real_time_10ms
-            self.dont_roll_over = True
 
         elif word[:8] == '00000000':
             hrd_time = int(word[16:], 2)
@@ -129,57 +108,29 @@ class ListFile:
             if debug:
                 word_debug = f"Counter B (Gate): {counter_2}"
 
-        elif word[:6] == '000000':
-            if word[:8] == '00000001':
-                # self.wintime = [word[-8:], word[16:24],word[8:16],0,0,0,0,0]
-                self.wintime[0] = word[-8:]
-                self.wintime[1] = word[-16:-8]
-                self.wintime[2] = word[8:16]
-                if debug:
-                    word_debug = f"Connections Time (1): {word[:8], word[8:16], word[16:24], word[24:]}"
+        elif word[:8] == '00000001':  # Window time incoming
+            word1 = word
+            word2 = self.read_32()
+            word3 = self.read_32()
+            wintime = [0,0,0,0,0,0,0,0]
+            wintime[7] = word1[-8:]
+            wintime[6] = word1[-16:-8]
+            wintime[5] = word1[8:16]
+            wintime[4] = word2[-8:]
+            wintime[3] = word2[-16:-8]
+            wintime[2] = word2[8:16]
+            wintime[1] = word3[-8:]
+            wintime[0] = word3[-16:-8]
+            w_time = "".join(wintime)
+            w_time = BitStream(bin=w_time).unpack('uintbe:64')[0]
+            w_time = filetime.to_datetime(w_time)
+            w_time = w_time.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
-            elif word[:8] == '00000010':
-                if debug:
-                    if debug:
-                        word_debug = f"Connections Time (2): {word[:8], word[8:16], word[16:24], word[24:]}"
-                    self.wintime[3] = word[-8:]
-                    self.wintime[4] = word[-16:-8]
-                    self.wintime[5] = word[8:16]
-            elif word[:8] == '00000011':
-                if debug:
-                    word_debug = f"Connections Time (3): {word[:8], word[8:16], word[16:24], word[24:]}"
-                    self.wintime[6] = word[-8:]
-                    self.wintime[7] = word[-16:-8]
-            else:
-                assert False, f"Unexpected word: {word}"
+            if self.adc_zero_datetime is None:
+                self.adc_zero_datetime = w_time
 
-            if all([a is not None for a in self.wintime]):
-                self.wintime.reverse()
-                # high = "".join(self.wintime[:4])
-                # high = high
-                w_time = "".join(self.wintime)
-                w_time = BitStream(bin=w_time).unpack('uintbe:64')[0]
-                w_time = filetime.to_datetime(w_time)
-                # high = BitStream(bin=w_time[:len(w_time)//2])
-                # low = BitStream(bin=w_time[len(w_time)//2:])
-                # high = w_time[len(w_time)//2]
-                # low = w_time[len(w_time)//2:]
-                # w_time = high.unpack('uintbe:32')[0]*2**32 + low.unpack('uintbe:32')[0]
-                # w_time = w_time.unpack('uintbe:64')[0]
-
-                # low = low[::-1]
-                # high = int(high, 2)*2**32
-                # print(high)
-                # low = int(low, 2)
-                # print(low)
-                # w_time = filetime_to_dt(w_time)
-                # w_time = datetime.datetime(1601, 1,1) + datetime.timedelta(microseconds=w_time/10)
-                # w_time = w_time.astimezone(HERE)
-                print(f"WinTime: {w_time.astimezone(HERE)}")
-
-
-                self.wintime = [None] * 8
-
+            if debug:
+                word_debug = f"WinTime: {w_time.strftime('%Y-%m-%d %H:%M:%S.%f %Z%z')}"
         else:
             if debug:
                 word_debug = f"Unknown word: {word}"
@@ -191,7 +142,7 @@ class ListFile:
     def __init__(self, path, max_events=None, debug=False):
         path = Path(path)
         assert path.exists()
-        with open(path, 'rb') as f:
+        with open(path, 'rb') as f:  # Todo: Don't read this all at once?
             self.bytes = f.read()
         self.index = 0
         lst_header = self.read('i')
@@ -215,11 +166,11 @@ class ListFile:
         self.det_id_number = self.read('i')
         self.total_real_time = self.read('f')
         self.total_live_time = self.read('f')
+        self.adc_zero_datetime = None
         self.read('9s')
 
         self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
         # we see an RT word indicating the number of roll overs.
-        self.dont_roll_over = False
         self.wintime = [None] * 8
 
         self.livetimes = []
@@ -246,36 +197,29 @@ class ListFile:
         #  Fraction of live time = dTl/dTr, where Tl is total live time and Tr is total real time (as a function of t).
         delta_realtimes = np.gradient(self.realtimes)
         delta_livetimes = np.gradient(self.livetimes)
+        # print(len(self.livetimes), len(self.realtimes))
+        # assert False
 
         # convolve to remove defects. Only deadtime changes on the order of 0.1 seconds matter anyways.
         kernel = norm(loc=len(self.livetimes)//2, scale=10).pdf(np.arange(len(self.livetimes)))  # scale: 0.1 seconds
-        delta_realtimes = np.convolve(delta_realtimes, kernel, mode='same')
-        delta_livetimes = np.convolve(delta_livetimes, kernel, mode='same')
-        self.percent_live = delta_livetimes/delta_realtimes
-        plt.plot(np.arange(len(self.livetimes)), delta_realtimes)
-        plt.plot(np.arange(len(self.livetimes)), delta_livetimes)
+        # delta_realtimes = np.convolve(delta_realtimes, kernel, mode='same')
+        # delta_livetimes = np.convolve(delta_livetimes, kernel, mode='same')
+        self.percent_live = np.gradient(self.livetimes)/np.gradient(self.realtimes)
+        # plt.plot(np.arange(len(self.livetimes)), delta_realtimes)
+        # plt.plot(np.arange(len(self.livetimes)), delta_livetimes)
+        l = np.gradient(self.livetimes)/np.gradient(self.realtimes)
+        l = np.convolve(l, kernel, mode='same')
+        plt.plot(self.realtimes, l)
         plt.figure()
         plt.plot(self.realtimes, self.percent_live)
         plt.figure()
         plt.hist(self.percent_live, bins=40)
-        # plt.hist(self.energies, bins=600)
+        print(self.adc_zero_datetime+ datetime.timedelta(seconds=self.times[-1]))
 
 
 
 
-# l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis',  max_events=10000, debug=True)
-l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_events=2000, debug=True)
-print(l.serial_number)
-# 2021-07-15 14:12:13.000
+l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis',  max_events=1000, debug=True)
+# l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_events=None, debug=True)
 
-plt.show()
-# WinTime: ['01110000', '11011110', '01011001', '11000010', '10110101', '01111001', '11010111', '00000001']
-# 132708535574930000
-# 132708535587430000
-# 132708535592430000  2021-07-14 11:26:19.000
-#  2021-07-15 14:12:13.000
-#  20:12:16.420000-06:00
-
-
-
-#  True 11:26:19.000
+# plt.show()
