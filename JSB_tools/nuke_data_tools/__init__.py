@@ -531,7 +531,6 @@ class FissionYields:
 
         plt.figure()
 
-
         plt.title(title)
         plt.xlabel('A')
         plt.ylabel('Yield per fission')
@@ -662,7 +661,6 @@ class FissionYields:
         ax.plot(self.energies, self.weights)
         ax.set_xlabel("Energy [MeV]")
         ax.set_ylabel("Weight")
-
 
 
 class CrossSection1D:

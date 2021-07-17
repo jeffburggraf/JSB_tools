@@ -21,7 +21,7 @@ from matplotlib import pyplot as plt
 import sys
 import matplotlib as mpl
 import traceback
-from JSB_tools.nuke_data_tools import Nuclide
+from JSB_tools.nuke_data_tools import Nuclide, FissionYields
 import matplotlib.ticker as ticker
 
 cwd = Path(__file__).parent
