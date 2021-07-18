@@ -14,10 +14,12 @@ from typing import List, Union
 import filetime
 import binascii
 from functools import cached_property
-HERE = pytz.timezone('US/Mountain')
-OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
+import time
 from JSB_tools import ProgressReport
 import pickle
+
+HERE = pytz.timezone('US/Mountain')
+OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 
 
 def ole2datetime(oledt):
@@ -233,10 +235,13 @@ class ListFile:
 
             self.times = []
             self.n_words = 0
+            t0 = time.time()
             while self.process_32(f, debug=debug):
                 if max_words is not None and self.n_words > max_words:
                     break
                 self.n_words += 1
+            print(f"Done! Processed {int(len(self.times)/(time.time()-t0)):.2g} events per second.")
+
         if debug:
             print("Start time: ", self.start_time)
             print("Live time: ", self.total_live_time)
@@ -313,30 +318,25 @@ class ListFile:
             return pickle.load(f)
 
 
-import time
-t0 = time.time()
-l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', max_words=None, debug=False)
-# l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
-print(time.time() - t0, 'Seconds')
+if __name__ == '__main__':
+    t0 = time.time()
+    l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', max_words=None, debug=False)
+    # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
+    print(time.time() - t0, 'Seconds')
 
-t0 = time.time()
-l.pickle('test')
-print(time.time() - t0, ' pickle Seconds')
+    t0 = time.time()
+    l.pickle('test')
+    print(time.time() - t0, ' pickle Seconds')
 
-t0 = time.time()
-l2 = l.from_pickle('test')
-print(time.time() - t0, 'From pickle Seconds')
+    t0 = time.time()
+    l2 = l.from_pickle('test')
+    print(time.time() - t0, 'From pickle Seconds')
 
-t0 = time.time()
-h = l2.get_spectrum_hist()
-print(time.time() - t0, 'get_spectrum_hist Seconds')
+    t0 = time.time()
+    h = l2.get_spectrum_hist()
+    print(time.time() - t0, 'get_spectrum_hist Seconds')
 
-t0 = time.time()
-h.plot()
-print(time.time() - t0, 'PLot seconds')
+    t0 = time.time()
+    h.plot()
 
-from JSB_tools import Nuclide
-
-for g in Nuclide.from_symbol('Eu152').decay_gamma_lines:
-    print(g)
-plt.show()
+    plt.show()
