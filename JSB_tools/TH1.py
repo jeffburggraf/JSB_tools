@@ -438,7 +438,7 @@ class TH1F:
             # ax.text(0.8, 0.95-0.03*h, text,  transform=ax.transAxes)
             ob = offsetbox.AnchoredText(text, loc=1)
             ax.add_artist(ob)
-        if  leg_label:
+        if leg_label:
             ax.legend()
 
         return ax
