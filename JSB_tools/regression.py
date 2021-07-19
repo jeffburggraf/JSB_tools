@@ -184,7 +184,8 @@ class PeakFit(FitBase):
     @classmethod
     def from_hist(cls, hist, peak_center_guess, fix_center=False, fix_sigma=None, window_width=None):
         if not hist.is_density:
-            warnings.warn('Histogram supplied to PeakFit is may not be a density. Divide by bin values to correct.')
+            warnings.warn('Histogram supplied to PeakFit is may not be a density. You must divide by bin values '
+                          'to get the correct answer.')
         return cls(peak_center_guess=peak_center_guess, x=hist.bin_centers, y=hist.nominal_bin_values,
                    yerr=hist.bin_std_devs, fix_center=fix_center, fix_sigma=fix_sigma, window_width=window_width)
 

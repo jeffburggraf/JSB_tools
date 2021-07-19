@@ -21,6 +21,8 @@ from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTO
     NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
 from functools import cached_property
 from scipy.interpolate import interp1d
+from datetime import datetime, timedelta
+
 
 __all__ = ['Nuclide', 'avogadros_number', 'FissionYields']
 
@@ -186,6 +188,32 @@ class GammaLine:
         self.from_mode = from_mode
         self.intensity_thu_mode = intensity_thu_mode
         self.absolute_rate = nuclide.decay_rate * self.intensity
+
+    @property
+    def parent_nuclide_name(self):
+        return self.from_mode.parent_name
+
+    def get_n_gammas(self, ref_activity: float, activity_ref_date: datetime, tot_acquisition_time: float,
+                     acquisition_ti: datetime = datetime.now(), activity_unit='uCi') -> UFloat:
+        """
+        Get the number of time this gamma line is produced by a radioactive source.
+        Args:
+            ref_activity: Activity in micro-curies when source was calibrated.
+            activity_ref_date: Date of the source calibration
+            tot_acquisition_time: float, number of seconds the acquisition was performed
+            acquisition_ti: Optional. If provided, This is the date/time of the start of acquisition. If not provided,
+                today is used.
+            activity_unit: kBq, Bq, uCi, or Ci
+
+        Returns: Absolute of number of photons emitted for this line.
+
+        """
+        assert isinstance(tot_acquisition_time, (float, int)), tot_acquisition_time
+        n = Nuclide.from_symbol(self.parent_nuclide_name)
+        n_decays = n.get_n_decays(ref_activity=ref_activity, activity_ref_date=activity_ref_date,
+                                  tot_acquisition_time=tot_acquisition_time, acquisition_ti=acquisition_ti,
+                                  activity_unit=activity_unit)
+        return n_decays*self.intensity
 
     def __repr__(self):
         return "Gamma line at {0:.1f} KeV; true_intensity = {1:.2e}; decay: {2} ".format(self.erg, self.intensity,
@@ -961,6 +989,37 @@ class Nuclide:
             {(1, 1): 2212, (0, 1): 2112}[(self.Z, self.A)]
         except KeyError:
             return int(self.Z*1E6 + self.A)
+
+    def get_n_decays(self, ref_activity: float, activity_ref_date: datetime, tot_acquisition_time: float,
+                     acquisition_ti: datetime = datetime.now(), activity_unit='uCi') -> UFloat:
+        """
+        Calculate the number of decays of o a radioactive source during specified time.
+        Args:
+            ref_activity: Activity in micro-curies.
+            activity_ref_date: Date of source calibration
+            tot_acquisition_time: float, number of seconds the acquisition was performed.
+            acquisition_ti: Optional. If provided, This is the date/time of the start of acquisition. If not provided,
+                today is used.
+            activity_unit: Ci, uCi, Bq, kBq
+
+        Returns: Absolute of number of decays during specified time.
+
+        """
+        assert isinstance(tot_acquisition_time, (float, int)), tot_acquisition_time
+
+        tot_acquisition_time = timedelta(seconds=tot_acquisition_time).total_seconds()
+
+        corr_seconds = (acquisition_ti - activity_ref_date).total_seconds()  # seconds since ref date.
+        try:
+            unit_factor = {'ci': 3.7E10, 'uci': 3.7E10*1E-6, 'bq': 1, "kbq": 1E3}[activity_unit.lower()]
+        except KeyError:
+            assert False, f'Bad activity unit, "{activity_unit}". Valid units: Ci, uCi, Bq, uBq'
+
+        ref_num_nuclides = ref_activity*unit_factor/self.decay_rate  # # of nuclides when ref calibration was performed
+
+        corrected_num_nuclides = ref_num_nuclides*0.5**(corr_seconds/self.half_life)
+        n_decays = corrected_num_nuclides*(1-0.5**(tot_acquisition_time/self.half_life))
+        return n_decays
 
     def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity: float = 0.05, ax=None,
                                   log_scale: bool = False, label: Union[str, None] = None):
