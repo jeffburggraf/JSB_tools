@@ -3,9 +3,11 @@ from datetime import datetime
 import re
 from matplotlib import pyplot as plt
 import numpy as np
-from JSB_tools.TH1 import TH1F
+from JSB_tools.TH1 import TH1F, convolve_gaus
 import uncertainties.unumpy as unp
 from uncertainties import UFloat
+from JSB_tools.regression import PeakFit
+from scipy.signal import find_peaks
 
 class SPEFile:
     def __init__(self, path):
@@ -49,8 +51,19 @@ class SPEFile:
         self.erg_units = mca_cal[-1]
         self.energies = self.channel_2_erg(self.channels)
 
+        self.shape_cal = list(map(float, lines[lines.index('$SHAPE_CAL:\n')+2].split()))
+
     def channel_2_erg(self, a):
         return np.sum([coeff*a**i for i, coeff in enumerate(self.erg_fit)], axis=0)
+
+    def erg_2_fwhm(self, erg):
+        channel_width = self.erg_bins[self.erg_2_channel(erg):]
+        channel_width = channel_width[1] - channel_width[0]
+
+        return channel_width*np.sum([coeff*erg**i for i, coeff in enumerate(self.shape_cal)], axis=0)
+
+    def erg_2_peakwidth(self, erg):
+        return 2.2*self.erg_2_fwhm(erg)
 
     def erg_2_channel(self, erg):
         if isinstance(erg, UFloat):
@@ -60,7 +73,7 @@ class SPEFile:
             out = (-b + np.sqrt(b**2 - 4*a*c + 4*c*erg))/(2.*c)
         else:
             out = (erg - a)/b
-        return out
+        return int(out)
 
     @property
     def erg_bins(self):
@@ -83,39 +96,41 @@ if __name__ == '__main__':
     from JSB_tools import Nuclide
     from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
     s_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152EffCal_center.Spe')
-    s_y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
+    # s_y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
 
     eu152 = Nuclide.from_symbol('Eu152')
-    p = PrepareGammaSpec(len(s_eu152.channels))
-    channels = []
-    ergs_true = []
-    true_counts = []
-    for g in eu152.decay_gamma_lines[:6]:
-        true_counts.append(g.get_n_gammas(1.060, activity_ref_date=datetime(2008, 7, 1), tot_acquisition_time=s_eu152.livetime))
-        ergs_true.append(g.erg)
-        channels.append(s_eu152.erg_2_channel(g.erg))
-
-    p.add_peaks_4_calibration(s_eu152.counts, channels, ergs_true, true_counts)
-
-    eu152 = Nuclide.from_symbol('Eu152')
-    Y88 = Nuclide.from_symbol('Y88')
-    p = PrepareGammaSpec(len(s_eu152.channels))
-    channels = []
-    ergs_true = []
-    true_counts = []
-    s_y88.get_spectrum_hist().plot()
-    for g in Y88.decay_gamma_lines[:4]:
+    for g in eu152.decay_gamma_lines[:10]:
         print(g)
-        true_counts.append(
-            g.get_n_gammas(370, activity_ref_date=datetime(2008, 7, 1), tot_acquisition_time=s_y88.livetime,
-                           activity_unit='kBq'))
-        ergs_true.append(g.erg)
-        channels.append(s_eu152.erg_2_channel(g.erg))
-    p.add_peaks_4_calibration(s_y88.counts, channels, ergs_true, true_counts)
+    peak_center = 1408
 
-    # p.compute_calibration()
-    #
-    # h = s_eu152.get_spectrum_hist()
-    # h.plot()
+    hist = s_eu152.get_spectrum_hist()
+    hist /= hist.bin_widths
+    fit = hist.peak_fit(peak_center)
+    fit.plot_fit()
+    print(fit)
+    hist *= hist.bin_widths
+    hist_windowed = hist.remove_bins_outside_range(peak_center-50, peak_center+50)
+    baseline = hist_windowed.convolve_median(50/hist_windowed.bin_widths[0], True)
+    signal = hist_windowed - baseline
+
+    ax = baseline.plot(leg_label='baseline')
+
+    print('Simple Amp: ', sum(signal.remove_bins_outside_range(peak_center-6, peak_center+6).bin_values))
+    print("Shape: ", s_eu152.erg_2_peakwidth(peak_center))
+    print(s_eu152.shape_cal)
+    noms = hist.nominal_bin_values
+    peak_idx, peak_info = find_peaks(convolve_gaus(10, noms), prominence=3*convolve_gaus(10, hist.std_errs), height=100)
+    peak_xs = []
+    peak_ys = []
+    for i in peak_idx:
+        peak_xs.append(hist.bin_centers[i])
+        peak_ys.append(noms[i])
+
+    ax = hist.plot()
+    ax.plot(peak_xs, peak_ys, ls='None', marker='o')
+
+    # hist_windowed.plot(ax, leg_label='measured')
+    # signal.plot(ax, leg_label='Signal')
+    # plt.legend()
     #
     plt.show()

@@ -82,7 +82,7 @@ def gamma_search(erg_center: float,
     """
     Search for nuclides that produce gamma decays in the neighborhood of `erg_center` (+/- sigma_erg). The nuclides are
      sorted from most to least number of decay events that would occur over the course of data acquisition as specified
-     by start_time and end_time.
+     by header_start_time and end_time.
     Args:
         erg_center: Center of energy window
         e_sigma: half width of energy window
@@ -111,7 +111,7 @@ def gamma_search(erg_center: float,
     if start_time is None:
         start_time = 0
 
-    assert end_time > start_time, "`end_time` must be greater than `start_time`"
+    assert end_time > start_time, "`end_time` must be greater than `header_start_time`"
 
     global DATA
     if DATA is None:

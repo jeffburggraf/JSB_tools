@@ -47,7 +47,7 @@ def binned_median(bin_left_edges, weights):
     return x[index] + dx
 
 
-def rolling_median(window_width, values, interpolate=False):
+def rolling_median(window_width, values):
     """
     Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
     Args:
@@ -303,16 +303,28 @@ class TH1F:
         """
         self.__set_bin_values__(convolve_uniform(window_width, self.bin_values))
 
-    def convolve_gaus(self, sigma: float):
+    def convolve_gaus(self, sigma: float, copy=False, keep_error_magnitude=False):
         """
         Convolve the bin values with a gaussian pulse.
         Args:
             sigma: The width of window (number of bins).
-
+            copy: If True, create and return new hist.
+            keep_error_magnitude: If True, errors will remain about the same magnitude. This is done by convolving the
+                errors and nominal values separately.
         Returns: None, modifies the histogram.
 
         """
-        self.__set_bin_values__(convolve_gaus(sigma, self.bin_values))
+        if copy:
+            hist = self.copy()
+        else:
+            hist = self
+        if keep_error_magnitude:
+            new_bins = unp.uarray(convolve_gaus(sigma, self.nominal_bin_values),
+                                  convolve_gaus(sigma, self.std_errs))
+        else:
+            new_bins = convolve_gaus(sigma, self.bin_values)
+        hist.__set_bin_values__(new_bins)
+        return hist
 
     @property
     def title(self) -> str:
@@ -454,17 +466,23 @@ class TH1F:
         ob = offsetbox.AnchoredText(t, loc=1)
         ax.add_artist(ob)
 
-    def convolve_median(self, window_width):
+    def convolve_median(self, window_width, copy=False) -> TH1F:
         """
         Replace the value in each bin[i] with the median of bins within a rolling window of width
         `window_width` centered around bin[i].
         Args:
             window_width: width of rolling window
+            copy: If True, don't modify histogram.
 
         Returns: None, modifies hist.
         """
-        new_bin_values = rolling_median(window_width, self.bin_values)
-        self.__set_bin_values__(new_bin_values)
+        if copy:
+            hist = self.copy()
+        else:
+            hist = self
+        new_bin_values = rolling_median(window_width, hist.bin_values)
+        hist.__set_bin_values__(new_bin_values)
+        return hist
 
     def dist_from_rolling_median(self, window_width: float):
         """

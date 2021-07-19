@@ -20,7 +20,7 @@ import pickle
 
 HERE = pytz.timezone('US/Mountain')
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
-
+cwd = Path(__file__).parent
 
 def ole2datetime(oledt):
     return OLE_TIME_ZERO + datetime.timedelta(days=float(oledt))
@@ -108,6 +108,7 @@ class ListFile:
             n_200ns_ticks = int(word[16:], 2)
             adc_time = self.n_rollovers * 10E-3 + n_200ns_ticks * 200E-9
             self.times.append(adc_time)
+            self.__10ms_counts__ += 1
             if debug:
                 word_debug = f"ADC word, Value = {adc_value}, n_200ns_ticks = {n_200ns_ticks}, real time: {adc_time}," \
                              f"n rollovers: {self.n_rollovers}"
@@ -115,6 +116,9 @@ class ListFile:
         elif word[:2] == "01":  # LiveTime word
             live_time_10ms = int(word[2:], 2)
             self.livetimes.append(10E-3*live_time_10ms)
+            self.counts_per_sec.append(self.__10ms_counts__)
+            self.__10ms_counts__ = 0
+
             if debug:
                 word_debug = f"LT word: {live_time_10ms}"
 
@@ -137,14 +141,17 @@ class ListFile:
                 word_debug = f"ADC CRM: {adc_crm}"
 
         elif word[:8] == '00000101':
-            counter_1 = int(word[16:], 2)
+            sample_ready = int(word[16:], 2)
+            self.sample_ready_state.append(sample_ready)
             if debug:
-                word_debug = f"Counter A (Sample Ready): {counter_1}"
+                word_debug = f"Counter A (Sample Ready): {sample_ready}"
 
         elif word[:8] == '00000110':
-            counter_2 = int(word[16:], 2)
+            gate = int(word[16:], 2)
+            self.gate_state.append(gate)
+
             if debug:
-                word_debug = f"Counter B (Gate): {counter_2}"
+                word_debug = f"Counter B (Gate): {gate}"
 
         elif word[:8] == '00000001':  # Window time incoming
             word1 = word
@@ -179,7 +186,7 @@ class ListFile:
 
     def header_info(self):
         s = f"List style: {self.list_style}\n"
-        s += f"start time: {self.start_time.isoformat()}\n"
+        s += f"start time: {self.header_start_time.isoformat()}\n"
         s += f"Device address: {self.device_address}\n"
         s += f"MCB type: {self.MCB_type_string}\n"
         s += f"Device serial number: {self.serial_number}\n"
@@ -195,9 +202,24 @@ class ListFile:
         s += f"Maestro live time: {self.total_live_time}\n"
         return s
 
+    @property
+    def n_counts(self):
+        return len(self.times)
+
     def __init__(self, path, max_words=None, debug=False):
+        """
+        self.adc_zero_time is the time you want to use for determining the system clock time of ADC events. DO NOT use
+        the start time in the header (self.header_start_time)
+        Args:
+            path:
+            max_words:
+            debug:
+        """
         path = Path(path)
-        assert path.exists()
+        if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
+            path = cwd/'user_saved_data'/'SpecTestingData'/path
+
+        assert path.exists(), f'List file not found,"{path}"'
 
         with open(path, 'rb') as f:
             lst_header = self.read('i', f)
@@ -207,7 +229,7 @@ class ListFile:
             self.list_style = self.read('i', f)
             if self.list_style != 2:
                 raise NotImplementedError("Digibase and other list styles not yet implemented.")
-            self.start_time = ole2datetime(self.read('d', f))
+            self.header_start_time = ole2datetime(self.read('d', f))
             self.device_address = self.read("80s", f)
             self.MCB_type_string = self.read("9s", f)
             self.serial_number = self.read("16s", f)
@@ -232,6 +254,10 @@ class ListFile:
 
             self.livetimes = []
             self.realtimes = []
+            self.sample_ready_state = []
+            self.gate_state = []
+            self.__10ms_counts__ = 0  # The number of ADC events each 10ms clock tick. Used for self.counts_per_sec.
+            self.counts_per_sec = []
 
             self.times = []
             self.n_words = 0
@@ -240,14 +266,17 @@ class ListFile:
                 if max_words is not None and self.n_words > max_words:
                     break
                 self.n_words += 1
+
+            self.counts_per_sec = np.array(self.counts_per_sec)/10E-3
             print(f"Done! Processed {int(len(self.times)/(time.time()-t0)):.2g} events per second.")
 
         if debug:
-            print("Start time: ", self.start_time)
+            print("Start time: ", self.header_start_time)
             print("Live time: ", self.total_live_time)
             print("Real time: ", self.total_real_time)
             print("Total % live: ", self.total_live_time/self.total_real_time)
             print("N events/s = ", len(self.times) / self.total_real_time)
+            print(f"Total counts: {self.n_counts}")
 
         self.adc_values = np.array(self.adc_values)
         self.energies = self.channel_to_erg(self.adc_values)
@@ -292,9 +321,40 @@ class ListFile:
             hist.Fill(erg)
         return hist
 
+    def plot_count_rate(self, ax=None, **ax_kwargs):
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        ax.plot(self.realtimes, self.counts_per_sec, **ax_kwargs)
+        ax.set_xlabel("Real time [s]")
+        ax.set_ylabel("Count rate [Hz]")
+        return ax
+
+    def plot_sample_ready(self, ax=None, **ax_kwargs):
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        if 'label' not in ax_kwargs:
+            ax_kwargs['label'] = "SAMPLEREADY"
+        ax.set_xlabel("Real time [s]")
+        ax.set_ylabel("State")
+        ax.plot(self.realtimes, self.sample_ready_state, **ax_kwargs)
+        return ax
+
+    def plot_gate(self, ax=None, **ax_kwargs):
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        if 'label' not in ax_kwargs:
+            ax_kwargs['label'] = "GATE"
+        ax.set_xlabel("Real time [s]")
+        ax.set_ylabel("State")
+        ax.plot(self.realtimes, self.gate_state, **ax_kwargs)
+        return ax
+
     @staticmethod
     def __get_auto_data_dir():
-        directory = Path(__file__).parent / 'user_saved_data' / 'list_data'
+        directory = cwd / 'user_saved_data' / 'list_data'
         if not directory.exists():
             directory.mkdir()
         return directory
@@ -320,23 +380,15 @@ class ListFile:
 
 if __name__ == '__main__':
     t0 = time.time()
-    l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', max_words=None, debug=False)
+    # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', max_words=None, debug=False)
     # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
-    print(time.time() - t0, 'Seconds')
+    l = ListFile('4_56_30.Lis', max_words=None, debug=True)
 
-    t0 = time.time()
-    l.pickle('test')
-    print(time.time() - t0, ' pickle Seconds')
-
-    t0 = time.time()
-    l2 = l.from_pickle('test')
-    print(time.time() - t0, 'From pickle Seconds')
-
-    t0 = time.time()
-    h = l2.get_spectrum_hist()
-    print(time.time() - t0, 'get_spectrum_hist Seconds')
-
-    t0 = time.time()
-    h.plot()
-
+    # plt.figure()
+    print(l.adc_zero_datetime)
+    ax = l.plot_sample_ready()
+    l.plot_gate(ax)
+    l.plot_count_rate()
+    ax.legend()
     plt.show()
+
