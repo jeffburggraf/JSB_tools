@@ -8,7 +8,10 @@ import stat
 from atexit import register, unregister
 from uncertainties import UFloat
 from numbers import Number
-from JSB_tools.TH1 import TH1F
+try:
+    from JSB_tools.TH1 import TH1F
+except (ModuleNotFoundError, AssertionError):
+    pass
 import pickle
 from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping
 import sys
@@ -118,7 +121,7 @@ class MCNPSICard:
             self.sp_option = ''
 
         self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option, ' '.join(map(str, self.variable_values)))
-        self.card += 'SP{0} {1} {2}\n'.format(self.si_card_number, self.sp_option, ' '.join(map(str, self.variable_probs)))
+        self.card += 'SP{0} {1} {2}'.format(self.si_card_number, self.sp_option, ' '.join(map(str, self.variable_probs)))
 
     @classmethod
     def from_function(cls, function, variable_values, si_card_number=None, discrete=False, *func_args, **func_kwargs):

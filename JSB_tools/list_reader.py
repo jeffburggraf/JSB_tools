@@ -382,7 +382,7 @@ if __name__ == '__main__':
     t0 = time.time()
     # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', max_words=None, debug=False)
     # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
-    l = ListFile('4_56_30.Lis', max_words=None, debug=True)
+    l = ListFile('Eu152EffCal_center.SPE', max_words=None, debug=True)
 
     # plt.figure()
     print(l.adc_zero_datetime)

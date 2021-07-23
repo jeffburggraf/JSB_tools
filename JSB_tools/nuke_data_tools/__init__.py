@@ -164,29 +164,98 @@ class CustomUnpickler(pickle.Unpickler):
         return super().find_class(module, name)
 
 
-class GammaLine:
-    def __init__(self, nuclide: Nuclide, erg: UFloat, intensity: UFloat, intensity_thu_mode: UFloat,
-                 from_mode: DecayMode):
-        """
-        A container for a single gamma emission line.
+class _DiscreteSpectrum:
+    all_instances: Dict[Tuple[str, str], _DiscreteSpectrum] = {}
 
-        Attributes:
+    def __init__(self, nuclide: Nuclide, spectra_data):
+        self.__nuclide_name = nuclide.name
+        self.radiation_type: str = spectra_data['type']
+        self.mean_erg_per_decay = spectra_data['energy_average']
+        self.__is_empty__ = False
+        discrete_normalization = spectra_data['discrete_normalization']
+
+        try:
+            self.__discrete_entries__ = spectra_data["discrete"]
+            for emission_data in self.__discrete_entries__:
+                branching_ratio = nuclide.decay_branching_ratios[tuple(emission_data['from_mode'])]
+                emission_data['intensity'] = discrete_normalization*branching_ratio*emission_data['intensity']
+                emission_data['energy'] = emission_data['energy']*1E-3
+                emission_data['from_mode'] = tuple(emission_data['from_mode'])
+        except KeyError as e:
+            self.__discrete_entries__ = []
+            if 'continuous' in spectra_data:
+                print("spectra_data data: ",spectra_data['continuous'] )
+            print(f"_DiscreteSpectrum failed: {self}. Error{e}")
+
+    def __repr__(self):
+        return f'{self.__nuclide_name} _DiscreteSpectrum; {self.radiation_type}...'
+
+    @classmethod
+    def __blank_entry(cls, nuclide: Nuclide, radiation_type) -> _DiscreteSpectrum:
+        out = cls(nuclide, {'energy_average': ufloat(0, 0),
+                             'type': radiation_type,
+                             'discrete_normalization': 1})
+        out.__is_empty__ = True
+        return out
+
+    @classmethod
+    def __unpickle__(cls, nuclide: Nuclide, radiation_type: str) -> _DiscreteSpectrum:
+        if (radiation_type, nuclide.name) not in _DiscreteSpectrum.all_instances:
+            try:
+                with open(cls.__pickle_path(radiation_type, nuclide.name), 'rb') as f:
+                    out = pickle.load(f)
+            except FileNotFoundError:
+                out = _DiscreteSpectrum.__blank_entry(nuclide, radiation_type)
+            _DiscreteSpectrum.all_instances[(radiation_type, nuclide.name)] = out
+        else:
+            out = _DiscreteSpectrum.all_instances[(radiation_type, nuclide.name)]
+        return out
+
+    @staticmethod
+    def __pickle_path(radiation_type: str, nuclide_name):
+        radiation_type = radiation_type.replace('/', '_')
+        # if radiation_type == 'ec/beta+':
+        #     radiation_type = 'ec_beta_plus'
+        return pwd/'data'/'nuclides'/f'{radiation_type}_spectra'/f'{nuclide_name}.pickle'
+
+    def __pickle__(self):
+        path = self.__pickle_path(self.radiation_type, self.__nuclide_name)
+        if not path.parent.exists():
+            path.parent.mkdir()
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
+
+class GammaLine:
+    """
+    Attributes:
             erg:
                 Energy of gamma in KeV
             intensity:
                 Mean number of gammas with energy self.erg emitted per parent nucleus decay (through any decay channel)
 
-            intensity_thu_mode:
-                Mean number of gammas with energy self.erg emitted per parent nucleus decay (through self.from_mode
-                decay channel)
+            # intensity_thu_mode:
+            #     Mean number of gammas with energy self.erg emitted per parent nucleus decay (through self.from_mode
+            #     decay channel)
 
             from_mode:
                 DecayMode instance. Contains decay channel, branching ratio, among other information
     """
-        self.erg = erg
-        self.intensity = intensity
-        self.from_mode = from_mode
-        self.intensity_thu_mode = intensity_thu_mode
+    # def __init__(self, nuclide: Nuclide, erg: UFloat, intensity: UFloat, intensity_thu_mode: UFloat,
+    #              from_mode: DecayMode):
+    def __init__(self, nuclide: Nuclide, emission_data):
+        """
+        A container for a single gamma emission line.
+
+        Args:
+            nuclide:
+            emission_data: Emission dictionary from __DiscreteSpectrum
+    """
+
+        self.erg = emission_data['energy']
+        self.intensity = emission_data['intensity']
+        self.from_mode = nuclide.decay_modes[emission_data['from_mode']]
+        # self.intensity_thu_mode = intensity_thu_mode
         self.absolute_rate = nuclide.decay_rate * self.intensity
 
     @property
@@ -218,6 +287,26 @@ class GammaLine:
     def __repr__(self):
         return "Gamma line at {0:.1f} KeV; true_intensity = {1:.2e}; decay: {2} ".format(self.erg, self.intensity,
                                                                                          self.from_mode)
+
+
+class BetaPlusLine:
+    def __init__(self, nuclide: Nuclide, emission_data):
+        """
+        A container for a single gamma emission line.
+
+        Args:
+            nuclide:
+            emission_data: Emission dictionary from __DiscreteSpectrum
+    """
+
+        self.erg = emission_data['energy']
+        self.intensity = emission_data['intensity']
+        self.from_mode = nuclide.decay_modes[emission_data['from_mode']]
+        # self.intensity_thu_mode = intensity_thu_mode
+        self.absolute_rate = nuclide.decay_rate * self.intensity
+        print(emission_data)
+        # self.type = transition_type
+        # self.positron_intensity = 0
 
 
 def rest_mass(z=None, a=None, n=None):
@@ -807,10 +896,11 @@ class DecayMode:
     Container for DecayMode. Effectively an openmc.DecayMode wrapper.
     """
     def __init__(self, openmc_decay_mode):
-        self.modes = openmc_decay_mode.modes
+        self.modes = tuple(openmc_decay_mode.modes)
         self.daughter_name = openmc_decay_mode.daughter
         self.parent_name = openmc_decay_mode.parent
         self.branching_ratio = openmc_decay_mode.branching_ratio
+
         # print("parent", openmc_decay_mode.parent)
         # print("daughter", self.daughter_name)
 
@@ -942,7 +1032,7 @@ class Nuclide:
         mean_energies: Mean gamma decay energy
         is_stable:
         decay_gamma_lines: List of GammaLine object sorted from highest to least intensity.
-        decay_modes: Modes of decay. As of now, only gamma decays can be investigated with this tool (todo)
+        decay_modes: Dict mapping from modes of decay to DecayMode objects. Keys are Tuple[str], e.g. ('beta-','alpha')
 
         Notes
         -----
@@ -971,13 +1061,30 @@ class Nuclide:
         self.spin: int = kwargs.get("spin", None)
         self.mean_energies = kwargs.get("mean_energies", None)  # look into this
         self.is_stable: bool = kwargs.get("is_stable", None)  # maybe default to something else
+        self.decay_radiation_types = []
 
         self.__decay_daughters_str__: List[str] = kwargs.get("__decay_daughters__", [])  # self.decay_daughters -> List[Nuclide] in corresponding order as self.decay_modes
-        self.decay_gamma_lines: List[GammaLine] = kwargs.get("decay_gamma_lines", [])
-        self.decay_modes: List[DecayMode] = kwargs.get("decay_modes", [])
+        self.__decay_gamma_lines: List[GammaLine] = []
+        self.decay_modes: Dict[Tuple[str], DecayMode] = kwargs.get("decay_modes", {})
         self.__decay_parents_str__: List[str] = kwargs.get("__decay_parents__", [])  # self.decay_parents -> List[Nuclide]
 
         self.__decay_mode_for_print__ = None
+
+    @property
+    def decay_gamma_lines(self):
+        if not self.__decay_gamma_lines:
+            spec = _DiscreteSpectrum.__unpickle__(self, 'gamma')
+            if spec.__is_empty__:
+                return []
+            self.__decay_gamma_lines = list(sorted([GammaLine(self, ds) for ds in spec.__discrete_entries__],
+                                                   key=lambda x: -x.intensity))
+            return self.__decay_gamma_lines
+        else:
+            return self.__decay_gamma_lines
+
+    @property
+    def decay_branching_ratios(self) -> Dict[Tuple[str], UFloat]:
+        return {m.modes: m.branching_ratio for m in self.decay_modes.values()}
 
     def phits_kfcode(self) -> int:
         """
@@ -1021,7 +1128,7 @@ class Nuclide:
         n_decays = corrected_num_nuclides*(1-0.5**(tot_acquisition_time/self.half_life))
         return n_decays
 
-    def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity: float = 0.05, ax=None,
+    def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity: float = 0.02, ax=None,
                                   log_scale: bool = False, label: Union[str, None] = None):
         """
         Plots the lines of a nuclides gamma spectrum.
@@ -1081,7 +1188,9 @@ class Nuclide:
             ax.annotate('{:.2f}KeV'.format(erg), xy=xy, xytext=text_xy,
                         arrowprops=dict(width=0.1, headwidth=4, facecolor='black', shrink=0.03), rotation=90)
 
-        ax.set_title('Gamma spectrum of {}, half-life = {}'.format(self.name, self.human_friendly_half_life(False)))
+        ax.set_title('Gamma spectrum of {}, half-life = {}, for Ig (%) >= {:.1f}'.format(self.name,
+                                                                           self.human_friendly_half_life(False),
+                                                                           min_intensity*100))
         ax.errorbar(x, y, yerr=y_err, xerr=x_err, label=label, marker='p', ls='none')
         if len(x) == 1:
             ax.set_xlim(x[0] - 10, x[0] + 10)
@@ -1331,7 +1440,7 @@ class Nuclide:
     def decay_daughters(self):
         out = list([self.from_symbol(name) for name in self.__decay_daughters_str__])
         for nuclide in out:
-            for decay_mode in self.decay_modes:
+            for decay_mode in self.decay_modes.values():
                 if decay_mode.daughter_name == nuclide.name:
                     nuclide.__decay_mode_for_print__ = decay_mode
 

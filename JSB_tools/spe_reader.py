@@ -94,43 +94,51 @@ class SPEFile:
 
 if __name__ == '__main__':
     from JSB_tools import Nuclide
-    from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
-    s_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152EffCal_center.Spe')
+    # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
+    s_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Na22EffCal_center.Spe')
+    s_eu152.get_spectrum_hist().plot(title="Eu152")
+    # Nuclide.from_symbol('Cs137').plot_decay_gamma_spectrum(min_intensity=0)
+    print(Nuclide.from_symbol('Na22').get_n_decays(10.19, datetime(2013, 7, 15), 4), 'dgsfgr')
+    print(Nuclide.from_symbol('Eu152').human_friendly_half_life())
+    for g in Nuclide.from_symbol('Eu152').decay_gamma_lines:
+        print(g)
+    # co = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Co60EffCal_center.Spe.Spe')
+    # co.get_spectrum_hist().plot(title="Co60")
     # s_y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
 
-    eu152 = Nuclide.from_symbol('Eu152')
-    for g in eu152.decay_gamma_lines[:10]:
-        print(g)
-    peak_center = 1408
-
-    hist = s_eu152.get_spectrum_hist()
-    hist /= hist.bin_widths
-    fit = hist.peak_fit(peak_center)
-    fit.plot_fit()
-    print(fit)
-    hist *= hist.bin_widths
-    hist_windowed = hist.remove_bins_outside_range(peak_center-50, peak_center+50)
-    baseline = hist_windowed.convolve_median(50/hist_windowed.bin_widths[0], True)
-    signal = hist_windowed - baseline
-
-    ax = baseline.plot(leg_label='baseline')
-
-    print('Simple Amp: ', sum(signal.remove_bins_outside_range(peak_center-6, peak_center+6).bin_values))
-    print("Shape: ", s_eu152.erg_2_peakwidth(peak_center))
-    print(s_eu152.shape_cal)
-    noms = hist.nominal_bin_values
-    peak_idx, peak_info = find_peaks(convolve_gaus(10, noms), prominence=3*convolve_gaus(10, hist.std_errs), height=100)
-    peak_xs = []
-    peak_ys = []
-    for i in peak_idx:
-        peak_xs.append(hist.bin_centers[i])
-        peak_ys.append(noms[i])
-
-    ax = hist.plot()
-    ax.plot(peak_xs, peak_ys, ls='None', marker='o')
-
-    # hist_windowed.plot(ax, leg_label='measured')
-    # signal.plot(ax, leg_label='Signal')
-    # plt.legend()
+    # co = Nuclide.from_symbol('Eu152')
+    # for g in eu152.decay_gamma_lines[:10]:
+    #     print(g)
+    # peak_center = 1408
     #
+    # hist = s_eu152.get_spectrum_hist()
+    # hist /= hist.bin_widths
+    # fit = hist.peak_fit(peak_center)
+    # fit.plot_fit()
+    # print(fit)
+    # hist *= hist.bin_widths
+    # hist_windowed = hist.remove_bins_outside_range(peak_center-50, peak_center+50)
+    # baseline = hist_windowed.convolve_median(50/hist_windowed.bin_widths[0], True)
+    # signal = hist_windowed - baseline
+    #
+    # ax = baseline.plot(leg_label='baseline')
+    #
+    # print('Simple Amp: ', sum(signal.remove_bins_outside_range(peak_center-6, peak_center+6).bin_values))
+    # print("Shape: ", s_eu152.erg_2_peakwidth(peak_center))
+    # print(s_eu152.shape_cal)
+    # noms = hist.nominal_bin_values
+    # peak_idx, peak_info = find_peaks(convolve_gaus(10, noms), prominence=3*convolve_gaus(10, hist.std_errs), height=100)
+    # peak_xs = []
+    # peak_ys = []
+    # for i in peak_idx:
+    #     peak_xs.append(hist.bin_centers[i])
+    #     peak_ys.append(noms[i])
+    #
+    # ax = hist.plot()
+    # ax.plot(peak_xs, peak_ys, ls='None', marker='o')
+    #
+    # # hist_windowed.plot(ax, leg_label='measured')
+    # # signal.plot(ax, leg_label='Signal')
+    # # plt.legend()
+    # #
     plt.show()

@@ -19,6 +19,7 @@ import time
 from matplotlib import pyplot as plt
 # from JSB_tools.TH1 import TH1F
 import sys
+from scipy.stats import norm
 import matplotlib as mpl
 import traceback
 from JSB_tools.nuke_data_tools import Nuclide, FissionYields
@@ -142,6 +143,15 @@ def cm_2_best_unit(list_or_number):
     units = unit_names[i]
     unit_conversion = 10. ** -orders[i]
     return list_or_number*unit_conversion, units
+
+
+def convolve_gauss(sigma_indicies, values, mode='same'):
+    sigma_indicies = int(sigma_indicies)
+    x = np.arange(len(values))
+    # x = np.arange(int(-6 * sigma), int(6 * sigma) + 1)
+    v = norm.pdf(x=(x-len(values)//2), scale=sigma_indicies)
+    v /= sum(v)
+    return np.convolve(values, v, mode=mode)
 
 
 def ROOT_loop():
