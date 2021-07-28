@@ -799,8 +799,8 @@ class TH1F:
 
     def __convert_other_for_operator__(self, other):
         if hasattr(other, "__iter__"):
-            assert len(other) == len(self), "Multiplying hist of len {0} by iterator of len {1}".format(len(self),
-                                                                                                        len(other))
+            assert len(other) == len(self), "Applying operator to hist of len {0} with iterator of len {1}" \
+                                            " (lengths must be equal)".format(len(self), len(other))
 
             assert len(other), "Cannot operate on array opf length zero"
             if not isinstance(other, np.ndarray):

@@ -225,7 +225,8 @@ class PeakFit(FitBase):
     def model_func(x, center, amp, sigma, bg):
         return amp * norm(loc=center, scale=sigma).pdf(x) + bg
 
-    def __init__(self, peak_center_guess, x, y, yerr=None, fix_center=False, fix_sigma=None, window_width=None):
+    def __init__(self, peak_center_guess, x, y, yerr=None, fix_center=False, fix_sigma=None, window_width=None,
+                 make_density=False):
         """
         Fit a peak near `peak_center_guess`.
         It's recommended to supply the whole spectrum so that the code can use broader spectrum in order to estimate
@@ -237,8 +238,14 @@ class PeakFit(FitBase):
             yerr:
             fix_center: If True, fix center to `peak_center_guess`
             window_width: Should be about 3x the width (base to base) of peak to be fit
+            make_density: Divide y values by x[i]-x[i-1]
         """
         super().__init__(x, y, yerr)
+        if make_density:
+            b_widths = [x2-x1 for x1, x2 in zip(self.x[:-1], self.x[1:])]
+            b_widths += [b_widths[-1]]
+            b_widths = np.array(b_widths)
+            self.y /= b_widths
         if window_width is None:
             warnings.warn("No `window_width` arg provided. Using 20 as window_width. See __init__ docs")
             window_width = 20
@@ -254,7 +261,9 @@ class PeakFit(FitBase):
         params = guess_model.guess(data=self.y, x=self.x)  # guess parameters by fitting simple gaussian
         guess_model.fit(x=self.x, data=bg_subtracted, params=params, weights=self.__weights__)
         params.add('bg', bg_guess)
-        params['sigma'].min = 1E-4
+        params['sigma'].min = x[len(x)//2] - x[len(x)//2-1]
+        params['sigma'].value = np.std(x)
+
         params['amp'] = params['amplitude']
         del params['amplitude']
         if fix_center:

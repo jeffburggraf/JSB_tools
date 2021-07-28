@@ -8,6 +8,10 @@ import uncertainties.unumpy as unp
 from uncertainties import UFloat
 from JSB_tools.regression import PeakFit
 from scipy.signal import find_peaks
+from JSB_tools.regression import LogPolyFit, PeakFit
+from JSB_tools import Nuclide
+from typing import List
+import ROOT
 
 class SPEFile:
     def __init__(self, path):
@@ -84,61 +88,154 @@ class SPEFile:
         """
         # print((self.channel_2_erg(self.channels) - 0.5)[:10])
         # print(self.energies[:10])
-        return self.channel_2_erg(self.channels-0.5)
+        ch = np.concatenate([self.channels, [self.channels[-1] + 1]])
+        return self.channel_2_erg(ch-0.5)
 
     def get_spectrum_hist(self):
         hist = TH1F(bin_left_edges=self.erg_bins)
         hist.__set_bin_values__(self.counts)
         return hist
 
+    def get_background(self, num_iterations=20, clipping_window_order=2, smoothening_order=5):
+        assert clipping_window_order in [2,4,6,8]
+        assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
+        spec = ROOT.TSpectrum()
+        result = unp.nominal_values(self.counts)
+        cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+        smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
+        spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
+                        cliping_window, ROOT.kTRUE,
+                        smoothening, ROOT.kTRUE)
+        return result
+
+    def add_eff_calibration_peaks(self, nuclide: Nuclide,
+                                  peaks: List[float],
+                                  counting_window_width,
+                                  ref_activity: float,
+                                  activity_ref_date: datetime,
+                                  activity_unit='uCi',
+                                  **bg_kwargs):
+        # todo make a stand alone class for when there is no SPE file. Call it from here
+        baseline_subtracted = self.counts - self.get_background(**bg_kwargs)
+        counting_window_width /= self.erg_fit[1]
+        counting_window_width = int(counting_window_width)
+        for g in nuclide.decay_gamma_lines:
+
+            if any(np.isclose(g.erg.n, p_erg, atol=0.1) for p_erg in peaks):
+                ngammas = g.get_n_gammas(ref_activity=ref_activity, activity_ref_date=activity_ref_date,
+                                         tot_acquisition_time=self.livetime, acquisition_ti=self.start_time,
+                                         activity_unit=activity_unit)
+                peak_index = np.searchsorted(self.energies, g.erg.n)
+                counts = sum(baseline_subtracted[peak_index-counting_window_width//2: peak_index+counting_window_width//2])
+                print(f"Gamma @ {g.erg}. Eff: {counts/ngammas}, counts: {counts}")
+
+
+class EfficiencyCal:
+    def __init__(self):
+        self.erg_bin_centers = None
+        self.cal_ergs = []
+        self.cal_meas_counts = []
+        self.cal_true_counts = []
+        self.window_widths = []
+
+    def add_cal_peak_with_spe(self, spe_file: SPEFile,
+                              nuclide: Nuclide,
+                              peak_energies: List[float],
+                              counting_window_width,
+                              ref_activity: float,
+                              activity_ref_date: datetime,
+                              activity_unit='uCi',
+                              include_decay_chain=False,
+                              **bg_kwargs):
+        baseline_removed = spe_file.counts - spe_file.get_background(**bg_kwargs)
+        if self.erg_bin_centers is None:
+            self.erg_bin_centers = spe_file.energies
+        else:
+            assert all(spe_file.energies == self.erg_bin_centers),\
+                "Incompatible SPE files used! (they have different erg bins)"
+        if include_decay_chain:
+            all_gamma_lines = nuclide.decay_gamma_lines + nuclide.decay_chain_gamma_lines()
+        else:
+            all_gamma_lines = nuclide.decay_gamma_lines
+        for erg in peak_energies:
+            g = all_gamma_lines[np.argmin([abs(erg - _g.erg) for _g in all_gamma_lines])]
+            if abs(g.erg - erg)<0.1:
+                self.window_widths.append(counting_window_width)
+                self.cal_ergs.append(erg)
+
+                ngammas = g.get_n_gammas(ref_activity=ref_activity, activity_ref_date=activity_ref_date,
+                                         tot_acquisition_time=spe_file.livetime, acquisition_ti=spe_file.start_time,
+                                         activity_unit=activity_unit)
+                selector = np.where((spe_file.energies >= erg-counting_window_width//2) &
+                                                        (spe_file.energies <= erg+counting_window_width//2))
+                peak_counts = baseline_removed[selector]
+                # p = PeakFit(erg, spe_file.energies[selector], baseline_removed[selector], make_density=True)
+                # print(p)
+                # self.cal_meas_counts.append(p.amp)
+                # p.plot_fit()
+                peak_counts = sum(peak_counts)
+                self.cal_meas_counts.append(peak_counts)
+                self.cal_true_counts.append(ngammas)
+
+    @property
+    def eff_cal_points(self):
+        out = [m/t for m, t in zip(self.cal_meas_counts, self.cal_true_counts)]
+        return out
+
+    @property
+    def nominal_eff_cal_points(self):
+        out = [x.n for x in self.eff_cal_points]
+        return out
+
+    @property
+    def eff_cal_points_error(self):
+        out = [x.std_dev for x in self.eff_cal_points]
+        return out
+
+    def plot_eff(self, ax=None):
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        ax.errorbar(self.cal_ergs, self.nominal_eff_cal_points, yerr=self.eff_cal_points_error ,ls='None', marker='d')
+
+        return ax
+
+    def plot_counts(self, ax=None):
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        ax.plot(self.cal_ergs, [x.n for x in self.cal_meas_counts], ls='None', marker='d')
+        return ax
+
+
 
 if __name__ == '__main__':
     from JSB_tools import Nuclide
-    # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
-    s_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Na22EffCal_center.Spe')
-    s_eu152.get_spectrum_hist().plot(title="Eu152")
-    # Nuclide.from_symbol('Cs137').plot_decay_gamma_spectrum(min_intensity=0)
-    print(Nuclide.from_symbol('Na22').get_n_decays(10.19, datetime(2013, 7, 15), 4), 'dgsfgr')
-    print(Nuclide.from_symbol('Eu152').human_friendly_half_life())
-    for g in Nuclide.from_symbol('Eu152').decay_gamma_lines:
-        print(g)
-    # co = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Co60EffCal_center.Spe.Spe')
-    # co.get_spectrum_hist().plot(title="Co60")
-    # s_y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
 
-    # co = Nuclide.from_symbol('Eu152')
-    # for g in eu152.decay_gamma_lines[:10]:
-    #     print(g)
-    # peak_center = 1408
+    import ROOT
+
+    # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
+    spe_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152EffCal_center.Spe')
+    spe_Y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
+    spe = spe_Y88
+    n = Nuclide.from_symbol('Eu152')
+    for g in n.decay_gamma_lines:
+        print(g)
+    eff = EfficiencyCal()
+
+    eff.add_cal_peak_with_spe(spe, Nuclide.from_symbol('Eu152'), [244.7, 867.4, 121.8, 1408, 964.1, 1112.1, 778.9,444.0,411.1, 344.3], 10, 1.06,
+                                  datetime(year=2008, month=7, day=1))
+    # eff.add_cal_peak_with_spe(spe, Nuclide.from_symbol('Y88'),
+    #                           [1836.07, 898, 2734], 10, 433,  datetime(year=2019, month=7, day=1), activity_unit='kBq')
+    eff.plot_eff()
+
+    h = spe.get_spectrum_hist()
+    h2 = spe.get_spectrum_hist()-spe.get_background()
+    ax = h.plot()
+    h2.plot(ax)
+
+    eff.plot_counts()
+
+
     #
-    # hist = s_eu152.get_spectrum_hist()
-    # hist /= hist.bin_widths
-    # fit = hist.peak_fit(peak_center)
-    # fit.plot_fit()
-    # print(fit)
-    # hist *= hist.bin_widths
-    # hist_windowed = hist.remove_bins_outside_range(peak_center-50, peak_center+50)
-    # baseline = hist_windowed.convolve_median(50/hist_windowed.bin_widths[0], True)
-    # signal = hist_windowed - baseline
-    #
-    # ax = baseline.plot(leg_label='baseline')
-    #
-    # print('Simple Amp: ', sum(signal.remove_bins_outside_range(peak_center-6, peak_center+6).bin_values))
-    # print("Shape: ", s_eu152.erg_2_peakwidth(peak_center))
-    # print(s_eu152.shape_cal)
-    # noms = hist.nominal_bin_values
-    # peak_idx, peak_info = find_peaks(convolve_gaus(10, noms), prominence=3*convolve_gaus(10, hist.std_errs), height=100)
-    # peak_xs = []
-    # peak_ys = []
-    # for i in peak_idx:
-    #     peak_xs.append(hist.bin_centers[i])
-    #     peak_ys.append(noms[i])
-    #
-    # ax = hist.plot()
-    # ax.plot(peak_xs, peak_ys, ls='None', marker='o')
-    #
-    # # hist_windowed.plot(ax, leg_label='measured')
-    # # signal.plot(ax, leg_label='Signal')
-    # # plt.legend()
-    # #
     plt.show()

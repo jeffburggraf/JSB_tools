@@ -147,50 +147,26 @@ def set_nuclide_attributes(_self: Nuclide, open_mc_decay):
         _self.is_stable = False
     _self.decay_radiation_types.extend(open_mc_decay.spectra.keys())
     for mode in open_mc_decay.modes:
-        decay_mode = DecayMode(mode)
-        _self.decay_modes[tuple(mode.modes)] = decay_mode
+        decay_mode = DecayMode(mode, _self.half_life)
+        try:
+            _self.decay_modes[tuple(mode.modes)].append(decay_mode)
+        except KeyError:
+            _self.decay_modes[tuple(mode.modes)] = [decay_mode]
+    l = len(_self.decay_modes)
+    for key, value in list(_self.decay_modes.items())[:]:
+        _self.decay_modes[key] = list(sorted(_self.decay_modes[key], key=lambda x: -x.branching_ratio))
+    assert len(_self.decay_modes) == l
 
 
 def pickle_spectra(nuclide: Nuclide, open_mc_decay: Decay):
     """
-    Set up relevant Nuclide object. Everything in here will be pickled with the Nuclide except for spectra files.
+    Pickle decay data for each radiation type.
     Returns:
 
     """
-
     for spectra_mode, spec_data in open_mc_decay.spectra.items():
         spectra = _DiscreteSpectrum(nuclide, spec_data)
-
         spectra.__pickle__()
-        # for k, v in spec_data.items():
-        #     print(k, v)
-        # if spectra_mode == 'gamma':
-        #     # gamma spectra
-        #     try:
-        #         discrete_normalization = spec_data["discrete_normalization"]
-        #         if spec_data["continuous_flag"] != "discrete":
-        #             return
-        #         for gamma_line_info in spec_data["discrete"]:
-        #             erg = gamma_line_info["energy"]
-        #             from_mode = gamma_line_info["from_mode"]
-        #             for mode in nuclide.decay_modes:
-        #                 if mode.is_mode(from_mode[0]):
-        #                     break
-        #             else:
-        #                 warn('Decay mode {} not found in {}'.format(from_mode, self.decay_modes))
-        #                 # assert False, "{0} {1}".format(self.decay_modes, gamma_line_info)
-        #             # print(from_mode, branching_ratios)
-        #             branching_ratio = branching_ratios[from_mode]  # from_mode is a list??
-        #             intensity_thu_mode = discrete_normalization*gamma_line_info["intensity"]
-        #             intensity = intensity_thu_mode * branching_ratio
-        #             g = GammaLine(self, erg/1000, intensity, intensity_thu_mode, mode)
-        #             self.decay_gamma_lines.append(g)
-        #         self.decay_gamma_lines = list(sorted(self.decay_gamma_lines, key=lambda x: -x.intensity))
-        #     except KeyError:
-        #         pass
-
-
-    # Todo: Add decay channels other than "gamma"
 
 
 def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
@@ -288,6 +264,8 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
 
         daughter_names = [mode.daughter for mode in openmc_decay.modes]
         for daughter_nuclide_name in daughter_names:
+            # if (nuclides_to_process is not None) and (daughter_nuclide_name not in nuclides_to_process):
+            #     continue
             if daughter_nuclide_name in NUCLIDE_INSTANCES:
                 daughter_nuclide = NUCLIDE_INSTANCES[daughter_nuclide_name]
             else:
@@ -314,30 +292,31 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
                 data[key] = name
             pickle.dump(data, f)
 
-    # data structure of d: {g_erg: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...])}
+        # data structure of d: {g_erg: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...])}
 
-    if pickle_data:
-        d = {}
-        for nuclide in NUCLIDE_INSTANCES.values():
-            for g in nuclide.decay_gamma_lines:
-                erg = g.erg.n
-                intensity: float = g.intensity.n
-                hl = nuclide.half_life.n
-                try:
-                    i = len(d[erg][1]) - np.searchsorted(d[erg][1][::-1], intensity)
-                    # the below flow control is to avoid adding duplicates.
-                    for __name, __intensity in zip(d[erg][0], d[erg][1]):
-                        if __name == nuclide.name and __intensity == intensity:
-                            break
-                    else:
-                        d[erg][0].insert(i, nuclide.name)
-                        d[erg][1].insert(i, intensity)
-                        d[erg][2].insert(i, hl)
+        if nuclides_to_process is None:  # None means all here.
+            d = {}
+            for nuclide in NUCLIDE_INSTANCES.values():
+                for g in nuclide.decay_gamma_lines:
+                    erg = g.erg.n
+                    intensity: float = g.intensity.n
+                    hl = nuclide.half_life.n
+                    try:
+                        i = len(d[erg][1]) - np.searchsorted(d[erg][1][::-1], intensity)
+                        # the below flow control is to avoid adding duplicates.
+                        for __name, __intensity in zip(d[erg][0], d[erg][1]):
+                            if __name == nuclide.name and __intensity == intensity:
+                                break
+                        else:
+                            d[erg][0].insert(i, nuclide.name)
+                            d[erg][1].insert(i, intensity)
+                            d[erg][2].insert(i, hl)
 
-                except KeyError:
-                    d[erg] = ([nuclide.name], [intensity], [hl])
+                    except KeyError:
+                        d[erg] = ([nuclide.name], [intensity], [hl])
 
             with open(DECAY_PICKLE_DIR / '__fast__gamma_dict__.marshal', 'wb') as f:
+                print("Writing quick gamma lookup table...")
                 marshal.dump(d, f)
 
 
@@ -650,31 +629,48 @@ def pickle_all_nuke_data():
 
     pass
 
+def debug_nuclide(n: str, library="ENDF"):
+    library = library.upper()
+    assert library in ['ENDF', 'JEFF']
+    m = re.match("([A-Z][a-z]{0,2})([0-9]+)", n)
+    assert m, n
+    symbol = m.groups()[0]
+    a = f"{m.groups()[1]:0>3}"
+    path = decay_data_dir/f'decay_{library}'
+    if library == 'ENDF':
+        m_str = f"dec-[0-9]{{3}}_{symbol}_{a}.endf"
+    else:
+        m_str = n
+    matcher = re.compile(m_str)
+
+    for p in path.iterdir():
+        fname = p.name
+        if matcher.match(fname):
+            endf_path = p
+            break
+    else:
+        raise FileNotFoundError(f"No ENDF file found for {n}")
+    print(f'Reading {endf_path}')
+    e = Evaluation(endf_path)
+    d = Decay(e)
+    print("Decay modes:")
+    for m in d.modes:
+        print('\t',m)
+
+    for spec_type, spectra in d.spectra.items():
+        print(spec_type, spectra)
+        # for
+    # print(d.spectra)
 
 if __name__ == '__main__':
     pass
-    #  TODO: reimpliment decay modes. Add option in Nuclide.decay_gamma_lines to include gammas from short lived daughters
-    # pickle_decay_data(pickle_data=False, nuclides_to_process=['W181'])
-    pickle_decay_data(pickle_data=True, nuclides_to_process=None)
-    for n in Nuclide.get_all_nuclides():
-        print(n.decay_modes)
-    # print(Nuclide.from_symbol('W181').decay_radiation_types)
-
-    _DiscreteSpectrum
-    # pickle_decay_data(pickle_data=False, nuclides_to_process=['Xe139'])
-    # n16 = Nuclide.from_symbol('N16')
-    # print(n16.decay_branching_ratios, n16.decay_radiation_types)
-    # d = _DiscreteSpectrum.__unpickle__(Nuclide.from_symbol("N16"), 'alpha')
-    # for g in n16.decay_gamma_lines:
-    #     print(g)
-    # n16.plot_decay_gamma_spectrum()
-    # # plt.show()
-    # # pickle_fission_product_yields()
-    # #  Ba_m1 intensity: 0.899 MeV
-    # #  Cs branching ratio: 0.9470
-    # # pass
-    # print(datetime.datetime.now() - datetime.datetime(2016, 11, 1))
-
+    import JSB_tools.nuke_data_tools
+    # JSB_tools.nuke_data_tools.DEBUG = True
+    # debug_nuclide("Na22")
+    # pickle_decay_data(pickle_data=True, nuclides_to_process=None)
+    n = Nuclide.from_symbol("Na22")
+    print(n.positron_intensity)
+    #
 
 
 

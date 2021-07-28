@@ -92,7 +92,7 @@ class ProgressReport:
             msg = "{0} days,".format(days) + msg
         print(msg + " remaining.", i/self.__i_final__)
 
-    def log(self, i):
+    def log(self, i, debug=False):
         t_now = time.time()
         if t_now > self.__next_print_time__:
             self.__report__(t_now, i)

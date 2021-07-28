@@ -13,7 +13,7 @@ cwd = Path(__file__).parent
 
 
 class Branch:
-    all_branches: List[Branch] = []  # this is an antipattern!
+    all_branches: List[Branch] = []
 
     @staticmethod
     def order_branches(*some_names_in_order):
@@ -110,6 +110,9 @@ class _Header:
             self.ids.append(ids[i1: i2])
 
 
+root_files = []  # for ROOT file persistence
+
+
 def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Union[None, int] = None, write_2_text=False,
                copy_lookup_files=False):
     ptrac_path = Path(ptrac_path)
@@ -122,6 +125,7 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
 
     root_file_path = (ptrac_path.parent / root_file_name).with_suffix('.root')
     root_file = ROOT.TFile(str(root_file_path), 'recreate')
+    root_files.append(root_file)
     tree = ROOT.TTree("tree", "tree")
 
     # mat is just an integer starting from 1, ie not the material number
@@ -235,6 +239,7 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         shutil.copy(lookup_file_path, copied_lookup_file_path)
 
     Branch.all_branches = []
+    return tree
 
 
 class TTreeHelper:

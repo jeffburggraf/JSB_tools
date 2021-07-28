@@ -105,7 +105,7 @@ class F4Tally(Tally):
             names_found = []
             if self.tally_number is None:
                 tally_name_match = re.compile(
-                    r' *f(?P<tally_num>[0-9]*4):(?P<particle>.) +(?P<cell>[0-9]+) *\$.*name: *(?P<name>[\w ]*\w) *$')
+                    r' *f(?P<tally_num>[0-9]*[48]):(?P<particle>.) +(?P<cell>[0-9]+) *\$.*name: *(?P<name>[\w ]*\w) *$')
                 for card in outp.input_deck:
                     if _m := tally_name_match.match(card):
                         name = _m.group('name')
