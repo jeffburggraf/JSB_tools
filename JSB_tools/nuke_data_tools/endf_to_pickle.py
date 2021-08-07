@@ -666,10 +666,10 @@ if __name__ == '__main__':
     pass
     import JSB_tools.nuke_data_tools
     # JSB_tools.nuke_data_tools.DEBUG = True
-    # debug_nuclide("Na22")
+    debug_nuclide("Cd109", library="Jeff")
     # pickle_decay_data(pickle_data=True, nuclides_to_process=None)
-    n = Nuclide.from_symbol("Na22")
-    print(n.positron_intensity)
+    # n = Nuclide.from_symbol("Na22")
+    # print(n.positron_intensity)
     #
 
 

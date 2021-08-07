@@ -133,10 +133,28 @@ class SPEFile:
 class EfficiencyCal:
     def __init__(self):
         self.erg_bin_centers = None
-        self.cal_ergs = []
-        self.cal_meas_counts = []
-        self.cal_true_counts = []
+        self._cal_ergs = []
+        self._cal_meas_counts = []
+        self._cal_true_counts = []
+        self._cal_sources = []
         self.window_widths = []
+
+    @property
+    def cal_meas_counts(self):
+        return np.array(self._cal_meas_counts)[np.argsort(self._cal_ergs)]
+
+    @property
+    def cal_true_counts(self):
+        return np.array(self._cal_true_counts)[np.argsort(self._cal_ergs)]
+
+    @property
+    def cal_sources(self):
+        return np.array(self._cal_sources)[np.argsort(self._cal_ergs)]
+
+
+    @property
+    def cal_ergs(self):
+        return np.array(self._cal_ergs)[np.argsort(self._cal_ergs)]
 
     def add_cal_peak_with_spe(self, spe_file: SPEFile,
                               nuclide: Nuclide,
@@ -161,7 +179,7 @@ class EfficiencyCal:
             g = all_gamma_lines[np.argmin([abs(erg - _g.erg) for _g in all_gamma_lines])]
             if abs(g.erg - erg)<0.1:
                 self.window_widths.append(counting_window_width)
-                self.cal_ergs.append(erg)
+                self._cal_ergs.append(erg)
 
                 ngammas = g.get_n_gammas(ref_activity=ref_activity, activity_ref_date=activity_ref_date,
                                          tot_acquisition_time=spe_file.livetime, acquisition_ti=spe_file.start_time,
@@ -169,35 +187,38 @@ class EfficiencyCal:
                 selector = np.where((spe_file.energies >= erg-counting_window_width//2) &
                                                         (spe_file.energies <= erg+counting_window_width//2))
                 peak_counts = baseline_removed[selector]
-                # p = PeakFit(erg, spe_file.energies[selector], baseline_removed[selector], make_density=True)
-                # print(p)
-                # self.cal_meas_counts.append(p.amp)
-                # p.plot_fit()
                 peak_counts = sum(peak_counts)
-                self.cal_meas_counts.append(peak_counts)
-                self.cal_true_counts.append(ngammas)
+                self._cal_meas_counts.append(peak_counts)
+                self._cal_true_counts.append(ngammas)
+                self._cal_sources.append(nuclide.name)
 
     @property
     def eff_cal_points(self):
-        out = [m/t for m, t in zip(self.cal_meas_counts, self.cal_true_counts)]
+        out = np.array([m/t for m, t in zip(self.cal_meas_counts, self.cal_true_counts)])
         return out
 
     @property
     def nominal_eff_cal_points(self):
-        out = [x.n for x in self.eff_cal_points]
+        out = np.array([x.n for x in self.eff_cal_points])
         return out
 
     @property
     def eff_cal_points_error(self):
-        out = [x.std_dev for x in self.eff_cal_points]
+        out = np.array([x.std_dev for x in self.eff_cal_points])
         return out
 
     def plot_eff(self, ax=None):
         if ax is None:
             plt.figure()
             ax = plt.gca()
-        ax.errorbar(self.cal_ergs, self.nominal_eff_cal_points, yerr=self.eff_cal_points_error ,ls='None', marker='d')
+        for n_name in set(self.cal_sources):
+            select = np.where(self.cal_sources == n_name)
+            x = self.cal_ergs[select]
+            y = self.nominal_eff_cal_points[select]
+            yerr = self.eff_cal_points_error[select]
 
+            ax.errorbar(x, y, yerr=yerr, ls='None', marker='d', label=n_name)
+        ax.legend()
         return ax
 
     def plot_counts(self, ax=None):
@@ -217,20 +238,33 @@ if __name__ == '__main__':
     # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
     spe_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152EffCal_center.Spe')
     spe_Y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
-    spe = spe_Y88
-    n = Nuclide.from_symbol('Eu152')
+    spe_Co60 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Co60EffCal_center.Spe')
+    spe_Na22 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Na22EffCal_center.Spe')
+    spe = spe_eu152
+    n = Nuclide.from_symbol('Y88')
     for g in n.decay_gamma_lines:
         print(g)
     eff = EfficiencyCal()
 
-    eff.add_cal_peak_with_spe(spe, Nuclide.from_symbol('Eu152'), [244.7, 867.4, 121.8, 1408, 964.1, 1112.1, 778.9,444.0,411.1, 344.3], 10, 1.06,
+    eff.add_cal_peak_with_spe(spe_eu152, Nuclide.from_symbol('Eu152'), [867.4, 121.8, 1408, 964.1, 1112.1, 778.9,444.0,411.1, 344.3], 10, 1.06,
                                   datetime(year=2008, month=7, day=1))
-    # eff.add_cal_peak_with_spe(spe, Nuclide.from_symbol('Y88'),
-    #                           [1836.07, 898, 2734], 10, 433,  datetime(year=2019, month=7, day=1), activity_unit='kBq')
-    eff.plot_eff()
+    eff.add_cal_peak_with_spe(spe_Y88, Nuclide.from_symbol('Y88'),
+                              [1836.07, 898], 10, 433,  datetime(year=2019, month=7, day=1), activity_unit='kBq')
+    # eff.add_cal_peak_with_spe(spe_Co60, Nuclide.from_symbol('Co60'),
+    #                           [1332.49, 1173.23], 10, 1.082, datetime(year=2008, month=7, day=1), activity_unit='uCi')
+    #
+    # eff.add_cal_peak_with_spe(spe_Na22, Nuclide.from_symbol('Na22'),
+    #                           [1274.54], 10, 1.146, datetime(year=2008, month=7, day=1), activity_unit='uCi')
+    #
+    # eff_fit = LogPolyFit(eff.cal_ergs, eff.eff_cal_points, order=1)
+    # print(eff_fit)
+    # eff_fit.plot_fit()
+    # eff.plot_eff()
+    print(list(unp.nominal_values(eff.eff_cal_points)))
+    print(list(unp.nominal_values(eff.cal_ergs)))
 
-    h = spe.get_spectrum_hist()
-    h2 = spe.get_spectrum_hist()-spe.get_background()
+    h = spe_Y88.get_spectrum_hist()
+    h2 = spe_Y88.get_spectrum_hist()-spe_Y88.get_background()
     ax = h.plot()
     h2.plot(ax)
 

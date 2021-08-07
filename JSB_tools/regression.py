@@ -341,11 +341,11 @@ class LogPolyFit(FitBase):
 
         self.coefs = [ufloat(float(p), p.stderr) for p in self.params.values()]
 
-    def eval_fit_error(self, x=None, params=None):
-        if x is None:
-            x = self.x
-        assert params is None, "params not supported here."
-        return interp1d(self.x, self.yerr, bounds_error=False, fill_value=(self.yerr[0], self.yerr[-1]))(x)
+    # def eval_fit_error(self, x=None, params=None):
+    #     if x is None:
+    #         x = self.x
+    #     assert params is None, "params not supported here."
+    #     return interp1d(self.x, self.yerr, bounds_error=False, fill_value=(self.yerr[0], self.yerr[-1]))(x)
 
     def eval_fit_nominal(self, x=None, params=None):
         if params is None:

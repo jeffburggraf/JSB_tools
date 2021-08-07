@@ -1154,6 +1154,20 @@ class Nuclide:
 
         self.__decay_mode_for_print__ = None
 
+    def potential_coincidence_summing(self):
+        outs = []
+        gamma_ergs = np.array([g.erg for g in self.decay_gamma_lines])
+        for index, g1 in enumerate(self.decay_gamma_lines):
+            for g2 in self.decay_gamma_lines[index+1:]:
+                _sum = g1.erg + g2.erg
+                err = _sum.std_dev
+                arg_closest = np.argmin(abs(_sum-gamma_ergs))
+                closest_erg = self.decay_gamma_lines[arg_closest].erg
+                intensity = self.decay_gamma_lines[arg_closest].intensity
+                if abs(closest_erg-_sum) < err:
+                    outs.append(f'{closest_erg, intensity} (diff={closest_erg-_sum} KeV) is potential coinc. sum of {g1.erg, g1.intensity} and {g2.erg, g2.intensity}')
+        return outs
+
     @property
     def decay_gamma_lines(self) -> List[GammaLine]:
         if not self.__decay_gamma_lines:

@@ -396,6 +396,30 @@ class TH1F:
         return PeakFit.from_hist(self, peak_center, fix_center=fix_center, fix_sigma=fix_sigma,
                                  window_width=window_width)
 
+    def get_baseline(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> TH1F:
+        """
+        Estimate the baseline of a spectrum, e.g. gamma spec.
+        Args:
+            num_iterations:
+            clipping_window_order:
+            smoothening_order:
+
+        Returns: Histogram of estimated baseline.
+
+        """
+        assert clipping_window_order in [2,4,6,8]
+        assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
+        spec = ROOT.TSpectrum()
+        result = self.nominal_bin_values[:]
+        cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+        smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
+        spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
+                        cliping_window, ROOT.kTRUE,
+                        smoothening, ROOT.kTRUE)
+        new_hist = TH1F(bin_left_edges=self.__bin_left_edges__)
+        new_hist += result
+        return new_hist
+
     def get_stats_text(self):
         counts = self.__ROOT_hist__.GetEntries()
         quantiles = self.quantiles(4)
@@ -548,6 +572,21 @@ class TH1F:
         assert isinstance(tree, ROOT.TTree), '"tree" must be a TTree instance.'
         tree.Project(_hist.__ROOT_hist__.GetName(), '0.5', cut)
         return _hist.bin_values[0]
+
+    def integrate(self, xmin=None, xmax=None, area=False):
+        if xmin is None:
+            imin = 0
+        else:
+            imin = np.searchsorted(self.__bin_left_edges__[1:], xmin)
+        if xmax is None:
+            imax = len(self) - 1
+        else:
+            imax = np.searchsorted(self.__bin_left_edges__[1:], xmax, side='right')
+            imax = min(len(self) - 1, imax)
+        out = sum(self.bin_values[imin: imax])
+        if area:
+            out *= self.bin_width
+        return out
 
     def Project(self, tree, drw_exp, cut=None, max_events=None, options="", weight=None, start=None):
         assert isinstance(drw_exp, str), '`drw_exp` must be a string'
