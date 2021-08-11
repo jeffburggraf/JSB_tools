@@ -26,7 +26,7 @@ def ole2datetime(oledt):
     return OLE_TIME_ZERO + datetime.timedelta(days=float(oledt))
 
 
-class ListFile:
+class MaestroListFile:
     datetime_format = '%Y/%m/%d %H:%M:%S.%f (%Z%z)'
     file_datetime_format = '%Y-%m-%d_%H-%M-%S.%f--%Z%z'
     """
@@ -216,6 +216,7 @@ class ListFile:
             debug:
         """
         path = Path(path)
+        self.file_name = path.name
         if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
             path = cwd/'user_saved_data'/'SpecTestingData'/path
 
@@ -285,6 +286,13 @@ class ListFile:
         kernel = norm(loc=len(self.livetimes)//2, scale=10).pdf(np.arange(len(self.livetimes)))  # scale: 0.1 seconds
         self.percent_live = np.gradient(self.livetimes)/np.gradient(self.realtimes)
         self.percent_live = np.convolve(self.percent_live, kernel, mode='same')
+
+        self.sample_ready_state = np.array(self.sample_ready_state)
+        self.times = np.array(self.times)
+        self.energies = np.array(self.energies)
+        self.realtimes = np.array(self.realtimes)
+        self.livetimes = np.array(self.livetimes)
+
 
         if debug:
 
@@ -369,7 +377,7 @@ class ListFile:
             pickle.dump(self, f)
 
     @classmethod
-    def from_pickle(cls, fname, directory=None) -> ListFile:
+    def from_pickle(cls, fname, directory=None) -> MaestroListFile:
         if directory is None:
             directory = cls.__get_auto_data_dir()
         fpath = directory/fname
@@ -378,11 +386,13 @@ class ListFile:
             return pickle.load(f)
 
 
+
+
 if __name__ == '__main__':
     t0 = time.time()
-    # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', max_words=None, debug=False)
-    # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
-    l = ListFile('Eu152EffCal_center.SPE', max_words=None, debug=True)
+    # l = MaestroListFile('Sample.Lis', max_words=None, debug=True)
+    # l = MaestroListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
+    l = MaestroListFile('test.Lis', max_words=None, debug=True)
 
     # plt.figure()
     print(l.adc_zero_datetime)

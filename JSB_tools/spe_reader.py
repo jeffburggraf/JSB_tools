@@ -91,9 +91,11 @@ class SPEFile:
         ch = np.concatenate([self.channels, [self.channels[-1] + 1]])
         return self.channel_2_erg(ch-0.5)
 
-    def get_spectrum_hist(self):
+    def get_spectrum_hist(self, make_rate=False):
         hist = TH1F(bin_left_edges=self.erg_bins)
         hist.__set_bin_values__(self.counts)
+        if make_rate:
+            hist /= self.livetime
         return hist
 
     def get_background(self, num_iterations=20, clipping_window_order=2, smoothening_order=5):
@@ -229,47 +231,22 @@ class EfficiencyCal:
         return ax
 
 
-
 if __name__ == '__main__':
     from JSB_tools import Nuclide
 
     import ROOT
 
+    print(Nuclide.from_symbol('Na22').positron_intensity)
+
     # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
+
     spe_eu152 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152EffCal_center.Spe')
+    spe_bg = SPEFile('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Background.Spe')
     spe_Y88 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Y88EffCal_center.Spe')
     spe_Co60 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Co60EffCal_center.Spe')
     spe_Na22 = SPEFile('/Users/burggraf1/Desktop/HPGE_temp/Na22EffCal_center.Spe')
-    spe = spe_eu152
-    n = Nuclide.from_symbol('Y88')
-    for g in n.decay_gamma_lines:
-        print(g)
-    eff = EfficiencyCal()
 
-    eff.add_cal_peak_with_spe(spe_eu152, Nuclide.from_symbol('Eu152'), [867.4, 121.8, 1408, 964.1, 1112.1, 778.9,444.0,411.1, 344.3], 10, 1.06,
-                                  datetime(year=2008, month=7, day=1))
-    eff.add_cal_peak_with_spe(spe_Y88, Nuclide.from_symbol('Y88'),
-                              [1836.07, 898], 10, 433,  datetime(year=2019, month=7, day=1), activity_unit='kBq')
-    # eff.add_cal_peak_with_spe(spe_Co60, Nuclide.from_symbol('Co60'),
-    #                           [1332.49, 1173.23], 10, 1.082, datetime(year=2008, month=7, day=1), activity_unit='uCi')
-    #
-    # eff.add_cal_peak_with_spe(spe_Na22, Nuclide.from_symbol('Na22'),
-    #                           [1274.54], 10, 1.146, datetime(year=2008, month=7, day=1), activity_unit='uCi')
-    #
-    # eff_fit = LogPolyFit(eff.cal_ergs, eff.eff_cal_points, order=1)
-    # print(eff_fit)
-    # eff_fit.plot_fit()
-    # eff.plot_eff()
-    print(list(unp.nominal_values(eff.eff_cal_points)))
-    print(list(unp.nominal_values(eff.cal_ergs)))
-
-    h = spe_Y88.get_spectrum_hist()
-    h2 = spe_Y88.get_spectrum_hist()-spe_Y88.get_background()
-    ax = h.plot()
-    h2.plot(ax)
-
-    eff.plot_counts()
+    spe_eu152.get_spectrum_hist(True).plot()
 
 
-    #
     plt.show()
