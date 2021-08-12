@@ -386,8 +386,6 @@ class MaestroListFile:
             return pickle.load(f)
 
 
-
-
 if __name__ == '__main__':
     t0 = time.time()
     # l = MaestroListFile('Sample.Lis', max_words=None, debug=True)
