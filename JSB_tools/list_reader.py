@@ -12,7 +12,6 @@ from scipy.stats import norm
 from datetime import timezone
 from typing import List, Union
 import filetime
-import binascii
 from functools import cached_property
 import time
 from JSB_tools import ProgressReport
@@ -224,6 +223,7 @@ class MaestroListFile:
 
         with open(path, 'rb') as f:
             lst_header = self.read('i', f)
+
             self.adc_values: Union[np.ndarray, List[float]] = []
             assert lst_header == -13, f"Invalid list mode header. Should be '-13', got " \
                                       f"'{lst_header}' instead."
@@ -262,7 +262,20 @@ class MaestroListFile:
             self.times = []
             self.n_words = 0
             t0 = time.time()
+
+            f_size = path.stat().st_size
+            prog = ProgressReport(f_size if max_words is None else max_words)
+
             while self.process_32(f, debug=debug):
+                if self.n_words % 200 == 0:
+                    if max_words is None:
+                        progress_index = f.tell()
+                    else:
+                        progress_index = self.n_words
+
+                    prog.log(progress_index)
+
+                # print(progress_index, f_size)
                 if max_words is not None and self.n_words > max_words:
                     break
                 self.n_words += 1
@@ -422,7 +435,7 @@ if __name__ == '__main__':
     t0 = time.time()
     # l = MaestroListFile('Sample.Lis', max_words=None, debug=True)
     # l = MaestroListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
-    l = MaestroListFile('test.Lis', max_words=None, debug=True)
+    l = MaestroListFile('Co60_1.Lis', max_words=None, debug=False)
 
     # plt.figure()
     print(l.adc_zero_datetime)
