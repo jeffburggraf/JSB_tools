@@ -502,4 +502,5 @@ if __name__ == "__main__":
     # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)
     # m.set_srim_dedx()
     # print(m)
-    print(DepletedUranium()._get_elements_and_fractions)
+    # print(DepletedUranium()._get_elements_and_fractions)
+    print(atomic_weight, ATOMIC_NUMBER, atomic_mass)

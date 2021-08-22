@@ -282,6 +282,7 @@ class MaestroListFile:
                 self.n_words += 1
 
             self.counts_per_sec = np.array(self.counts_per_sec)/10E-3
+
             print(f"Done! Processed {int(len(self.times)/(time.time()-t0)):.2g} events per second.")
 
         if debug:
@@ -436,7 +437,7 @@ if __name__ == '__main__':
     t0 = time.time()
     # l = MaestroListFile('Sample.Lis', max_words=None, debug=True)
     # l = MaestroListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', max_words=None, debug=False)
-    l = MaestroListFile('Co60_1.Lis', max_words=None, debug=False)
+    l = MaestroListFile('sample3.7V.Lis', max_words=None, debug=False)
 
     # plt.figure()
     print(l.adc_zero_datetime)
