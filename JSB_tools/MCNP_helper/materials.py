@@ -5,8 +5,8 @@ from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
+from atomic_data import atomic_weight, ATOMIC_NUMBER, atomic_mass
 try:
-    from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
     import openmc.material
 except ModuleNotFoundError:
     warnings.warn("openmc not installed! Limited functionality")
