@@ -68,7 +68,7 @@ class CuboidSurface(Surface):
     def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax, surf_name=None, surf_num=None, comment=None):
         super(CuboidSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
         for kmin, kmax in zip([xmin, ymin, zmin], [xmax, ymax, zmax]):
-            assert kmin != kmax, 'Cuboid with minimum coordinate equals maximum coordinate: "} == {}'.format(kmax, kmax)
+            assert kmin != kmax, 'Cuboid with minimum coordinate equals maximum coordinate: " == {}'.format(kmax, kmax)
 
         self.xmin = xmin
         self.xmax = xmax

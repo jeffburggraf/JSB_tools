@@ -47,7 +47,7 @@ def binned_median(bin_left_edges, weights):
     return x[index] + dx
 
 
-def rolling_median(window_width, values, interpolate=False):
+def rolling_median(window_width, values):
     """
     Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
     Args:
@@ -303,16 +303,28 @@ class TH1F:
         """
         self.__set_bin_values__(convolve_uniform(window_width, self.bin_values))
 
-    def convolve_gaus(self, sigma: float):
+    def convolve_gaus(self, sigma: float, copy=False, keep_error_magnitude=False):
         """
         Convolve the bin values with a gaussian pulse.
         Args:
             sigma: The width of window (number of bins).
-
+            copy: If True, create and return new hist.
+            keep_error_magnitude: If True, errors will remain about the same magnitude. This is done by convolving the
+                errors and nominal values separately.
         Returns: None, modifies the histogram.
 
         """
-        self.__set_bin_values__(convolve_gaus(sigma, self.bin_values))
+        if copy:
+            hist = self.copy()
+        else:
+            hist = self
+        if keep_error_magnitude:
+            new_bins = unp.uarray(convolve_gaus(sigma, self.nominal_bin_values),
+                                  convolve_gaus(sigma, self.std_errs))
+        else:
+            new_bins = convolve_gaus(sigma, self.bin_values)
+        hist.__set_bin_values__(new_bins)
+        return hist
 
     @property
     def title(self) -> str:
@@ -384,6 +396,30 @@ class TH1F:
         return PeakFit.from_hist(self, peak_center, fix_center=fix_center, fix_sigma=fix_sigma,
                                  window_width=window_width)
 
+    def get_baseline(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> TH1F:
+        """
+        Estimate the baseline of a spectrum, e.g. gamma spec.
+        Args:
+            num_iterations:
+            clipping_window_order:
+            smoothening_order:
+
+        Returns: Histogram of estimated baseline.
+
+        """
+        assert clipping_window_order in [2,4,6,8]
+        assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
+        spec = ROOT.TSpectrum()
+        result = self.nominal_bin_values[:]
+        cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+        smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
+        spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
+                        cliping_window, ROOT.kTRUE,
+                        smoothening, ROOT.kTRUE)
+        new_hist = TH1F(bin_left_edges=self.__bin_left_edges__)
+        new_hist += result
+        return new_hist
+
     def get_stats_text(self):
         counts = self.__ROOT_hist__.GetEntries()
         quantiles = self.quantiles(4)
@@ -438,7 +474,7 @@ class TH1F:
             # ax.text(0.8, 0.95-0.03*h, text,  transform=ax.transAxes)
             ob = offsetbox.AnchoredText(text, loc=1)
             ax.add_artist(ob)
-        if  leg_label:
+        if leg_label:
             ax.legend()
 
         return ax
@@ -454,17 +490,23 @@ class TH1F:
         ob = offsetbox.AnchoredText(t, loc=1)
         ax.add_artist(ob)
 
-    def convolve_median(self, window_width):
+    def convolve_median(self, window_width, copy=False) -> TH1F:
         """
         Replace the value in each bin[i] with the median of bins within a rolling window of width
         `window_width` centered around bin[i].
         Args:
             window_width: width of rolling window
+            copy: If True, don't modify histogram.
 
         Returns: None, modifies hist.
         """
-        new_bin_values = rolling_median(window_width, self.bin_values)
-        self.__set_bin_values__(new_bin_values)
+        if copy:
+            hist = self.copy()
+        else:
+            hist = self
+        new_bin_values = rolling_median(window_width, hist.bin_values)
+        hist.__set_bin_values__(new_bin_values)
+        return hist
 
     def dist_from_rolling_median(self, window_width: float):
         """
@@ -530,6 +572,21 @@ class TH1F:
         assert isinstance(tree, ROOT.TTree), '"tree" must be a TTree instance.'
         tree.Project(_hist.__ROOT_hist__.GetName(), '0.5', cut)
         return _hist.bin_values[0]
+
+    def integrate(self, xmin=None, xmax=None, area=False):
+        if xmin is None:
+            imin = 0
+        else:
+            imin = np.searchsorted(self.__bin_left_edges__[1:], xmin)
+        if xmax is None:
+            imax = len(self) - 1
+        else:
+            imax = np.searchsorted(self.__bin_left_edges__[1:], xmax, side='right')
+            imax = min(len(self) - 1, imax)
+        out = sum(self.bin_values[imin: imax])
+        if area:
+            out *= self.bin_width
+        return out
 
     def Project(self, tree, drw_exp, cut=None, max_events=None, options="", weight=None, start=None):
         assert isinstance(drw_exp, str), '`drw_exp` must be a string'
@@ -781,8 +838,8 @@ class TH1F:
 
     def __convert_other_for_operator__(self, other):
         if hasattr(other, "__iter__"):
-            assert len(other) == len(self), "Multiplying hist of len {0} by iterator of len {1}".format(len(self),
-                                                                                                        len(other))
+            assert len(other) == len(self), "Applying operator to hist of len {0} with iterator of len {1}" \
+                                            " (lengths must be equal)".format(len(self), len(other))
 
             assert len(other), "Cannot operate on array opf length zero"
             if not isinstance(other, np.ndarray):

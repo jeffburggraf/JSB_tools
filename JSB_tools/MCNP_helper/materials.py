@@ -5,12 +5,15 @@ from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
-from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
+try:
+    from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
+    import openmc.material
+except ModuleNotFoundError:
+    warnings.warn("openmc not installed! Limited functionality")
 import numpy as np
 import re
 from typing import List
 from numbers import Number
-import openmc.material
 from typing import Tuple, List
 from inspect import signature
 # Todo: Revamp the IdealGas interface.
@@ -180,7 +183,7 @@ class Material:
         self.is_gas = False
         self.is_mcnp = is_mcnp
 
-    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx', scaling=None):
+    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx', scaling=None):
         """
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
         Args:
@@ -190,7 +193,7 @@ class Material:
         Returns:
 
         """
-        assert dedx_path.exists()
+        assert dedx_path.exists(), dedx_path
 
         from JSB_tools.SRIM import existing_outputs, SRIMTable
 

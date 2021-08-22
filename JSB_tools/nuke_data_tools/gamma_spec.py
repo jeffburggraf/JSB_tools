@@ -82,7 +82,7 @@ def gamma_search(erg_center: float,
     """
     Search for nuclides that produce gamma decays in the neighborhood of `erg_center` (+/- sigma_erg). The nuclides are
      sorted from most to least number of decay events that would occur over the course of data acquisition as specified
-     by start_time and end_time.
+     by header_start_time and end_time.
     Args:
         erg_center: Center of energy window
         e_sigma: half width of energy window
@@ -111,7 +111,7 @@ def gamma_search(erg_center: float,
     if start_time is None:
         start_time = 0
 
-    assert end_time > start_time, "`end_time` must be greater than `start_time`"
+    assert end_time > start_time, "`end_time` must be greater than `header_start_time`"
 
     global DATA
     if DATA is None:
@@ -159,7 +159,6 @@ def gamma_search(erg_center: float,
 class PrepareGammaSpec:
     data_path = cwd.parent / 'user_saved_data' / 'spectra_calibrations'
 
-
     def __init__(self, n_channels):
         """
         Used to calibrate a HPGe detector and save in a standardized format.
@@ -194,17 +193,21 @@ class PrepareGammaSpec:
         def __init__(self, gamma_spec: PrepareGammaSpec, counts_array, channel_guess, energy, true_counts, window_width):
             assert len(counts_array) == gamma_spec.n_channels, "All calibration data must be a full spectrum, i.e." \
                                                                "there must be a value for every channel"
-            self.count_array = unp.uarray(counts_array, np.sqrt(counts_array))
+            if not isinstance(counts_array[0], UFloat):
+                self.count_array = unp.uarray(counts_array, np.sqrt(counts_array))
+            else:
+                self.count_array = counts_array
             self.channel_hist = TH1F(bin_left_edges=gamma_spec.__channel_bins__)
             self.channel_hist += self.count_array
             # self.channel_hist = self.channel_hist.remove_bins_outside_range(channel_guess - 2*window_width,
             #                                                                 channel_guess+2*window_width)
             self.channel_hist /= self.channel_hist.bin_widths
             self.fit = PeakFit(peak_center_guess=channel_guess, x=self.channel_hist.bin_centers, y=counts_array,
-                               yerr=np.sqrt(counts_array),
                                window_width=window_width)
             self.true_counts = true_counts
             self.energy = energy
+            if isinstance(self.energy, UFloat):
+                self.energy = self.energy.n
 
         def plot(self):
             ax = self.fit.plot_fit(xlabel="Channel", ylabel="counts (raw)")
@@ -237,7 +240,7 @@ class PrepareGammaSpec:
 
         """
         if hasattr(self, 'is_loaded'):
-            raise NotImplementedError('Calibration already compeletd (this calibration was loaded from disk)')
+            raise NotImplementedError('Calibration already complete (this calibration was loaded from disk)')
         assert len(counts_array) == self.n_channels
 
         if true_counts is None:
