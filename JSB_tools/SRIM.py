@@ -246,10 +246,13 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
 
 
 if __name__ == '__main__':
-    atoms = ['He', 'Ar']
+    from JSB_tools.MCNP_helper.materials import _IdealGas
+    atoms = ['He4', 'Ar40']
     for he_frac in np.arange(0, 1.2, 0.2):
         fractions = [he_frac, 1-he_frac]
-        run_srim()
+        g = _IdealGas(atoms)
+        print(g)
+        # run_srim()
 
     # for p in params:
     #     atoms = p[0]

@@ -16,7 +16,7 @@ from typing import List
 from numbers import Number
 from typing import Tuple, List
 from inspect import signature
-# Todo: Revamp the IdealGas interface.
+# Todo: For windows report, get rid of openmc when it isn't absolutely necessary.
 
 
 chemical_regex = re.compile(r'(?P<symbol>[A-Z][a-z]{0,2}-?(?P<A>[0-9]{0,3}))(?:\((?P<n_atoms>[0-9]+)\))?')

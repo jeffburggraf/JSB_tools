@@ -1,9 +1,17 @@
 from __future__ import annotations
 import pickle
 import numpy as np
-from openmc.data.endf import Evaluation
-from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
-from openmc.data import Reaction, Decay, Product
+import warnings
+try:
+    from openmc.data.endf import Evaluation
+    from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
+    from openmc.data import Reaction, Decay, Product
+    from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
+    avogadros_number = AVOGADRO
+
+except ModuleNotFoundError:
+    warnings.warn("openmc not installed. Some functionality is limited")
+
 from matplotlib import pyplot as plt
 import re
 from pathlib import Path
@@ -13,7 +21,6 @@ from uncertainties import unumpy as unp
 import uncertainties
 import marshal
 from functools import cached_property
-from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
 from typing import Union, List, Dict, Collection, Tuple, TypedDict
 from numbers import Number
 pwd = Path(__file__).parent
@@ -28,7 +35,6 @@ __all__ = ['Nuclide', 'avogadros_number', 'FissionYields']
 
 DEBUG = False
 #  Units
-avogadros_number = AVOGADRO
 __u_to_kg__ = 1.6605390666E-27  # atomic mass units to kg
 __speed_of_light__ = 299792458   # c in m/s
 
@@ -41,8 +47,6 @@ __speed_of_light__ = 299792458   # c in m/s
 #     the pickle files.
 #   * Get rid of <additional_nuclide_data> functionality. too complex and stupid
 #   * Find a way to include data files in the pip package, maybe create a separate repository.
-
-
 
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling

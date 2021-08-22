@@ -9,8 +9,13 @@ from matplotlib import pyplot as plt
 from pathlib import Path
 from typing import List, Dict, Set, Iterable, Sized, Union, Type, Optional
 from numbers import Number
-from openmc import Material
-from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
+import warnings
+try:
+    from openmc import Material
+    from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
+except ModuleNotFoundError:
+    warnings.warn("openmc not installed. Some functionality is limited")
+
 import platform
 import subprocess
 from functools import cached_property
