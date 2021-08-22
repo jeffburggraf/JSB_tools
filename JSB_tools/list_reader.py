@@ -2,6 +2,7 @@ import struct
 from struct import unpack, calcsize
 from pathlib import Path
 import datetime
+from bitstream import BitStream
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -209,5 +210,9 @@ class ListFile:
 
 
 # l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/Eu152_SampleIn.Lis', True)
-l = ListFile('/Users/burggraf1/Desktop/HPGE_temp/firstTest.Lis', True)
+# l = ListFile(, True)
 #1000010111010011001000000 print(bin(10))
+
+with open('/Users/jeffreyburggraf/Desktop/Eu152_SampleIn.Lis', 'rb') as f:
+    s = BitStream(f.read(255))
+    print(s.read())
