@@ -5,12 +5,15 @@ from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
-from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
+try:
+    from openmc.data import atomic_weight, ATOMIC_NUMBER, atomic_mass
+    import openmc.material
+except ModuleNotFoundError:
+    warnings.warn("openmc not installed! Limited functionality")
 import numpy as np
 import re
 from typing import List
 from numbers import Number
-import openmc.material
 from typing import Tuple, List
 from inspect import signature
 # Todo: Revamp the IdealGas interface.
