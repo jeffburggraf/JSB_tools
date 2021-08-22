@@ -6,6 +6,7 @@ import numpy as np
 from JSB_tools.TH1 import TH1F, convolve_gaus
 import uncertainties.unumpy as unp
 from uncertainties import UFloat
+from uncertainties.core import AffineScalarFunc
 from JSB_tools.regression import PeakFit
 from scipy.signal import find_peaks
 from JSB_tools.regression import LogPolyFit, PeakFit
@@ -13,10 +14,11 @@ from JSB_tools import Nuclide
 from typing import List
 import ROOT
 
+
 class SPEFile:
     def __init__(self, path):
         path = Path(path)
-        assert path.exists()
+        assert path.exists(), path
         with open(path) as f:
             lines = f.readlines()
         index = lines.index('$SPEC_REM:\n')+1
@@ -61,8 +63,14 @@ class SPEFile:
         return np.sum([coeff*a**i for i, coeff in enumerate(self.erg_fit)], axis=0)
 
     def erg_2_fwhm(self, erg):
-        channel_width = self.erg_bins[self.erg_2_channel(erg):]
-        channel_width = channel_width[1] - channel_width[0]
+        if hasattr(erg, '__iter__'):
+            channels = self.erg_2_channel(erg)
+            i_s = np.where(channels<len(self.erg_bin_widths), channels, len(channels)-1 )
+            channel_width = self.erg_bin_widths[i_s]
+        # print([self.erg_2_channel(erg), len(self.erg_bin_widths)-1])
+        else:
+            i = np.min([self.erg_2_channel(erg), len(self.erg_bin_widths)-1])
+            channel_width = self.erg_bin_widths[i]
 
         return channel_width*np.sum([coeff*erg**i for i, coeff in enumerate(self.shape_cal)], axis=0)
 
@@ -77,7 +85,22 @@ class SPEFile:
             out = (-b + np.sqrt(b**2 - 4*a*c + 4*c*erg))/(2.*c)
         else:
             out = (erg - a)/b
-        return int(out)
+        if hasattr(out, '__iter__'):
+            return np.array(out, dtype=int)
+        else:
+            return int(out)
+
+    def erg_bin_index(self, erg):
+        if hasattr(erg, '__iter__'):
+            return np.array([self.erg_bin_index(e) for e in erg])
+        if isinstance(erg, AffineScalarFunc):
+            erg = erg.n
+        return np.searchsorted(self.erg_bins, erg, side='right') - 1
+
+    @property
+    def erg_bin_widths(self):
+        bins = self.erg_bins
+        return np.array([b1-b0 for b0, b1 in zip(bins[:-1], bins[1:])])
 
     @property
     def erg_bins(self):
@@ -97,6 +120,23 @@ class SPEFile:
         if make_rate:
             hist /= self.livetime
         return hist
+
+    @property
+    def nominal_counts(self):
+        return unp.nominal_values(self.counts)
+
+    @staticmethod
+    def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5):
+        assert clipping_window_order in [2, 4, 6, 8]
+        assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
+        spec = ROOT.TSpectrum()
+        result = unp.nominal_values(counts)
+        cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+        smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
+        spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
+                        cliping_window, ROOT.kTRUE,
+                        smoothening, ROOT.kTRUE)
+        return result
 
     def get_background(self, num_iterations=20, clipping_window_order=2, smoothening_order=5):
         assert clipping_window_order in [2,4,6,8]

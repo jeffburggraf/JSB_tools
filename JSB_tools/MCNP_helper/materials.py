@@ -180,7 +180,7 @@ class Material:
         self.is_gas = False
         self.is_mcnp = is_mcnp
 
-    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'phits'/'data'/'dedx', scaling=None):
+    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx', scaling=None):
         """
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
         Args:
@@ -190,7 +190,7 @@ class Material:
         Returns:
 
         """
-        assert dedx_path.exists()
+        assert dedx_path.exists(), dedx_path
 
         from JSB_tools.SRIM import existing_outputs, SRIMTable
 

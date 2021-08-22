@@ -246,7 +246,6 @@ class MaestroListFile:
             self.total_real_time = self.read('f', f)
             self.total_live_time = self.read('f', f)
             self.read('9s', f)
-
             self.adc_zero_datetime: Union[datetime.datetime, None] = None
 
             self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
@@ -283,16 +282,24 @@ class MaestroListFile:
         self.energies = self.channel_to_erg(self.adc_values)
 
         # convolve to remove defects. Only deadtime changes on the order of 0.1 seconds matter anyways.
-        kernel = norm(loc=len(self.livetimes)//2, scale=10).pdf(np.arange(len(self.livetimes)))  # scale: 0.1 seconds
+        dead_time_corr_window = 10
+        kernel = norm(loc=len(self.livetimes)//2, scale=dead_time_corr_window)\
+            .pdf(np.arange(len(self.livetimes)))  # scale: 0.1 seconds
         self.percent_live = np.gradient(self.livetimes)/np.gradient(self.realtimes)
         self.percent_live = np.convolve(self.percent_live, kernel, mode='same')
+
+        # correct edge effects
+        self.percent_live[0:dead_time_corr_window // 2] = \
+            np.median(self.percent_live[dead_time_corr_window // 2:dead_time_corr_window])
+
+        self.percent_live[-dead_time_corr_window // 2:] = \
+            np.median(self.percent_live[-dead_time_corr_window: -dead_time_corr_window // 2])
 
         self.sample_ready_state = np.array(self.sample_ready_state)
         self.times = np.array(self.times)
         self.energies = np.array(self.energies)
         self.realtimes = np.array(self.realtimes)
         self.livetimes = np.array(self.livetimes)
-
 
         if debug:
 
@@ -310,13 +317,38 @@ class MaestroListFile:
             ax = percent_live_hist.plot(show_stats=True, xlabel="% live-time", ylabel="Counts")
             ax.set_title("Frequencies of percent live-time")
 
+    def plot_percent_live(self, ax=None, **ax_kwargs):
+        if ax is None:
+            plt.figure()
+            ax = plt.gca()
+        ax.plot(self.realtimes, self.percent_live, **ax_kwargs)
+        ax.set_xlabel("Real time [s]")
+        ax.set_ylabel("Count rate [Hz]")
+        return ax
+
+    def get_deadtime_corr(self, t):
+        i = np.searchsorted(self.livetimes, t)
+        return self._deadtime_corrs[i]
+
+    @cached_property
+    def deadtime_corrs(self):
+        indicies = np.searchsorted(self.realtimes, self.times)
+        return 1.0/self.percent_live[indicies]
+
     def channel_to_erg(self, a):
         return np.sum([a ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
+
+    @cached_property
+    def erg_centers(self):
+        return np.array([(b0+b1)/2 for b0, b1 in zip(self.erg_bins[:-1], self.erg_bins[1:])])
 
     @cached_property
     def erg_bins(self):
         channel_bins = np.arange(self.n_adc_channels) - 0.5
         return self.channel_to_erg(channel_bins)
+
+    def erg_bin_index(self, erg):
+        return np.searchsorted(self.erg_bins, erg, side='right') - 1
 
     def get_spectrum_hist(self, t1=0, t2=None) -> TH1F:
         if t2 is None:

@@ -1197,6 +1197,7 @@ class Nuclide:
         return sum(b.positron_intensity for b in self.decay_betaplus_lines)
 
     def decay_chain_gamma_lines(self, __branching__ratio__=1) -> List[GammaLine]:
+        raise NotImplementedError("Needs re-worked!")
         out = []
         decay_modes: List[DecayMode] = []
         for ms in self.decay_modes.values():

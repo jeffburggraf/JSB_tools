@@ -39,6 +39,18 @@ except ModuleNotFoundError:
     root_exists = False
 
 
+def mpl_hist(bin_Edges, y, yerr, ax=None, color=None, label=None, **mpl_kwargs):
+    if ax is None:
+        plt.figure()
+        ax = plt.gca()
+    bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
+    yp = np.concatenate([y, [0.]])
+    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', color=color)
+    c = lines[0].get_color()
+    lines.append(ax.errorbar(bin_centers, y, yerr,
+                             ls='None', color=c, **mpl_kwargs))
+    return ax
+
 
 class __TracePrints(object):
 
@@ -70,7 +82,7 @@ class ProgressReport:
         self.__init_time__ = time.time()
         self.__rolling_average__ = []
 
-    def __report__(self, t_now, i):
+    def __report__(self, t_now, i, added_msg):
         evt_per_sec = (i-self.__i_init__)/(t_now - self.__init_time__)
         self.__rolling_average__.append(evt_per_sec)
         evt_per_sec = np.mean(self.__rolling_average__)
@@ -90,12 +102,12 @@ class ProgressReport:
             msg = " {0} hours,".format(hours) + msg
         if days:
             msg = "{0} days,".format(days) + msg
-        print(msg + " remaining.", i/self.__i_final__)
+        print(f"{added_msg}... {msg} remaining {100*i/self.__i_final__:.2f}% complete")
 
-    def log(self, i, debug=False):
+    def log(self, i, msg=""):
         t_now = time.time()
         if t_now > self.__next_print_time__:
-            self.__report__(t_now, i)
+            self.__report__(t_now, i, msg)
             self.__next_print_time__ += self.__sec_per_print__
             return True
         return False
@@ -165,7 +177,7 @@ def ROOT_loop():
 
 
 class FileManager:
-    root_files:Dict[Path, ROOT.TFile] = {}
+    root_files: Dict[Path, ROOT.TFile] = {}
     # todo: make gui for deleting files
     #  todo: male read only option
 
@@ -532,13 +544,7 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    x = np.arange(100)
-    y = 1+x**2
-    # fig, ax = GoodMPL.get_fig_ax(usetex=True,ncols=2, xlabel='X [cm]', ylabel='y [s]', y_major_tick_dist=1000, y_minor_tick_dist=250, x_major_tick_dist=10, x_minor_tick_dist=2.5)
-    fig, ax = GoodMPL.get_fig_ax(usetex=True, xlabel='X [cm]', ylabel='y [s]', tick_width=1, y_minor_tick_dist=None)
-    # plt.style.use('mpl_style.txt')
-    # plt.plot(x, y)
-    ax.plot(x, y)
 
     plt.show()
+
 

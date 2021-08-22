@@ -6,7 +6,6 @@ import numpy as np
 from lmfit import Model
 from lmfit.models import GaussianModel
 from scipy.stats import norm
-import JSB_tools.TH1 as TH1
 from uncertainties import UFloat, ufloat
 import uncertainties.unumpy as unp
 from lmfit.model import save_modelresult, load_modelresult
@@ -23,6 +22,18 @@ from scipy.odr import Model as ODRModel
 from scipy.odr import RealData, ODR, polynomial, Output
 from scipy.odr.models import _poly_fcn
 from lmfit import minimize
+from typing import List, Union
+
+
+def independent_var_force_iterator(f):
+    def q(*args, **kwargs):
+        x = kwargs.get('x')
+        if x is not None and not hasattr(x, '__len__'):
+            kwargs['x'] = [x]
+            return f(*args, **kwargs)[0]
+
+        return f(*args, **kwargs)
+    return q
 
 
 class FitBase(metaclass=ABCMeta):
@@ -48,6 +59,12 @@ class FitBase(metaclass=ABCMeta):
 
         # For zero errors (inf weight), use a large number
         self.__weights__ = 1.0/np.where(self.yerr != 0, self.yerr, 1E-12)
+
+        arg_sort = np.argsort(self.x)
+        self.x = self.x[arg_sort]
+        self.y = self.y[arg_sort]
+        self.yerr = self.yerr[arg_sort]
+        self.__weights__ = self.__weights__[arg_sort]
 
         self.fit_result: ModelResult = None
 
@@ -99,6 +116,7 @@ class FitBase(metaclass=ABCMeta):
             else:
                 setattr(self, k, ufloat(float(v), abs(v.stderr)))
 
+    @independent_var_force_iterator
     def eval_fit_error(self, x=None, params=None):
         args = {}
         if params is not None:
@@ -109,6 +127,7 @@ class FitBase(metaclass=ABCMeta):
             args['x'] = x
         return self.fit_result.eval_uncertainty(**args)
 
+    @independent_var_force_iterator
     def eval_fit_nominal(self, x=None, params=None):
         args = {}
         if params is not None:
@@ -130,7 +149,7 @@ class FitBase(metaclass=ABCMeta):
         #     # yerr = np.interp(x, self.x, self.fit_y_err)
         #     return unp.uarray(y, yerr)
 
-    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, xlabel=None, ylabel=None):
+    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, xlabel=None, ylabel=None, upsampling=10):
         if ax is None:
             plt.figure()
             ax = plt.gca()
@@ -141,10 +160,11 @@ class FitBase(metaclass=ABCMeta):
 
         points_line = ax.errorbar(self.x, self.y, self.yerr, label='Data', ls='None', marker='o')
         if fit_x is None:
-            fit_x = np.linspace(self.x[0], self.x[-1], len(self.x)*4)
+            fit_x = np.linspace(self.x[0], self.x[-1], len(self.x)*upsampling)
         fit_y = self.eval_fit(x=fit_x, params=params)
         fit_err = unp.std_devs(fit_y)
         fit_y = unp.nominal_values(fit_y)
+        plt.plot(fit_x, fit_y)
         fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--')[0]
         fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit')
         ax.legend([points_line, (fill_poly, fit_line)], ["data", "Fit"])
@@ -304,7 +324,7 @@ class LogPolyFit(FitBase):
         out = np.e**out
         return out
 
-    def __init__(self, x, y, yerr=None, order=3, fix_highest_coeff=False):
+    def __init__(self, x, y, yerr=None, order=3, fix_coeffs: Union[List[int], None] = None):
         """
         Log poly fit.
         Args:
@@ -312,7 +332,7 @@ class LogPolyFit(FitBase):
             y: array or unp.uarray
             yerr: array or unp.uarray
             order: Order of polynomial
-            fix_highest_coeff: Sometimes it is helpful to fix the largest coeff to the value determined from the initial
+            fix_coeffs: Sometimes it is helpful to fix some coeffs to the value determined from the initial
                 fit (i.e. the guess) in Log-Log space (i.e. when the fit is linear).
                 This can help reduce issues during the final non-linear fit.
                 first.
@@ -333,25 +353,34 @@ class LogPolyFit(FitBase):
         params = model_temp.guess(log_y, x=log_x, weights=1.0/log_y_error)
         model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
 
-        if fix_highest_coeff:
-            params[f'c{order}'].vary = False
+        if fix_coeffs is not None:
+            assert hasattr(fix_coeffs, '__iter__'), '`fix_coeffs` must be a list of coeffs'
+            assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! " \
+                                             "(coeff. doesn't exist)"
+            assert all([isinstance(a, int) for a in fix_coeffs]), "`fix_coeffs` all must be integers.!"
+            for c in fix_coeffs:
+                params[f'c{c}'].vary = False
         model = Model(self.model_func)
         self.fit_result = model.fit(self.y, params=params, x=self.x, weights=self.__weights__, scale_covar=True,
-                                    verbose=True)
+                                    verbose=True, )
 
         self.coefs = [ufloat(float(p), p.stderr) for p in self.params.values()]
 
-    # def eval_fit_error(self, x=None, params=None):
-    #     if x is None:
-    #         x = self.x
-    #     assert params is None, "params not supported here."
-    #     return interp1d(self.x, self.yerr, bounds_error=False, fill_value=(self.yerr[0], self.yerr[-1]))(x)
+    @staticmethod
+    def print_model(model_result: ModelResult):
+        out = f"{model_result.params['c0'].value:.2f}" + "".join(
+            [f"{'+' if p.value > 0 else ''}{p.value:.2f}*log(erg)^{i + 1}" for i, p in
+             enumerate(list(model_result.params.values())[1:])])
+        out = f"e^({out})"
+        return out
 
+    @independent_var_force_iterator
     def eval_fit_nominal(self, x=None, params=None):
         if params is None:
             params = self.params
         if x is None:
             x = self.x
+
         return self.model_func(x, **params)
 
 
@@ -578,6 +607,7 @@ class ExponentialMLL:
 
 
 if __name__ == '__main__':
+    from TH1 import TH1F
     hl = 40
     n = 0
     data_true = np.random.exponential(hl/np.log(2), 500)+20
