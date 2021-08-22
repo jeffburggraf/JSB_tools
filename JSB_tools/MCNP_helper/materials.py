@@ -5,7 +5,7 @@ from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
-from atomic_data import atomic_weight, ATOMIC_NUMBER, atomic_mass
+from JSB_tools.MCNP_helper.atomic_data import atomic_weight, ATOMIC_NUMBER, atomic_mass
 try:
     import openmc.material
 except ModuleNotFoundError:
@@ -36,7 +36,7 @@ class ChemicalFormula:
             n_atoms = m.group('n_atoms')
 
             if a:
-                self.atomic_weights.append(atomic_mass(symbol + a))
+                self.atomic_weights.append(atomic_mass(symbol))
             else:
                 self.atomic_weights.append(atomic_weight(symbol))
 
@@ -497,6 +497,7 @@ class Air(Material):
 
         for zaid, f in zip(zaids, fractions):
             self.add_zaid(zaid, f)
+
 
 if __name__ == "__main__":
     # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)

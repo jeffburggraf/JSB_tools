@@ -10,9 +10,9 @@ import pickle
 from matplotlib import pyplot as plt
 from scipy.interpolate import interp1d
 
-cwd = Path(__file__).parent/"SRIM-2013"
+srim_dir = Path(__file__).parent/"SRIM-2013"
 
-save_dir = cwd/'srim_outputs'
+save_dir = srim_dir/'srim_outputs'
 
 if not save_dir.exists():
     save_dir.mkdir(exist_ok=True, parents=True)
@@ -74,7 +74,7 @@ def _save_output(target_atoms, fractions, density, projectile, gas):
     data = []
     ergs = []
 
-    with open(cwd/'SR Module'/'SR_OUTPUT.txt') as f:
+    with open(srim_dir/'SR Module'/'SR_OUTPUT.txt') as f:
         line = f.readline()
         while not re.match('(-+ +){2,10}', line):
             line = f.readline()
@@ -196,10 +196,18 @@ def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False
 
     bad = (np.where(np.array(fractions) == 0))
     good = (np.where(np.array(fractions) != 0))
+    target_atoms = np.array(target_atoms)
+    fractions = np.array(fractions)
+
     if bad:
-        warnings.warn(f"Removing the following elements due to zero atom fractions provided: {elements[bad]}")
+        warnings.warn(f"Removing the following elements due to zero atom fractions provided: {np.array(target_atoms)[bad]}")
     assert len(good) > 0, "No non-zero atom fractions!"
-    target_atoms = target_atoms[good]
+    _target_atoms = target_atoms[good]
+    target_atoms = []
+    for s in _target_atoms:
+        m = re.match(r"([A-Z][a-z]{0,3})-?[0-9]+", s)
+        assert m, f"Invalid target particle specification, '{s}'"
+        target_atoms.append(m.groups()[0])
     fractions = fractions[good]
     m = re.match('([A-Za-z]{1,3})-*([0-9]+)*', projectile)
     assert m, f"Invalid projectile specification, '{projectile}'. Example: Xe139"
@@ -237,9 +245,10 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     for s, frac in zip(target_atoms, fractions):
         layer_arg[s] = {"stoich": frac}
     gas = int(gas)
-
-    sr = SR(Layer(layer_arg, density, 1000, phase=int(gas)), Ion(proj_symbol, max_erg, proj_mass), output_type=5)
-    sr.run(Path(__file__).parent)
+    layer = Layer(layer_arg, density, 1000, phase=int(gas))
+    ion = Ion(proj_symbol, max_erg, proj_mass)
+    sr = SR(layer, ion, output_type=5)
+    sr.run(srim_directory=srim_dir)
     _save_output(target_atoms, fractions, density, projectile, gas)
 
     return SRIMTable(target_atoms, fractions, density, projectile, gas)
@@ -251,7 +260,8 @@ if __name__ == '__main__':
     for he_frac in np.arange(0, 1.2, 0.2):
         fractions = [he_frac, 1-he_frac]
         g = _IdealGas(atoms)
-        print(g)
+        density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
+        run_srim(atoms, fractions, density, 'Xe139', 80)
         # run_srim()
 
     # for p in params:
