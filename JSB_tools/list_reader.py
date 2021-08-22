@@ -22,6 +22,7 @@ HERE = pytz.timezone('US/Mountain')
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 cwd = Path(__file__).parent
 
+
 def ole2datetime(oledt):
     return OLE_TIME_ZERO + datetime.timedelta(days=float(oledt))
 
