@@ -9,7 +9,8 @@ from JSB_tools.MCNP_helper.atomic_data import atomic_weight, ATOMIC_NUMBER, atom
 try:
     import openmc.material
 except ModuleNotFoundError:
-    warnings.warn("openmc not installed! Limited functionality")
+    from JSB_tools.nuke_data_tools import openmc_not_installed_warning
+    openmc_not_installed_warning()
 import numpy as np
 import re
 from typing import List
@@ -59,7 +60,6 @@ class _IdealGas:
         Args:
             list_of_chemicals: e.g., ['O2', 'He'] for O2 and helium. ["O", "H2"] for free O and He.
         """
-        print(list_of_chemicals)
         list_of_chemical_formulas = [ChemicalFormula(s) for s in list_of_chemicals]
         self.total_grams_per_mole_list = np.array([a.total_grams_peer_mole for a in list_of_chemical_formulas])
 

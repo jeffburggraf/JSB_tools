@@ -2,16 +2,16 @@ from __future__ import annotations
 import pickle
 import numpy as np
 import warnings
+def openmc_not_installed_warning():
+    warnings.warn("openmc not installed! some functionality is limited. ")
 try:
     from openmc.data.endf import Evaluation
     from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
     from openmc.data import Reaction, Decay, Product
     from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
     avogadros_number = AVOGADRO
-
 except ModuleNotFoundError:
-    warnings.warn("openmc not installed. Some functionality is limited")
-
+    openmc_not_installed_warning()
 from matplotlib import pyplot as plt
 import re
 from pathlib import Path
@@ -31,7 +31,7 @@ from scipy.interpolate import interp1d
 from datetime import datetime, timedelta
 
 
-__all__ = ['Nuclide', 'avogadros_number', 'FissionYields']
+__all__ = ['Nuclide', 'avogadros_number', 'FissionYields', 'openmc_not_installed_warning']
 
 DEBUG = False
 #  Units

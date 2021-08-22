@@ -1,6 +1,4 @@
-# from plasmapy import particles
-# from astropy.units import quantity
-# from srim import SR, Ion, Layer, Material, Element
+from JSB_tools import trace_prints
 import warnings
 from pathlib import Path
 # from mendeleev import element, Isotope
@@ -13,7 +11,7 @@ from scipy.interpolate import interp1d
 srim_dir = Path(__file__).parent/"SRIM-2013"
 
 save_dir = srim_dir/'srim_outputs'
-
+trace_prints()
 if not save_dir.exists():
     save_dir.mkdir(exist_ok=True, parents=True)
 
@@ -199,7 +197,7 @@ def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False
     target_atoms = np.array(target_atoms)
     fractions = np.array(fractions)
 
-    if bad:
+    if len(bad[0]) > 0:
         warnings.warn(f"Removing the following elements due to zero atom fractions provided: {np.array(target_atoms)[bad]}")
     assert len(good) > 0, "No non-zero atom fractions!"
     _target_atoms = target_atoms[good]
