@@ -254,7 +254,9 @@ if __name__ == '__main__':
     #   For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
     atoms = ['He4', 'Ar40']
-    for he_frac in np.arange(0, 1.2, 0.2):
+    # he_fracs = list(np.arange(0, 1.2, 0.2)) + [0.5]
+    he_fracs = [0.5]
+    for he_frac in sorted(he_fracs):
         fractions = [he_frac, 1-he_frac]
         g = _IdealGas(atoms)
         density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
