@@ -1,3 +1,14 @@
+"""
+Run a SRIM simulation and save the results to a pickle file.
+Pickle file has two dumps:
+    1. list of energies
+    2. a list of dicts of data for each entry
+The dicts have the following format:
+    {"nuclear": nuclear, "electric": elec, 'range': range_, 'lon_strag': lon_strag,
+                     'lat_strag': lat_strag}
+
+
+"""
 import warnings
 from pathlib import Path
 # from mendeleev import element, Isotope
@@ -254,12 +265,17 @@ if __name__ == '__main__':
     #   For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
     atoms = ['He4', 'Ar40']
-    # he_fracs = list(np.arange(0, 1.2, 0.2)) + [0.5]
-    he_fracs = [0.5]
+    he_fracs = list(np.arange(0, 1.2, 0.2)) + [0.5]
+    # he_fracs = [0.5]
     for he_frac in sorted(he_fracs):
         fractions = [he_frac, 1-he_frac]
         g = _IdealGas(atoms)
         density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
-        run_srim(atoms, fractions, density, 'Xe139', 80, True)
+        run_srim(atoms, fractions, density, 'Xe139', 120, True)
+        run_srim(atoms, fractions, density, 'Kr91', 120, True)
         # run_srim()
-    run_srim(['U'], [1], 19.1, "Xe139", 100, False)
+    run_srim(['U'], [1], 19.1, "Xe139", 120, False)
+    run_srim(['U'], [1], 19.1, "Kr91", 120, False)
+
+    run_srim(['H', 'C', 'O'], [0.364, 0.45, 0.181], 1.38, "Kr91", 120, False)
+    run_srim(['H', 'C', 'O'], [0.364, 0.45, 0.181], 1.38, "Xe139", 120, False)
