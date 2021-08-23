@@ -1,4 +1,3 @@
-from JSB_tools import trace_prints
 import warnings
 from pathlib import Path
 # from mendeleev import element, Isotope
@@ -11,7 +10,6 @@ from scipy.interpolate import interp1d
 srim_dir = Path(__file__).parent/"SRIM-2013"
 
 save_dir = srim_dir/'srim_outputs'
-trace_prints()
 if not save_dir.exists():
     save_dir.mkdir(exist_ok=True, parents=True)
 
@@ -203,7 +201,7 @@ def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False
     _target_atoms = target_atoms[good]
     target_atoms = []
     for s in _target_atoms:
-        m = re.match(r"([A-Z][a-z]{0,3})-?[0-9]+", s)
+        m = re.match(r"([A-Z][a-z]{0,3})-?[0-9]?", s)
         assert m, f"Invalid target particle specification, '{s}'"
         target_atoms.append(m.groups()[0])
     fractions = fractions[good]
@@ -253,29 +251,13 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
 
 
 if __name__ == '__main__':
+    #   For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
     atoms = ['He4', 'Ar40']
     for he_frac in np.arange(0, 1.2, 0.2):
         fractions = [he_frac, 1-he_frac]
         g = _IdealGas(atoms)
         density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
-        run_srim(atoms, fractions, density, 'Xe139', 80)
+        run_srim(atoms, fractions, density, 'Xe139', 80, True)
         # run_srim()
-
-    # for p in params:
-    #     atoms = p[0]
-    #     fractions = p[1]
-    #
-    #     if "He" in atoms:
-    #         p = list(p)
-    #         p.append(True)
-    #         # p[-1] = True
-    #         p = tuple(p)
-    #         if any(i == 1 for i in fractions):
-    #             continue
-    #
-    #     try:
-    #         run_srim(*p)
-    #     except Exception:
-    #         print('Exception: ',p)
-    #         raise
+    run_srim(['U'], [1], 19.1, "Xe139", 100, False)
