@@ -24,16 +24,39 @@ import matplotlib as mpl
 import traceback
 from JSB_tools.nuke_data_tools import Nuclide, FissionYields
 import matplotlib.ticker as ticker
-
-
+from uncertainties import UFloat
 
 
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
 
+
+def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5):
+    assert clipping_window_order in [2, 4, 6, 8]
+    assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
+    spec = ROOT.TSpectrum()
+    if isinstance(counts[0], UFloat):
+        nom_counts = unp.nominal_values(counts)
+        nom_counts = np.where(nom_counts>0, nom_counts, 1)
+        rel_errors = unp.std_devs(counts)/nom_counts
+    else:
+        rel_errors = None
+    result = unp.nominal_values(counts)
+    cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+    smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
+    spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
+                    cliping_window, ROOT.kTRUE,
+                    smoothening, ROOT.kTRUE)
+    if not rel_errors is not None:
+        return result
+    else:
+        return unp.uarray(result, rel_errors*result)
+
+
 def mpl_style():
     plt.style.use(style_path)
+
 
 try:
     import ROOT
@@ -42,17 +65,48 @@ except ModuleNotFoundError:
     root_exists = False
 
 
-def mpl_hist(bin_Edges, y, yerr, ax=None, color=None, label=None, **mpl_kwargs):
+def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
+    """
+    Simple gaussian convolution.
+    Args:
+        a: The array to be convolved
+        sigma: The width of the convolution (in units of array incicies)
+        kernel_sigma_window: It's not efficient to make the window larger that a few sigma, so cut off at this value
+        mode: See np.convolve
+
+    Returns:
+
+    """
+    sigma = int(sigma)
+    kernel_size = kernel_sigma_window * sigma
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel_x = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
+    kernel = norm(loc=0, scale=sigma).pdf(kernel_x)
+    kernel /= np.sum(kernel)
+    return np.convolve(a, kernel, mode=mode)
+
+
+def mpl_hist(bin_Edges, y, yerr=None, ax=None, color=None, label=None, fig_kwargs=None, **mpl_kwargs):
+    if fig_kwargs is None:
+        fig_kwargs = {}
     if ax is None:
-        plt.figure()
+        plt.figure(**fig_kwargs)
         ax = plt.gca()
+    if isinstance(y[0], UFloat):
+        y = unp.nominal_values(y)
+        yerr = unp.std_devs(y)
     bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
     yp = np.concatenate([y, [0.]])
-    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', color=color)
+    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', color=color, **mpl_kwargs)
     c = lines[0].get_color()
+    try:
+        mpl_kwargs.pop('ls')
+    except KeyError:
+        pass
     lines.append(ax.errorbar(bin_centers, y, yerr,
                              ls='None', color=c, **mpl_kwargs))
-    return ax
+    return ax, c
 
 
 class __TracePrints(object):
@@ -85,6 +139,10 @@ class ProgressReport:
         self.__init_time__ = time.time()
         self.__rolling_average__ = []
 
+    @property
+    def elapsed_time(self):
+        return time.time()-self.__init_time__
+
     def __report__(self, t_now, i, added_msg):
         evt_per_sec = (i-self.__i_init__)/(t_now - self.__init_time__)
         self.__rolling_average__.append(evt_per_sec)
@@ -97,14 +155,14 @@ class ProgressReport:
         days = sec_remaining//sec_per_day
         hours = (sec_remaining % sec_per_day)//60**2
         minutes = (sec_remaining % 60**2)//60
-        sec = (sec_remaining % 60)
-        msg = " {0} seconds".format(int(sec))
+        sec = int(sec_remaining % 60)
+        msg = " {0} seconds".format(sec)
         if minutes:
-            msg = " {0} minutes,".format(minutes) + msg
+            msg = " {0} minute{1},".format(minutes, 's' if minutes > 1 else '') + msg
         if hours:
-            msg = " {0} hours,".format(hours) + msg
+            msg = " {0} hour{1},".format(hours, 's' if hours > 1 else '') + msg
         if days:
-            msg = "{0} days,".format(days) + msg
+            msg = "{0} day{1},".format(days, 's' if days > 1 else '') + msg
         print(f"{added_msg}... {msg} remaining {100*i/self.__i_final__:.2f}% complete")
 
     def log(self, i, msg=""):
@@ -158,15 +216,6 @@ def cm_2_best_unit(list_or_number):
     units = unit_names[i]
     unit_conversion = 10. ** -orders[i]
     return list_or_number*unit_conversion, units
-
-
-def convolve_gauss(sigma_indicies, values, mode='same'):
-    sigma_indicies = int(sigma_indicies)
-    x = np.arange(len(values))
-    # x = np.arange(int(-6 * sigma), int(6 * sigma) + 1)
-    v = norm.pdf(x=(x-len(values)//2), scale=sigma_indicies)
-    v /= sum(v)
-    return np.convolve(values, v, mode=mode)
 
 
 def ROOT_loop():

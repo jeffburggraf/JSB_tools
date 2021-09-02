@@ -421,6 +421,13 @@ class Titanium(Material):
         self.add_element_natural('Ti')
 
 
+class Nickel(Material):
+    def __init__(self, density=8.902, mat_number: int = None, mat_name: str = "Nickle",
+                 mat_kwargs: Dict[str, str] = None):
+        super(Nickel, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_element_natural('Ni', 1)
+
+
 class StainlessSteel(Material):
     def __init__(self, density=7.86, mat_number: int = None, mat_name: str = "Stainless steel",
                  mat_kwargs: Dict[str, str] = None):

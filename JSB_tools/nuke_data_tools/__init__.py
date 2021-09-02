@@ -256,7 +256,7 @@ class DecayModeHandlerMixin:
             raise AssertionError("This gamma line does not have a single specified mode. Use from_modes to get list of "
                                  "decay modes")
         elif len(self._from_modes) == 0:
-            warn(f"Attempt to access decay mode from spectra of nuclide {self.parent_nuclide_name}. The decay mode"
+            warn(f"Attempt to access decay mode from spectra of nuclide ??. The decay mode"
                  f"in this case was not in the nuclear library. Returning None.")
             return None
 
@@ -340,9 +340,14 @@ class GammaLine(DecayModeHandlerMixin):
                                   activity_unit=activity_unit)
         return n_decays*self.intensity
 
-    def __repr__(self):
+    def __repr__(self, compact=False):
+        if len(self.from_modes) > 1:
+            mode = self.from_modes
+        else:
+            mode = self.from_mode
+
         return "Gamma line at {0:.2f} KeV; eff. intensity = {1:.2e}; decay: {2} "\
-            .format(self.erg, self.intensity, self.from_mode)
+            .format(self.erg, self.intensity, mode)
 
 
 class BetaPlusLine(DecayModeHandlerMixin):
@@ -1636,17 +1641,17 @@ class Nuclide:
     #                       independent_bool=True)
     #     return y
     #
-    # def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
-    #     return self.__get_parents__('proton', a_z_hl_cut, is_stable_only)
+    def get_incident_proton_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+        return self.__get_parents__('proton', a_z_hl_cut, is_stable_only)
+
+    def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+        return self.__get_daughters__('proton', a_z_hl_cut, is_stable_only)
     #
-    # def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-    #     return self.__get_daughters__('proton', a_z_hl_cut, is_stable_only)
+    def get_incident_gamma_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+        return self.__get_daughters__('gamma', a_z_hl_cut, is_stable_only)
     #
-    # def get_incident_gamma_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-    #     return self.__get_daughters__('gamma', a_z_hl_cut, is_stable_only)
-    #
-    # def get_incident_gamma_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
-    #     return self.__get_parents__('gamma', a_z_hl_cut, is_stable_only)
+    def get_incident_gamma_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+        return self.__get_parents__('gamma', a_z_hl_cut, is_stable_only)
 
     def __get_daughters__(self, projectile, a_z_hl_cut='', is_stable_only=False):
         """

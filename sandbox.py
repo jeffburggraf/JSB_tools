@@ -1,4 +1,28 @@
-from JSB_tools.MCNP_helper.materials import Material
+import numpy as np
+from matplotlib import pyplot as plt
+from scipy.stats import norm
+from mpant_reader import MPANTList
+from itertools import zip_longest
+import time
 
-for percent in [0.1, 0.2, 0.3, 0.4, 0.4, 0.6, 0.7, 0.8, 0.9, 1]:
-    mat = Material.gas(['He', 'Ar'], atom_fractions=[1-percent, percent], )
+a = [np.arange(np.random.uniform(0, 1000)) for i in range(1000)]
+
+
+def get():
+    return np.array(list(zip_longest(*a, fillvalue=0)))
+
+
+def get2():
+    return np.array(a)
+
+
+# t0 = time.time()
+# for i in range(100):
+#     get()
+# print(time.time() - t0)
+
+t0 = time.time()
+for i in range(100):
+    get()
+print(time.time() - t0)
+

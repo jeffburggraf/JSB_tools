@@ -82,7 +82,7 @@ def gamma_search(erg_center: float,
     """
     Search for nuclides that produce gamma decays in the neighborhood of `erg_center` (+/- sigma_erg). The nuclides are
      sorted from most to least number of decay events that would occur over the course of data acquisition as specified
-     by header_start_time and end_time.
+     by start_time and end_time.
     Args:
         erg_center: Center of energy window
         e_sigma: half width of energy window
@@ -111,7 +111,7 @@ def gamma_search(erg_center: float,
     if start_time is None:
         start_time = 0
 
-    assert end_time > start_time, "`end_time` must be greater than `header_start_time`"
+    assert end_time > start_time, "`end_time` must be greater than `start_time`"
 
     global DATA
     if DATA is None:
@@ -295,9 +295,9 @@ class PrepareGammaSpec:
         # plt.figure()
         # plt.title('FWHM')
         # _x = np.arange(self.n_channels)
-        # plt.plot(_x, 2.34*unp.std_devs(self.erg_fit.eval_fit(_x)), label='Err')
+        # plt.plot(_x, 2.34*unp.std_devs(self.erg_coefs.eval_fit(_x)), label='Err')
         # plt.legend()
-        # plt.plot(_x, 2.34*(self.erg_fit.coeffs[0].std_dev + _x*self.erg_fit.coeffs[1].std_dev))
+        # plt.plot(_x, 2.34*(self.erg_coefs.coeffs[0].std_dev + _x*self.erg_coefs.coeffs[1].std_dev))
 
         if len(efficiencies):
             efficiencies = [ufloat(1E-10, 0)] + list(efficiencies)
@@ -447,11 +447,11 @@ class ROOTSpectrum:
 
 if __name__ == '__main__':
     # c = PrepareGammaSpec.load_calibration('PHELIX_test')
-    # print(c.erg_fit)
+    # print(c.erg_coefs)
     # print(c.eff_fit)
     # print(c.erg_bins)
     # c.eff_fit.plot_fit()
-    # c.erg_fit.plot_fit()
+    # c.erg_coefs.plot_fit()
     # plt.show()
     p_name = '10_Loop_596s_2400s_000.Spe'
     counts = np.zeros(8192)

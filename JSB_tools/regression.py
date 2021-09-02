@@ -324,7 +324,7 @@ class LogPolyFit(FitBase):
         out = np.e**out
         return out
 
-    def __init__(self, x, y, yerr=None, order=3, fix_coeffs: Union[List[int], None] = None):
+    def __init__(self, x, y, yerr=None, order=3, fix_coeffs: Union[List[int], None, str] = None):
         """
         Log poly fit.
         Args:
@@ -341,7 +341,7 @@ class LogPolyFit(FitBase):
         super().__init__(x, y, yerr)
         assert all([_ > 0 for _ in self.y]),  "All 'y' values must be greater than zero due to the log function!"
         assert all([_ > 0 for _ in self.x]),  "All 'x' values must be greater than zero due to the log function!"
-        _y = unp.uarray(self.y, self.yerr)
+        # _y = unp.uarray(self.y, self.yerr)
 
         log_y = [ulog(ufloat(_, _err)) for _, _err in zip(self.y, self.yerr)]
         log_y_error = np.array([_.std_dev for _ in log_y])
@@ -351,15 +351,18 @@ class LogPolyFit(FitBase):
 
         model_temp = PolynomialModel(degree=order)
         params = model_temp.guess(log_y, x=log_x, weights=1.0/log_y_error)
-        model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
+        _ = model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
 
         if fix_coeffs is not None:
             assert hasattr(fix_coeffs, '__iter__'), '`fix_coeffs` must be a list of coeffs'
-            assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! " \
-                                             "(coeff. doesn't exist)"
-            assert all([isinstance(a, int) for a in fix_coeffs]), "`fix_coeffs` all must be integers.!"
-            for c in fix_coeffs:
-                params[f'c{c}'].vary = False
+            if fix_coeffs == 'all':
+                fix_coeffs = range(order)
+            if len(fix_coeffs):
+                assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! " \
+                                                 "(coeff. doesn't exist)"
+                assert all([isinstance(a, int) for a in fix_coeffs]), "`fix_coeffs` all must be integers.!"
+                for c in fix_coeffs:
+                    params[f'c{c}'].vary = False
         model = Model(self.model_func)
         self.fit_result = model.fit(self.y, params=params, x=self.x, weights=self.__weights__, scale_covar=True,
                                     verbose=True, )
@@ -662,11 +665,11 @@ if __name__ == '__main__':
     # c.add_peaks_4_calibration(counts, channel_guesses, fake_ergs, true_counts, fit_width=50, plot=False)
     # c.compute_calibration()
     # # c.plot_erg_spectrum()
-    # c.erg_fit.plot_fit()
+    # c.erg_coefs.plot_fit()
     # c.eff_fit.plot_fit()
     # c.save_calibration('die')
     # c2= PrepareGammaSpec.load_calibration('die')
     # c2.eff_fit.plot_fit()
-    # c2.erg_fit.plot_fit()
+    # c2.erg_coefs.plot_fit()
     # plt.show()
     # # plt.show()
