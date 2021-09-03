@@ -40,8 +40,11 @@ def get_spe_lines(_l: MaestroListFile):
 
     """
     datetime_str = _l.start_time.strftime(MaestroListFile.datetime_format)
+    sample_des = _l.description
+    if sample_des == '':
+        sample_des = 'No sample description was entered.'
 
-    spe_lines = ["$SPEC_ID:", _l.description, '$SPEC_REM:', f'DET# {_l.det_id_number}',
+    spe_lines = ["$SPEC_ID:", sample_des, '$SPEC_REM:', f'DET# {_l.det_id_number}',
                  f'DETDESC# {_l.device_address}', 'AP# Maestro Version', '$DATE_MEA:', datetime_str, '$MEAS_TIM:',
                  f'{_l.livetimes[-1]:.4f} {_l.realtimes[-1]:.4f}', '$DATA:', f'0 {_l.n_adc_channels - 1}']
     for counts in _l.get_erg_spectrum()[0]:
@@ -68,12 +71,22 @@ class MaestroListFile:
     
     The DSPEC50 appears to halt counting events when the SAMPLE_READY port is reading a TTL voltage. 
     """
-    def list2SPE(self, save_path=None, overwrite=False):
+
+    @property
+    def __default_spe_path__(self):
+        """
+        The default path the MaestroList creates when converting List to Spe
+        Returns:
+
+        """
+        return self._original_path.with_name(f'_{self._original_path.name}').with_suffix('.Spe')
+
+    def list2spe(self, save_path=None):
         if save_path is None:
-            save_path = self._original_path
-            if not overwrite:
-                if save_path.exists():
-                    save_path = save_path.with_name(f'{save_path.with_suffix("").name}_from_Lis')
+            save_path = self.__default_spe_path__
+            # if not overwrite:
+            #     if save_path.with_suffix('.Spe').exists():
+            #         save_path = save_path.with_name(f'_{save_path.with_suffix("").name}')
         else:
             save_path = Path(save_path)
         save_path = save_path.with_suffix(".Spe")
@@ -99,6 +112,19 @@ class MaestroListFile:
         else:
 
             return out
+
+    @cached_property
+    def SPE(self) -> SPEFile:
+        p = self.__default_spe_path__
+        if p.exists():
+            return SPEFile(p)
+        else:
+            return self.list2spe()
+
+    def set_energy_cal(self, *coeffs):
+        self.erg_calibration = np.array(coeffs)
+        self.energies = self.channel_to_erg(self.adc_values)
+        self.SPE.set_energy_cal(coeffs)
 
     def read_32(self, f) -> str:
         """
@@ -657,16 +683,21 @@ class MaestroListFile:
 
 
 if __name__ == '__main__':
-    p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Co60_1.Lis'
-    # l = MaestroListFile(p, max_words=None)
-    # l.pickle()
-    _, (ax1, ax2) = plt.subplots(2, 1, sharex='all')
-    l = MaestroListFile.from_pickle(p)
+    l = MaestroListFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
+    l.set_energy_cal(0.0179, 0.19410)
+    s = l.list2spe()
+    s.plot_erg_spectrum()
 
-    spe_true = SPEFile('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Co60_1.Spe')
+    # p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Co60_1.Lis'
+    # # l = MaestroListFile(p, max_words=None)
+    # # l.pickle()
+    # _, (ax1, ax2) = plt.subplots(2, 1, sharex='all')
+    # l = MaestroListFile.from_pickle(p)
     #
-    spe_from_list = l.list2SPE('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/GetFucked')
-    spe_true.plot_erg_spectrum(1170, 1176,  ax=ax1, alpha=1,  make_rate=True)
-    spe_from_list.plot_erg_spectrum(1170, 1176, ax=ax1, alpha=1, make_rate=True)
+    # spe_true = SPEFile('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Co60_1.Spe')
+    # #
+    # spe_from_list = l.SPE
+    # spe_true.plot_erg_spectrum(1170, 1176,  ax=ax1, alpha=1,  make_rate=True)
+    # spe_from_list.plot_erg_spectrum(1170, 1176, ax=ax1, alpha=1, make_rate=True)
     plt.show()
 

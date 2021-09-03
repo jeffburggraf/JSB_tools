@@ -57,7 +57,7 @@ class SPEFile:
         self.counts = unp.uarray(self.counts, np.sqrt(self.counts))
         lines = lines[start_index + i:]
         mca_cal = lines[lines.index('$MCA_CAL:\n')+2].split()
-        self.erg_coefs = list(map(float, mca_cal[:-1]))
+        self.erg_calibration = list(map(float, mca_cal[:-1]))
         self.erg_units = mca_cal[-1]
         self.energies = self.channel_2_erg(self.channels)
 
@@ -74,7 +74,7 @@ class SPEFile:
 
         f_path = (directory/f_name).with_suffix('.marshalSpe')  # add suffix
         d_simple = {'shape_cal': self.shape_cal, 'energies': self.energies, 'erg_units': self.erg_units,
-                    'erg_coefs': self.erg_coefs, 'channels': self.channels, 'livetime': self.livetime,
+                    'erg_calibration': self.erg_calibration, 'channels': self.channels, 'livetime': self.livetime,
                     'realtime': self.realtime, 'system_start_time': self.system_start_time.strftime(SPEFile.time_format)
                     ,'description': self.description, 'maestro_version': self.maestro_version,
                     'device_serial_number': self.device_serial_number, 'detector_id': self.detector_id,
@@ -109,43 +109,60 @@ class SPEFile:
         self.system_start_time = datetime.strptime(self.system_start_time, SPEFile.time_format)
         return self
 
-    def set_eff_cal(self, fit: FitBase):
-        pass
+    @classmethod
+    def from_lis(cls, path):
+        from JSB_tools.list_reader import MaestroListFile
+        l = MaestroListFile(path)
+        return l.list2spe()
+
+    def set_energy_cal(self, *coeffs):
+        self.erg_calibration = np.array(coeffs)
+        self.energies = self.channel_2_erg(self.channels)
 
     def set_erg_cal(self, *coeffs):
-        self.erg_coefs = coeffs
+        self.erg_calibration = coeffs
         self.energies = self.channel_2_erg(self.channels)
 
     def channel_2_erg(self, a):
-        return np.sum([coeff * a ** i for i, coeff in enumerate(self.erg_coefs)], axis=0)
+        return np.sum([coeff * a ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
 
     def erg_2_fwhm(self, erg):
-        if hasattr(erg, '__iter__'):
-            channels = self.erg_2_channel(erg)
-            i_s = np.where(channels<len(self.erg_bin_widths), channels, len(channels)-1 )
-            channel_width = self.erg_bin_widths[i_s]
-        # print([self.erg_2_channel(erg), len(self.erg_bin_widths)-1])
-        else:
-            i = np.min([self.erg_2_channel(erg), len(self.erg_bin_widths)-1])
-            channel_width = self.erg_bin_widths[i]
+        iter_flag = True
+        if not hasattr(erg, '__iter__'):
+            erg = [erg]
+            iter_flag = False
 
-        return channel_width*np.sum([coeff*erg**i for i, coeff in enumerate(self.shape_cal)], axis=0)
+        channels = self.erg_2_channel(erg)
+        fwhm_in_chs = np.sum([coeff*channels**i for i, coeff in enumerate(self.shape_cal)], axis=0)
+        fwhm = fwhm_in_chs*self.erg_bin_widths
+        return fwhm if iter_flag else fwhm[0]
+        # if hasattr(erg, '__iter__'):
+        #     channels = self.erg_2_channel(erg)
+        #     i_s = np.where(channels<len(self.erg_bin_widths), channels, len(channels)-1 )
+        #     channel_width = self.erg_bin_widths[i_s]
+        # # print([self.erg_2_channel(erg), len(self.erg_bin_widths)-1])
+        # else:
+        #     i = np.min([self.erg_2_channel(erg), len(self.erg_bin_widths)-1])
+        #     channel_width = self.erg_bin_widths[i]
+        #
+        # return channel_width*np.sum([coeff*erg**i for i, coeff in enumerate(self.shape_cal)], axis=0)
 
     def erg_2_peakwidth(self, erg):
         return 2.2*self.erg_2_fwhm(erg)
 
     def erg_2_channel(self, erg):
-        if isinstance(erg, UFloat):
-            erg = erg.n
-        a, b, c = self.erg_coefs
-        if c != 0:
-            out = (-b + np.sqrt(b**2 - 4*a*c + 4*c*erg))/(2.*c)
-        else:
-            out = (erg - a)/b
-        if hasattr(out, '__iter__'):
-            return np.array(out, dtype=int)
-        else:
-            return int(out)
+        return self.erg_bin_index(erg)
+        # if isinstance(erg, UFloat):
+        #     erg = erg.n
+        # a, b, c = self.erg_calibration
+        # if c != 0:
+        #     out = (-b + np.sqrt(b**2 - 4*a*c + 4*c*erg))/(2.*c)
+        # else:
+        #     out = (erg - a)/b
+        # if hasattr(out, '__iter__'):
+        #     return np.array(out, dtype=int)
+        # else:
+        #     return int(out)
 
     def erg_bin_index(self, erg):
         if hasattr(erg, '__iter__'):
@@ -169,7 +186,8 @@ class SPEFile:
         ch = np.concatenate([self.channels, [self.channels[-1] + 1]])
         return self.channel_2_erg(ch-0.5)
 
-    def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, nominal_values=False)\
+    def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, remove_baseline=False,
+                   nominal_values=False)\
             -> Tuple[np.ndarray, np.ndarray]:
         """
         Get energy spectrum within (optionally) a specified energy range.
@@ -177,6 +195,7 @@ class SPEFile:
             erg_min:
             erg_max:
             make_rate: If True, divide by livetime
+            remove_baseline:
             nominal_values: If false, return uncertain array, else don't
 
         Returns: counts, bin_edges
@@ -188,18 +207,21 @@ class SPEFile:
                 erg_min = self.erg_bins[0]
             if erg_max is None:
                 erg_max = self.erg_bins[-1]
-            cut = np.where((self.erg_bins <= erg_max) & (self.erg_bins >= erg_min))
-            bins = self.erg_bins[cut]
-            counts = self.counts[cut]
+            imin = self.erg_bin_index(erg_min)
+            imax = self.erg_bin_index(erg_max)
+            bins = self.erg_bins[imin: imax]
+            counts = self.counts[imin: imax-1]  # huh? Todo: understand the '- 1'
         else:
             bins = self.erg_bins
             counts = self.counts
         if make_rate:
             counts /= self.livetime
+        if remove_baseline:
+            counts = counts - calc_background(counts)
         return unp.nominal_values(counts) if nominal_values else counts, bins
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None,
-                          leg_label=None, make_rate=False, **ax_kwargs):
+                          leg_label=None, make_rate=False, remove_baseline=False, **ax_kwargs):
         """
         Plot energy spectrum within (optionally) a specified energy range.
         Args:
@@ -208,6 +230,7 @@ class SPEFile:
             leg_label:
             ax_kwargs:
             make_rate: If True, divide by livetime
+            remove_baseline: Is True, remove baseline
             ax:
 
         Returns:
@@ -217,7 +240,9 @@ class SPEFile:
             plt.figure()
             ax = plt.gca()
 
-        counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate)
+        counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate,
+                                       remove_baseline=remove_baseline)
+
         mpl_hist(bins, counts, ax=ax, label=leg_label, **ax_kwargs)
         ax.set_xlabel('Energy [KeV]')
         ax.set_ylabel('Counts')
@@ -340,25 +365,29 @@ if __name__ == '__main__':
     import time
     import cProfile
 
-    p = '/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe'
+    p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/iacSpec.Lis'
 
-    def f():
-        for i in range(100):
-            SPEFile(p)
-    cProfile.run('f()')
-
-    # t = time.time()
-    # for i in range(1000):
-    #     s = SPEFile(p)
-    # print((time.time() - t)/100)
+    s = SPEFile.from_lis(p)
+    s.set_energy_cal(0.0179, 0.19410)
+    s.plot_erg_spectrum(erg_max=500, remove_baseline=True)
+    plt.figure()
+    plt.plot(s.energies, s.erg_2_fwhm(s.energies))
+    plt.show()
     #
-    # # s.pickle()
-    # t = time.time()
-    # for i in range(1000):
-    #     s = SPEFile.from_pickle(p)
-    # print((time.time() - t)/100)
-    # print(dir(s))
-    # s.get_spectrum_hist().plot()
+    # # t = time.time()
+    # # for i in range(1000):
+    # #     s = SPEFile(p)
+    # # print((time.time() - t)/100)
+    # #
+    # # # s.pickle()
+    # # t = time.time()
+    # # for i in range(1000):
+    # #     s = SPEFile.from_pickle(p)
+    # # print((time.time() - t)/100)
+    # # print(dir(s))
+    # # s.get_spectrum_hist().plot()
+    # bins = [0, 1, 2, 3, 4]
     #
-    #
+    # #
+    # #
     # plt.show()
