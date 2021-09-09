@@ -12,7 +12,7 @@ from lmfit.model import save_modelresult, load_modelresult
 from pathlib import Path
 import re
 from scipy.interpolate import interp1d
-# from JSB_tools.TH1 import rolling_MAD, rolling_median
+from JSB_tools import rolling_median
 from abc import abstractmethod, ABCMeta
 from lmfit.model import ModelResult
 from lmfit.models import PolynomialModel
@@ -158,13 +158,13 @@ class FitBase(metaclass=ABCMeta):
         if ylabel is not None:
             ax.set_ylabel(ylabel)
 
-        points_line = ax.errorbar(self.x, self.y, self.yerr, label='Data', ls='None', marker='o')
+        points_line = ax.errorbar(self.x, self.y, self.yerr, label='Data', ls='None', marker='.', zorder=0)
         if fit_x is None:
             fit_x = np.linspace(self.x[0], self.x[-1], len(self.x)*upsampling)
         fit_y = self.eval_fit(x=fit_x, params=params)
         fit_err = unp.std_devs(fit_y)
         fit_y = unp.nominal_values(fit_y)
-        plt.plot(fit_x, fit_y)
+        # ax.plot(fit_x, fit_y )
         fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--')[0]
         fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit')
         ax.legend([points_line, (fill_poly, fit_line)], ["data", "Fit"])
@@ -272,7 +272,7 @@ class PeakFit(FitBase):
         else:
             window_width = window_width//2  # full width -> half width
 
-        self.bg_est = TH1.rolling_median(window_width=window_width, values=self.y)
+        self.bg_est = rolling_median(window_width=window_width, values=self.y)
         self.__cut__(peak_center_guess - window_width, peak_center_guess + window_width)
         bg_guess = np.mean(self.bg_est)
         bg_subtracted = self.y - self.bg_est
@@ -294,11 +294,11 @@ class PeakFit(FitBase):
         model = Model(self.model_func)
         self.fit_result = model.fit(x=self.x, data=self.y, params=params,  weights=self.__weights__, scale_covar=False)
 
-        self.amp: UFloat = None  # are set later
-        self.center: UFloat = None
-        self.sigma: UFloat = None
-        self.fwhm: UFloat = None
-        self.bg: UFloat = None
+        self.amp: ufloat = None  # are set later
+        self.center: ufloat = None
+        self.sigma: ufloat = None
+        self.fwhm: ufloat = None
+        self.bg: ufloat = None
         self.set_params()
 
     def fit_report(self):

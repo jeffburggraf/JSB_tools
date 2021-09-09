@@ -466,9 +466,6 @@ class MaestroListFile:
         channel_bins = np.arange(self.n_adc_channels)
         return self.channel_to_erg(channel_bins)
 
-    def erg_bin_index(self, erg):
-        return np.searchsorted(self.erg_bins, erg, side='right') - 1
-
     def get_spectrum_hist(self, t1=0, t2=None) -> TH1F:
         if t2 is None:
             index2 = len(self.times)
@@ -528,7 +525,12 @@ class MaestroListFile:
 
     def __erg_index__(self, energies):
         """
-        Get index of energy bin(s) from list of energies
+        Get the index which corresponds to the correct energy bin(s).
+
+        Examples:
+            The result can be used to find the number of counts in the bin for 511 KeV:
+                self.counts[self.erg_bin_index(511)]
+
         Args:
             energies:
 

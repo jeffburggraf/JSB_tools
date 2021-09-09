@@ -21,6 +21,7 @@ import os
 import matplotlib.offsetbox as offsetbox
 from scipy.stats import norm
 from JSB_tools.regression import PeakFit
+from JSB_tools import rolling_median
 
 
 class HistoBinMerger:
@@ -45,27 +46,6 @@ def binned_median(bin_left_edges, weights):
     error = median_w - cum_sum[index]
     dx = error/dy*b_width
     return x[index] + dx
-
-
-def rolling_median(window_width, values):
-    """
-    Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
-    Args:
-        window_width: Size of independent arrays for median calculations.
-        values: array of values
-
-    Returns:
-
-    """
-    window_width = int(window_width)
-    n = min([window_width, len(values)])
-    if not isinstance(values, np.ndarray):
-        values = np.array(values)
-    window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
-
-    medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
-
-    return medians
 
 
 def MAD(values):

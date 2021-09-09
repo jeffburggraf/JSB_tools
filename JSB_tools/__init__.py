@@ -25,11 +25,34 @@ import traceback
 from JSB_tools.nuke_data_tools import Nuclide, FissionYields
 import matplotlib.ticker as ticker
 from uncertainties import UFloat
+from scipy.signal import convolve2d
+from scipy import ndimage
 
 
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
+
+
+def rolling_median(window_width, values):
+    """
+    Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
+    Args:
+        window_width: Size of independent arrays for median calculations.
+        values: array of values
+
+    Returns:
+
+    """
+    window_width = int(window_width)
+    n = min([window_width, len(values)])
+    if not isinstance(values, np.ndarray):
+        values = np.array(values)
+    window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
+
+    medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
+
+    return medians
 
 
 def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5):
@@ -63,6 +86,33 @@ try:
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
+
+
+def norm2d_kernel(length_x, sigma_x, length_y=None, sigma_y=None):
+    if sigma_y is None:
+        sigma_y = sigma_x
+
+    if length_y is None:
+        length_y = length_x
+    xs = norm(scale=sigma_x).pdf(np.linspace(-length_x//2, length_x//2, length_x))
+    ys = norm(scale=sigma_y).pdf(np.linspace(-length_y//2, length_y//2, length_y))
+    out = [[x*y for x in xs] for y in ys]
+    out = out/np.sum(out)
+    return out
+
+
+def convolve_gauss2d(a, sigma_x, kernel_sigma_window: int = 8, sigma_y=None):
+    if sigma_y is None:
+        sigma_y = sigma_x
+
+    kernel = norm2d_kernel(length_x=int(kernel_sigma_window*sigma_x), length_y=int(kernel_sigma_window*sigma_y),
+                           sigma_x=sigma_x, sigma_y=sigma_y)
+    plt.imshow(kernel)
+    plt.figure()
+    out = ndimage.convolve(a, kernel)
+    # out = convolve2d(a, kernel, mode='same', boundary='symm')
+    # out = np.fft.irfft2(np.fft.rfft2(a) * np.fft.rfft2(kernel, a.shape))
+    return out
 
 
 def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
