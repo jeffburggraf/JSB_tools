@@ -1,5 +1,10 @@
+"""
+MaestroListFile class for reading and analysing Ortec Lis files.
+Todo:
+    change energy calibration and allow updating file
+    Implement a method for efficiency calibration
+"""
 from __future__ import annotations
-
 import marshal
 import struct
 from struct import unpack, calcsize
@@ -16,10 +21,10 @@ from typing import List, Union
 import filetime
 from functools import cached_property
 import time
-from JSB_tools import ProgressReport, convolve_gauss, mpl_hist
+from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background
 from JSB_tools.spe_reader import SPEFile
 
-HERE = pytz.timezone('US/Mountain')
+# HERE = pytz.timezone('US/Mountain')
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 cwd = Path(__file__).parent
 
@@ -70,6 +75,15 @@ class MaestroListFile:
     Relative times between ADC events are supposedly +/- 200ns. I will need to confirm this.
     
     The DSPEC50 appears to halt counting events when the SAMPLE_READY port is reading a TTL voltage. 
+    
+    Attributes:
+        self.energies: numpy array of recorded energies (chronological)
+        self.adc_values: numpy array of recorded ADC values (chronological)
+        self.times: numpy array of recorded times
+        
+        self.__needs_updating__: A flag variable that tells code to re-evaluate self.energies (and similar), in case of 
+            e.g. a change in the energy calibration.
+        self._original_path: Path of .Lis file data was originally read from.
     """
 
     @property
@@ -81,12 +95,18 @@ class MaestroListFile:
         """
         return self._original_path.with_name(f'_{self._original_path.name}').with_suffix('.Spe')
 
-    def list2spe(self, save_path=None):
+    def list2spe(self, save_path: Union[Path, None] = None) -> SPEFile:
+        """
+        Generate and write to disk an ASCII Spe file form data in the Lis file.
+        Produces files identical to (and readable by) the Maestro application.
+        Args:
+            save_path: Path for new file. If None, use original file but with .Spe for the suffix.
+
+        Returns: SPE object.
+
+        """
         if save_path is None:
             save_path = self.__default_spe_path__
-            # if not overwrite:
-            #     if save_path.with_suffix('.Spe').exists():
-            #         save_path = save_path.with_name(f'_{save_path.with_suffix("").name}')
         else:
             save_path = Path(save_path)
         save_path = save_path.with_suffix(".Spe")
@@ -98,8 +118,6 @@ class MaestroListFile:
     def read(self, byte_format, f, debug=False):
         s = calcsize(byte_format)
         _bytes = f.read(s)
-        # _bytes = self.bytes[self.index: self.index + s]
-        # self.index += s
         out = unpack(byte_format, _bytes)
         if debug:
             print(f"Byte format: {byte_format}")
@@ -115,6 +133,11 @@ class MaestroListFile:
 
     @cached_property
     def SPE(self) -> SPEFile:
+        """
+        Get SPE object from Lis data.
+        Returns:
+
+        """
         p = self.__default_spe_path__
         if p.exists():
             return SPEFile(p)
@@ -125,6 +148,7 @@ class MaestroListFile:
         self.erg_calibration = np.array(coeffs)
         self.energies = self.channel_to_erg(self.adc_values)
         self.SPE.set_energy_cal(coeffs)
+        self.__needs_updating__ = True
 
     def read_32(self, f) -> str:
         """
@@ -244,8 +268,8 @@ class MaestroListFile:
             w_time = filetime.to_datetime(w_time)
             w_time = w_time.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
-            if self.adc_zero_datetime is None:  # only set this for the first time we see a Win64 time.
-                self.adc_zero_datetime = w_time
+            if self.start_time is None:  # only set this for the first time we see a Win64 time.
+                self.start_time = w_time
 
             if debug:
                 word_debug = f"WinTime: {w_time.isoformat()}"
@@ -279,6 +303,51 @@ class MaestroListFile:
     def n_counts(self):
         return len(self.times)
 
+    def est_half_life(self, energy, window=1, bg_window_width=None, debug_plot=False):
+        """
+
+        Args:
+            energy:
+            window:
+            bg_window_width: Window for bg estimation. Should be large-ish. If None, 10*window. Data in the energy range
+                of twice the signal window are not included in background estimation.
+            debug_plot:
+
+        Returns:
+
+        """
+        if bg_window_width is None:
+            bg_window_width = 10*window
+        times_raw, n_bins_center = self.get_times_in_range(energy-window/2, energy+window/2, return_num_bins=True)
+        times_bg_left, n_bins_bg_left = self.get_times_in_range(energy-bg_window_width/2-window, energy-window,
+                                                                return_num_bins=True)
+        times_bg_right, n_bins_bg_right = self.get_times_in_range(energy+window, energy + window + bg_window_width/2,
+                                                                  return_num_bins=True)
+        times_bg = np.concatenate([times_bg_right, times_bg_left])
+        y_raw, bins = np.histogram(times_raw, bins='auto')
+        bin_centers = 0.5*(bins[:-1] + bins[1:])
+        y_bg, _ = np.histogram(times_bg, bins=bins)
+        y_bg = y_bg/(n_bins_bg_left+n_bins_bg_right)*n_bins_center
+        y_sig = y_raw - y_bg
+        if debug_plot:
+            ax = mpl_hist(bins, y_raw, title=f"tot., raw, and bg. for peak at {energy} +/- {window/2}", label='tot.')
+            mpl_hist(bins, y_bg, ax=ax, label='bg')
+            mpl_hist(bins, y_sig, ax=ax, label='sig')
+
+            ax.set_xlabel('Time [s]')
+            ax.set_ylabel('Counts')
+            ax.legend()
+        min_time = bin_centers[np.argmax(y_sig)]
+        times_raw = times_raw[np.where(times_raw >= min_time)] - min_time
+        times_bg = times_bg[np.where(times_bg >= min_time)] - min_time
+
+        _y, _b = np.histogram(times_raw, bins='auto')
+        _y1, _b1 = np.histogram(times_bg, bins='auto')
+        ax = mpl_hist(_b, _y)
+        mpl_hist(_b1, _y1, ax=ax)
+        print("min_time", min_time)
+
+
     def __init__(self, path, max_words=None, debug=False):
         """
         self.adc_zero_time is the time you want to use for determining the system clock time of ADC events. DO NOT use
@@ -290,7 +359,6 @@ class MaestroListFile:
         """
         path = Path(path)
         self._original_path = path
-        self.file_name = path.name
         if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
             path = cwd/'user_saved_data'/'SpecTestingData'/path
 
@@ -305,7 +373,7 @@ class MaestroListFile:
             self.list_style = self.read('i', f)
             if self.list_style != 2:
                 raise NotImplementedError("Digibase and other list styles not yet implemented.")
-            self.start_time = ole2datetime(self.read('d', f))
+            ole2datetime(self.read('d', f))  # read start time. Dont use this value.
             self.device_address = self.read("80s", f)
             self.MCB_type_string = self.read("9s", f)
             self.serial_number = self.read("16s", f)
@@ -321,7 +389,7 @@ class MaestroListFile:
             self.total_real_time = self.read('f', f)
             self.total_live_time = self.read('f', f)
             self.read('9s', f)
-            self.adc_zero_datetime: Union[datetime.datetime, None] = None
+            self.start_time: Union[datetime.datetime, None] = None
 
             self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
             # we see an RT word indicating the number of roll overs.
@@ -436,6 +504,10 @@ class MaestroListFile:
             ax = percent_live_hist.plot(show_stats=True, xlabel="% live-time", ylabel="Counts")
             ax.set_title("Frequencies of percent live-time")
 
+    @property
+    def file_name(self):
+        return self._original_path.name
+
     def plot_percent_live(self, ax=None, **ax_kwargs):
         if ax is None:
             plt.figure()
@@ -540,18 +612,19 @@ class MaestroListFile:
         return np.searchsorted(self.erg_bins, energies, side='right') - 1
 
     @property
-    def __energy_binned_times__(self):
+    def __energy_binned_times__(self) -> List[np.ndarray]:
         """
         The times of all events are segregated into the available energy bins.
         Returns:
 
         """
         if self.__needs_updating__ or self._energy_binned_times is None:
-            self._energy_binned_times = [[] for _ in range(len(self.erg_centers))]
+            self._energy_binned_times = [[] for _ in range(self.n_adc_channels)]
             erg_indicies = self.__erg_index__(self.energies)
             for i, t in zip(erg_indicies, self.times):
                 self._energy_binned_times[i].append(t)
             self._energy_binned_times = [np.array(ts) for ts in self._energy_binned_times]
+            self.__needs_updating__ = False
             return self._energy_binned_times
         else:
             return self._energy_binned_times
@@ -583,7 +656,7 @@ class MaestroListFile:
         return bin_values, bins
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = 0,
-                          time_max: float = None, ax=None):
+                          time_max: float = None, remove_baseline=False, title=None, ax=None):
         """
         Plot energy spectrum with time and energy cuts.
         Args:
@@ -591,18 +664,28 @@ class MaestroListFile:
             erg_max:
             time_min:
             time_max:
+            remove_baseline: If True, remove baseline.
+            title:
             ax:
 
         Returns:
 
         """
         if ax is None:
-            plt.figure()
+            fig = plt.figure()
+            fig.suptitle(Path(self.file_name).name)
             ax = plt.gca()
 
         bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max)
+        if remove_baseline:
+            bl = calc_background(bin_values)
+            bin_values = -bl + bin_values
         mpl_hist(bins, bin_values, np.sqrt(bin_values), ax=ax)
-        ax.set_title(f"{time_min} <= t <= {time_max}")
+        if title is None:
+            if not (time_min == 0 and time_max is None):
+                ax.set_title(f"{time_min} <= t <= {time_max}")
+        else:
+            ax.set_title(title)
         ax.set_xlabel('Energy [KeV]')
         ax.set_ylabel('Counts')
         return ax
@@ -619,32 +702,50 @@ class MaestroListFile:
         """
         return self.energies[np.where((self.energies >= erg_min) & (self.energies <= erg_max))]
 
-    def get_times_in_range(self, erg_min, erg_max):
+    def get_times_in_range(self, erg_min, erg_max, return_num_bins=False):
         """
         Return the times of all events with energy greater than `erg_min` and less than `erg_max`
         Args:
             erg_min:
             erg_max:
+            return_num_bins: Whether to return the number of energy bins accessed
 
         Returns:
 
         """
-        return np.concatenate(self.__energy_binned_times__[self.__erg_index__(erg_min): self.__erg_index__(erg_max)+1])
+        i0 = self.__erg_index__(erg_min)
+        i1 = self.__erg_index__(erg_max)+1
+        out = np.concatenate(self.__energy_binned_times__[i0: i1])
+        if return_num_bins:
+            return out, i1-i0
+        else:
+            return out
 
     def pickle(self, f_path=None):
-        d = {'times': self.times, 'max_words': self.max_words, 'realtimes': self.realtimes,
-             'livetimes': self.livetimes, 'n_adc_channels': self.n_adc_channels, 'fraction_live': self.fraction_live,
-             'erg_calibration': self.erg_calibration, 'gate_state': self.gate_state,
-             'sample_ready_state': self.sample_ready_state, 'adc_values': self.adc_values,
-             'counts_per_sec': self.counts_per_sec, '__needs_updating__': True,
+        d = {'times': self.times,
+             'max_words': self.max_words,
+             'realtimes': self.realtimes,
+             'livetimes': self.livetimes,
+             'n_adc_channels': self.n_adc_channels,
+             'fraction_live': self.fraction_live,
+             'erg_calibration': self.erg_calibration,
+             'gate_state': self.gate_state,
+             'sample_ready_state': self.sample_ready_state,
+             'adc_values': self.adc_values,
+             'counts_per_sec': self.counts_per_sec,
              '_original_path': str(self._original_path),
              'start_time': datetime.datetime.strftime(self.start_time, MaestroListFile.datetime_format),
-             'device_address': self.device_address, 'list_style': self.list_style, 'description': self.description,
-             'valid_erg_calibration': self.valid_erg_calibration, 'serial_number': self.serial_number,
-             'MCB_type_string': self.MCB_type_string, 'erg_units': self.erg_units,
-             'shape_calibration': self.shape_calibration, 'det_id_number': self.det_id_number,
-             'total_real_time': self.total_real_time, 'total_live_time': self.total_live_time,
-             'adc_zero_datetime': datetime.datetime.strftime(self.adc_zero_datetime, MaestroListFile.datetime_format)
+             'device_address': self.device_address,
+             'list_style': self.list_style,
+             'description': self.description,
+             'valid_erg_calibration': self.valid_erg_calibration,
+             'serial_number': self.serial_number,
+             'MCB_type_string': self.MCB_type_string,
+             'erg_units': self.erg_units,
+             'shape_calibration': self.shape_calibration,
+             'det_id_number': self.det_id_number,
+             'total_real_time': self.total_real_time,
+             'total_live_time': self.total_live_time,
              }
         d_np_types = {'gate_state': 'int', 'sample_ready_state': 'int', 'adc_values': 'int'}
         if f_path is None:
@@ -676,8 +777,9 @@ class MaestroListFile:
             setattr(self, k, v)
         self._original_path = Path(self._original_path)
         self.start_time = datetime.datetime.strptime(self.start_time, MaestroListFile.datetime_format)
-        self.adc_zero_datetime = datetime.datetime.strptime(self.adc_zero_datetime, MaestroListFile.datetime_format)
+        self.__needs_updating__ = False
         self.energies = self.channel_to_erg(self.adc_values)
+        self._energy_binned_times = None
         return self
 
     def __len__(self):
@@ -685,21 +787,22 @@ class MaestroListFile:
 
 
 if __name__ == '__main__':
-    l = MaestroListFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
-    l.set_energy_cal(0.0179, 0.19410)
-    s = l.list2spe()
-    s.plot_erg_spectrum()
-
-    # p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Co60_1.Lis'
-    # # l = MaestroListFile(p, max_words=None)
-    # # l.pickle()
-    # _, (ax1, ax2) = plt.subplots(2, 1, sharex='all')
-    # l = MaestroListFile.from_pickle(p)
+    # a = []
+    # for i in range(16000):
+    #     a.append(list(np.random.randn(np.random.randint(200, 3000))))
     #
-    # spe_true = SPEFile('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/user_saved_data/SpecTestingData/Co60_1.Spe')
-    # #
-    # spe_from_list = l.SPE
-    # spe_true.plot_erg_spectrum(1170, 1176,  ax=ax1, alpha=1,  make_rate=True)
-    # spe_from_list.plot_erg_spectrum(1170, 1176, ax=ax1, alpha=1, make_rate=True)
+    # for i in range(4):
+    #     t0 = time.time()
+    #     b = np.array(a, dtype=object)
+    #     print(time.time() - t0)
+    l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot134.Lis')
+    l2 = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
+    # l2.pickle()
+    t0 = time.time()
+    l.est_half_life(218.5, debug_plot=True)
+    print(time.time() - t0)
+    # l.plot_erg_spectrum(remove_baseline=True)
+    # l2.plot_erg_spectrum(remove_baseline=True)
+
     plt.show()
 

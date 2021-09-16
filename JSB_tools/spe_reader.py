@@ -133,8 +133,10 @@ class SPEFile:
                 lines[i1] = ' '.join(map(str, coeffs[:2])) + '\n'
                 lines[i2] = f'3\n'
                 lines[i2+1] = coeffs_string
-            with open(self.path, 'w') as f:
+            temp_file_path = self.path.with_suffix(f'{self.path.suffix}._tmp')
+            with open(temp_file_path, 'w') as f:
                 f.writelines(lines)
+            temp_file_path.rename(self.path)
 
     def channel_2_erg(self, a):
         return np.sum([coeff * a ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
@@ -276,14 +278,17 @@ class SPEFile:
         _slice = slice(max([0, _center - fit_window//2]), min([len(y)-1, _center+fit_window//2]))
         y = y[_slice]
         x = self.energies[_slice]
-        b_widths = self.erg_bin_widths[_slice]
-        y /= b_widths
+        plt.figure()
+        y /= self.erg_bin_widths[_slice]  # make density
+        mpl_hist(self.erg_bins[_slice.start: _slice.stop + 1], y)
+
         # y /= np.mean(x[1:] - x[:-1])
         peaks, peak_infos = find_peaks(unp.nominal_values(y), height=unp.std_devs(y), width=0)
         # plt.plot(peaks, peak_infos['prominences'], ls='None', marker='o')
         select_peak_ixs = np.argmin(np.array([np.abs(c-np.searchsorted(x, centers)) for c in peaks]).T, axis=1)
-        amplitude_guesses = peak_infos['peak_heights'][select_peak_ixs]*peak_infos['widths'][select_peak_ixs]
-        sigma_guesses = peak_infos['widths'][select_peak_ixs]/2.355
+        peak_widths = peak_infos['widths'][select_peak_ixs]*self.erg_bin_widths[_center]
+        amplitude_guesses = peak_infos['peak_heights'][select_peak_ixs]*peak_widths
+        sigma_guesses = peak_widths/2.355
 
         for i, erg in enumerate(centers):
             m = GaussianModel(prefix=f'_{i}')
@@ -412,14 +417,15 @@ if __name__ == '__main__':
     import time
     import cProfile
 
-    p = '/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/_shot132.Spe'
-
-    # s = SPEFile.from_lis(p)
+    p = '/Users/burggraf1/Desktop/__.Spe'
+    #
     s = SPEFile(p)
-    s.plot_erg_spectrum(remove_baseline=True, erg_min=212, erg_max=230)
-    s.multi_peak_fit([219, 221.3])
-
-    plt.show()
+    s.set_energy_cal(666, 666, update_file=True)
+    # s = SPEFile(p)
+    # # s.plot_erg_spectrum(remove_baseline=True, erg_min=212, erg_max=230)
+    # s.multi_peak_fit([219, 221.3])
+    #
+    # plt.show()
 
     # s = SPEFile(p)
     # s.set_energy_cal(0.0179, 0.19410, update_file=True)

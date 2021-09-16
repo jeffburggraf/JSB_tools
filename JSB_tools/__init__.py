@@ -128,6 +128,8 @@ def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
 
     """
     sigma = int(sigma)
+    if sigma == 0:
+        return a
     kernel_size = kernel_sigma_window * sigma
     if kernel_size % 2 == 0:
         kernel_size += 1
@@ -137,7 +139,26 @@ def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
     return np.convolve(a, kernel, mode=mode)
 
 
-def mpl_hist(bin_Edges, y, yerr=None, ax=None, color=None, label=None, fig_kwargs=None, **mpl_kwargs):
+def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=True,
+             return_line_color=False, **mpl_kwargs):
+    """
+
+    Args:
+        bin_Edges: Left edges of bins (must be of length len(y) + 1)
+        y:
+        yerr:
+        ax:
+        label: For legend
+        fig_kwargs: kwargs for mpl.figure
+        title:
+        poisson_errors: If True and yerr is not provided, assume Poissonian errors.
+        return_line_color: If True, return mpl color of line.
+        **mpl_kwargs:
+
+    Returns:
+
+    """
+    assert len(bin_Edges) == len(y) + 1, '`bin_edges` must be of length: len(y) + 1'
     if fig_kwargs is None:
         fig_kwargs = {}
     if ax is None:
@@ -146,17 +167,27 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, color=None, label=None, fig_kwarg
     if isinstance(y[0], UFloat):
         y = unp.nominal_values(y)
         yerr = unp.std_devs(y)
+    if yerr is None and poisson_errors:
+        yerr = np.sqrt(y)
+
+    if title is not None:
+        ax.set_title(title)
+
     bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
     yp = np.concatenate([y, [0.]])
-    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', color=color, **mpl_kwargs)
-    c = lines[0].get_color()
-    try:
-        mpl_kwargs.pop('ls')
-    except KeyError:
-        pass
+
+    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', **mpl_kwargs)
+    c = lines[0].get_color()  # todo: Dont return this.
+    mpl_kwargs['c'] = c
+    mpl_kwargs.pop('ls', None)
+    mpl_kwargs.pop('color', None)
+
     lines.append(ax.errorbar(bin_centers, y, yerr,
-                             ls='None', color=c, **mpl_kwargs))
-    return ax, c
+                             ls='None',  **mpl_kwargs))
+    if return_line_color:
+        return ax, c
+    else:
+        return ax
 
 
 class __TracePrints(object):
