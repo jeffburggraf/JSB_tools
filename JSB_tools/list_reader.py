@@ -1,11 +1,12 @@
 """
 MaestroListFile class for reading and analysing Ortec Lis files.
 Todo:
-    change energy calibration and allow updating file
     Implement a method for efficiency calibration
 """
 from __future__ import annotations
+import plotly.graph_objects as go
 import marshal
+from typeguard import check_type
 import struct
 from struct import unpack, calcsize
 from pathlib import Path
@@ -17,11 +18,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 from scipy.stats import norm
 from datetime import timezone
-from typing import List, Union
+from typing import List, Union, Tuple, Iterable
 import filetime
 from functools import cached_property
 import time
-from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background
+from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, plot_window
 from JSB_tools.spe_reader import SPEFile
 
 # HERE = pytz.timezone('US/Mountain')
@@ -303,7 +304,76 @@ class MaestroListFile:
     def n_counts(self):
         return len(self.times)
 
-    def est_half_life(self, energy, window=1, bg_window_width=None, debug_plot=False):
+    def get_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3, bg_window_kev=3,
+                            bg_offsets: Union[None, Tuple, float] = None, debug_plot=False):
+        """
+        Get the time dependence around erg +/- signal_window_kev/2. Median baseline is estimated and subtracted.
+        Args:
+            energy:
+            bins:
+            signal_window_kev:
+            bg_window_kev:
+            bg_offsets:
+            debug_plot:
+
+        Returns: signal_values, baseline, bins
+            where,
+                  signal_values is baseline subtracted number of events
+                  baseline is the median # of events in vicinity of peak
+                  bins is the time bins used.
+
+        """
+        if bg_offsets is None:
+            bg_offsets = [2*signal_window_kev]*2
+        elif isinstance(bg_offsets, Iterable):
+            bg_offsets = tuple(map(lambda x: 2*signal_window_kev if x is None else x, bg_offsets))
+            if not len(bg_offsets) == 2:
+                raise ValueError('Too many elements in arg `bg_offsets')
+        elif isinstance(bg_offsets, (float, int)):
+            bg_offsets = tuple([bg_offsets]*2)
+        else:
+            raise ValueError(f'Bad value for `bg_offsets`: {bg_offsets}')
+        bg_offsets = np.abs(bg_offsets)
+        # bg_offsets[0] *= -1
+
+        # bg_window_left_bounds, bg_window_right_bounds =\
+        #     [np.array([-bg_window_kev/2, bg_window_kev/2]) + energy - bg_window_kev/2 + o for o in bg_offsets]
+        bg_window_left_bounds = np.array([-bg_window_kev/2, 0]) + energy - bg_offsets[0]
+        bg_window_right_bounds = np.array([0, bg_window_kev/2]) + energy + bg_offsets[1]
+        sig_window_bounds = [energy-signal_window_kev/2, energy+signal_window_kev/2]
+        bg_window_left_is = self.__erg_index__(bg_window_left_bounds)
+        bg_window_right_is = self.__erg_index__(bg_window_right_bounds)
+        bg_times = self.__energy_binned_times__[slice(*bg_window_left_is)]
+        bg_times += self.__energy_binned_times__[slice(*bg_window_right_is)]
+        _, bins = np.histogram(bg_times[np.argmax(list(map(len, bg_times)))], bins=bins)
+        bg = np.array([interpolated_median(x) for x in np.array([np.histogram(times, bins=bins)[0]for times in bg_times]).transpose()])
+        sig_times, n_sig_bins = self.energy_slice(*sig_window_bounds, return_num_bins=True)
+        sig = np.histogram(sig_times, bins=bins)[0]
+        bg *= n_sig_bins
+        if debug_plot:
+            # fig, ax = plt.subplots()
+            for index, (b1, b2) in enumerate(zip(bins[:-1], bins[1:])):
+                ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0]-signal_window_kev,
+                                               bg_window_right_bounds[-1] + signal_window_kev, b1, b2,
+                                               return_bin_values=True)
+                ax.plot(bg_window_left_bounds, [bg[index]/n_sig_bins] * 2,
+                        label='Baseline est.', color='red', ls='--')
+                ax.plot(bg_window_right_bounds, [bg[index] / n_sig_bins] * 2, color='red', ls='--')
+                ax.plot(sig_window_bounds, [sig[index]/n_sig_bins] * 2,
+                        label='Sig. +bg. est.', ls='--')
+                ax.legend()
+                plot_window(ax, sig_window_bounds, label='Signal window')
+                plot_window(ax, bg_window_left_bounds, color='red', label='Bg. window')
+                plot_window(ax, bg_window_right_bounds, color='red')
+
+                # ax.plot()
+        return (sig - bg), bg, bins
+
+    def est_half_life(self, energy, window: float = 1.5, bg_window_width=None,
+                      left_right_bg_offset:
+                      Union[None, Tuple[Union[float, int, None], Union[float, int, None]], float] = None,
+                      rtol=1E-5,
+                      debug_plot=False):
         """
 
         Args:
@@ -311,23 +381,48 @@ class MaestroListFile:
             window:
             bg_window_width: Window for bg estimation. Should be large-ish. If None, 10*window. Data in the energy range
                 of twice the signal window are not included in background estimation.
+            left_right_bg_offset:
+                Distance of bg offset(s) from energy center. By default, use value of `window` for left and right.
+                    - If tuple of len 2, use separate offsets for left and right bs windows. If None appears in a tuple
+                      entry, don't include background window for that side.
+                    - If a float, use same value for both left and right offsets.
+            rtol: Smaller = better convergence. 
             debug_plot:
 
         Returns:
 
         """
         if bg_window_width is None:
-            bg_window_width = 10*window
-        times_raw, n_bins_center = self.get_times_in_range(energy-window/2, energy+window/2, return_num_bins=True)
-        times_bg_left, n_bins_bg_left = self.get_times_in_range(energy-bg_window_width/2-window, energy-window,
-                                                                return_num_bins=True)
-        times_bg_right, n_bins_bg_right = self.get_times_in_range(energy+window, energy + window + bg_window_width/2,
-                                                                  return_num_bins=True)
+            bg_window_width = 20*window
+
+        if left_right_bg_offset is None:
+            left_right_bg_offset = (window, window)
+        elif isinstance(left_right_bg_offset, Iterable):
+            left_right_bg_offset = list(left_right_bg_offset)
+            assert len(left_right_bg_offset) == 2, '`left_right_bg_offset` must be of length 2 when supplying ' \
+                                                   'asymmetrical windows.'
+            left_right_bg_offset = tuple(map(lambda x: window if x is None else x, left_right_bg_offset))
+        else:
+            assert isinstance(left_right_bg_offset, (int, float)),'Invalid type of `left_right_bg_offset` ' \
+                                                                  '(must be number)'
+            left_right_bg_offset = tuple([left_right_bg_offset]*2)
+
+        sig_window = np.array([-window/2, window/2]) + energy
+        times_raw, n_bins_center = self.energy_slice(*sig_window, return_num_bins=True)
+
+        bg_window_left = np.array([-bg_window_width/2, 0]) + energy - left_right_bg_offset[0]
+        bg_window_right = np.array([0, bg_window_width/2]) + energy + left_right_bg_offset[1]
+
+        times_bg_left, n_bins_bg_left = self.energy_slice(*bg_window_left, return_num_bins=True)
+        times_bg_right, n_bins_bg_right = self.energy_slice(*bg_window_right, return_num_bins=True)
         times_bg = np.concatenate([times_bg_right, times_bg_left])
+
         y_raw, bins = np.histogram(times_raw, bins='auto')
-        bin_centers = 0.5*(bins[:-1] + bins[1:])
         y_bg, _ = np.histogram(times_bg, bins=bins)
-        y_bg = y_bg/(n_bins_bg_left+n_bins_bg_right)*n_bins_center
+
+        bin_centers = 0.5*(bins[:-1] + bins[1:])
+        bg_scale = 1.0/(n_bins_bg_left+n_bins_bg_right)*n_bins_center
+        y_bg = y_bg*bg_scale
         y_sig = y_raw - y_bg
         if debug_plot:
             ax = mpl_hist(bins, y_raw, title=f"tot., raw, and bg. for peak at {energy} +/- {window/2}", label='tot.')
@@ -337,15 +432,55 @@ class MaestroListFile:
             ax.set_xlabel('Time [s]')
             ax.set_ylabel('Counts')
             ax.legend()
+            ax = self.plot_erg_spectrum(erg_min=energy-bg_window_width/1.5-window, erg_max=energy+bg_window_width/1.5+window,
+                                   )
+            # fig = plt.figure()
+            # fig.suptitle(self.file_name)
+            ax = plt.gca()
+            y1, y2 = [ax.get_ylim()[0]]*2, [ax.get_ylim()[1]]*2
+            ax.fill_between(bg_window_left, y1, y2, color='red', alpha=0.6,label='bg')
+            ax.fill_between(bg_window_right, y1, y2, color='red', alpha=0.6)
+            ax.fill_between(sig_window, y1, y2, color='blue', alpha=0.6, label='sig')
+            ax.legend()
         min_time = bin_centers[np.argmax(y_sig)]
+        print('min time:', min_time)
+
         times_raw = times_raw[np.where(times_raw >= min_time)] - min_time
         times_bg = times_bg[np.where(times_bg >= min_time)] - min_time
+        weights = np.interp(times_raw + min_time, bin_centers, np.sqrt(y_raw))
+        # weights_bg = np.interp(times_bg + min_time, bin_centers, np.sqrt(y_bg/bg_scale))
+        # lambda_est = (len(times_raw)-len(times_bg))/(np.sum(times_raw) - np.sum(times_bg))
+        data_len = len(times_raw)-bg_scale*len(times_bg)
+        # data_len = np.sum(weights)-bg_scale*np.sum(weights)
+        data_sum = np.sum(times_raw) - bg_scale*np.sum(times_bg)
+        tmax = self.times[-1]
 
-        _y, _b = np.histogram(times_raw, bins='auto')
-        _y1, _b1 = np.histogram(times_bg, bins='auto')
-        ax = mpl_hist(_b, _y)
-        mpl_hist(_b1, _y1, ax=ax)
-        print("min_time", min_time)
+        def iterate(prev_lambda=None):
+            # global i
+            # i += 1
+            if prev_lambda is None:
+                out = data_len / data_sum
+                print('init:', np.log(2)/out)
+                return iterate(out)
+            else:
+                corr = -data_len * (tmax / (1 - np.e ** (tmax * prev_lambda)))
+                # print(corr, data_len, data_sum)
+                next_lambda = data_len / (data_sum + corr)
+                # print(np.log(2)/next_lambda)
+                if np.isclose(prev_lambda, next_lambda, rtol=rtol):
+                    return next_lambda
+                else:
+                    return iterate(next_lambda)
+
+        return np.log(2)/iterate()
+
+        # _y, _b = np.histogram(np.concatenate([times_raw, times_bg]),
+        #                       weights=np.concatenate([np.ones_like(times_raw), -bg_scale*np.ones_like(times_bg)]),
+        #                       bins=bins)  # [np.searchsorted(bins, min_time):]
+        # _y1, _b1 = np.histogram(times_bg, bins='auto')
+        # ax = mpl_hist(_b, _y)
+        # mpl_hist(_b1, _y1, ax=ax)
+        # print("min_time", min_time) P(H|ts) == P(th|H)*P(H)/P(ts)
 
 
     def __init__(self, path, max_words=None, debug=False):
@@ -404,7 +539,6 @@ class MaestroListFile:
 
             self.times = []
             self.n_words = 0
-            t0 = time.time()
 
             f_size = path.stat().st_size
             self.max_words = max_words
@@ -526,8 +660,8 @@ class MaestroListFile:
         indicies = np.searchsorted(self.realtimes, self.times)
         return 1.0/self.fraction_live[indicies]
 
-    def channel_to_erg(self, a):
-        return np.sum([a ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
+    def channel_to_erg(self, channel):
+        return np.sum([channel ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
 
     @cached_property
     def erg_centers(self):
@@ -535,7 +669,7 @@ class MaestroListFile:
 
     @cached_property
     def erg_bins(self):
-        channel_bins = np.arange(self.n_adc_channels)
+        channel_bins = np.arange(self.n_adc_channels) - 0.5   #
         return self.channel_to_erg(channel_bins)
 
     def get_spectrum_hist(self, t1=0, t2=None) -> TH1F:
@@ -609,7 +743,9 @@ class MaestroListFile:
         Returns:
 
         """
-        return np.searchsorted(self.erg_bins, energies, side='right') - 1
+        out = np.searchsorted(self.erg_bins, energies, side='right') - 1
+
+        return out
 
     @property
     def __energy_binned_times__(self) -> List[np.ndarray]:
@@ -639,24 +775,53 @@ class MaestroListFile:
         Returns:
 
         """
-        return self.erg_bins[np.where((self.erg_bins >= erg_min) & (self.erg_bins <= erg_max))]
+        i0 = self.__erg_index__(erg_min)
+        i1 = self.__erg_index__(erg_max) + 1
+        return self.erg_bins[i0: i1]
+        # return self.erg_bins[np.where((self.erg_bins >= erg_min) & (self.erg_bins <= erg_max))]
 
-    def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = 0,
-                         time_max: float = None,):
-        energies = self.energies
-        if time_max is not None or time_min != 0:
-            if time_max is None:
-                time_max = self.times[-1]
-            energies = self.energies[np.where((self.times >= time_min) & (self.times <= time_max))]
+    def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
+                         time_max: float = None, return_bins=False):
+        """
+        Get energy spectrum according to provided condition.
+        Args:
+            erg_min:
+            erg_max:
+            time_min:
+            time_max:
+            return_bins: Return the energy bins, e.g. for use in a histogram.
+
+        Returns:
+
+        """
         if erg_min is None:
             erg_min = self.erg_bins[0]
         if erg_max is None:
             erg_max = self.erg_bins[-1]
-        bin_values, bins = np.histogram(energies, bins=self.erg_bins_cut(erg_min, erg_max))
-        return bin_values, bins
+
+        def get_n_events():
+            b = (time_min is not None, time_max is not None)
+            if b == (0, 0):
+                return len
+            elif b == (1, 0):
+                return lambda x: len(x) - np.searchsorted(x, time_min, side='left')
+            elif b == (0, 1):
+                return lambda x: np.searchsorted(x, time_max, side='right')
+            else:
+                return lambda x: np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min, side='left')
+
+        time_arrays = self.__energy_binned_times__[self.__erg_index__(erg_min): self.__erg_index__(erg_max)]
+        func = get_n_events()
+        out = np.fromiter(map(func, time_arrays), dtype=int)
+
+        if return_bins:
+            return out, self.erg_bins_cut(erg_min, erg_max)
+        else:
+            return out
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = 0,
-                          time_max: float = None, remove_baseline=False, title=None, ax=None):
+                          time_max: float = None, remove_baseline=False, title=None, ax=None, label=None,
+                          return_bin_values=False):
         """
         Plot energy spectrum with time and energy cuts.
         Args:
@@ -667,6 +832,8 @@ class MaestroListFile:
             remove_baseline: If True, remove baseline.
             title:
             ax:
+            label:
+            return_bin_values:
 
         Returns:
 
@@ -676,33 +843,173 @@ class MaestroListFile:
             fig.suptitle(Path(self.file_name).name)
             ax = plt.gca()
 
-        bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max)
+        bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max, return_bins=True)
         if remove_baseline:
             bl = calc_background(bin_values)
             bin_values = -bl + bin_values
-        mpl_hist(bins, bin_values, np.sqrt(bin_values), ax=ax)
+        mpl_hist(bins, bin_values, np.sqrt(bin_values), ax=ax, label=label)
         if title is None:
             if not (time_min == 0 and time_max is None):
-                ax.set_title(f"{time_min} <= t <= {time_max}")
+                ax.set_title(f"{time_min:.1f} <= t <= {time_max:.1f}")
         else:
             ax.set_title(title)
+
         ax.set_xlabel('Energy [KeV]')
         ax.set_ylabel('Counts')
-        return ax
+        if not return_bin_values:
+            return ax
+        else:
+            return ax, bin_values
 
-    def get_energies_in_range(self, erg_min, erg_max):
+    def slicer(self, erg_min=None, erg_max=None, time_min=None, time_max=None):
         """
-        Integrate events over energy.
+        Return an array that can be used to select the desired times or energies.
+        Examples:
+            s = l.slicer(erg_max=200, erg_min=50, time_max=34)
+            plt.histogram(l.times[s])  # plot selected times
+            plt.histogram(l.energies[s])  # plot selected energies
         Args:
             erg_min:
             erg_max:
+            time_min:
+            time_max:
 
         Returns:
 
         """
-        return self.energies[np.where((self.energies >= erg_min) & (self.energies <= erg_max))]
+        if erg_min is not None:
+            mask = (erg_min <= self.energies)
+        else:
+            mask = np.ones(len(self.times), dtype=bool)
+        if erg_max is not None:
+            mask &= (self.energies <= erg_max)
 
-    def get_times_in_range(self, erg_min, erg_max, return_num_bins=False):
+        if time_min is not None:
+            mask[:np.searchsorted(self.times, time_min)] = False
+
+        if time_max is not None:
+            mask[np.searchsorted(self.times, time_max, side='right'):] = False
+
+        return np.where(mask)
+
+    def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', time_bin_width=15,
+               time_step: int = 5, percent_of_max=False, bg_subtract=None):
+        """
+        Args:
+            erg_min:
+            erg_max:
+            erg_bins:
+            time_bin_width: Width of time range for each slider step.
+            time_step: delta t between each slider step
+            percent_of_max: It True, each bin is fraction of max.
+            bg_subtract: An array filled with counts/sec at each energy that is subtracted from plots.
+
+        Returns:
+
+        """
+        if erg_min is None:
+            erg_min = self.erg_bins[0]
+        if erg_max is None:
+            erg_max = self.erg_bins[-1]
+        tmin = self.times[0]
+        tmax = self.times[-1]
+        time_centers = np.linspace(tmin, tmax, int((tmax-tmin) // time_step + 1))
+        time_groups = [(max([tmin, b - time_bin_width / 2]), min([tmax, b + time_bin_width / 2])) for b in time_centers]
+        time_bin_widths = [b1-b0 for b0, b1 in time_groups]
+
+        energy_bins = self.erg_bins_cut(erg_min, erg_max)
+        energy_bin_centers = (energy_bins[1:] + energy_bins[:-1])/2
+        labels4bins = []
+
+        ys = []
+
+        for b_width, (b0, b1) in zip(time_bin_widths, time_groups):
+            ys.append(self.get_erg_spectrum(erg_min, erg_max, b0, b1) / b_width)
+            labels4bins.append((b0, b1))
+        ys = np.array(ys)
+
+        fig = go.Figure()
+
+        y_tot = self.get_erg_spectrum(erg_min, erg_max)/(tmax-tmin)
+        # y_tot *= np.max(ys)/np.max(y_tot)
+        fig.add_trace(
+            go.Bar(
+                opacity=0.5,
+                visible=True,
+                name=f"All time",
+                x=energy_bin_centers,
+                y=y_tot,
+                marker_color='red')
+        )
+
+        steps = [dict(
+                method="update",
+                args=[{"visible": [True] + [False] * len(energy_bin_centers)},
+                      {"title": f"All time"}],  # layout attribute
+            )]
+        # ys = [self.get_erg_spectrum(erg_min, erg_max, b1, b2) for b1, b2 in zip(time_bins[:-1], time_bins[1:])]
+
+        _max_y = 0
+        if percent_of_max:
+            ys /= np.array([np.max(convolve_gauss(_y, 3)) for _y in ys])[:, np.newaxis]
+        for index, (y, (t0, t1)) in enumerate(zip(ys, time_groups)):
+            b_width = t1 - t0
+            b_center = (t1+t0)/2
+            if max(y)>_max_y:
+                _max_y = max(y)
+            if bg_subtract:
+                y -= b_width*bg_subtract
+            label = f"t ~= {b_center:.1f} [s] ({t0:.1f} < t < {t1:.1f})"
+            assert len(energy_bin_centers) == len(y), [len(energy_bin_centers), len(y)]
+            fig.add_trace(
+                go.Bar(
+                    visible=False,
+                    name=label,
+                    x=energy_bin_centers,
+                    y=y,
+                    marker_color='blue'))
+            fig.add_trace(
+                go.Scatter(
+                    visible=False,
+                    x=energy_bin_centers,
+                    y=convolve_gauss(y, 4),
+                    ))
+            step = dict(
+                method="update",
+                args=[{"visible": [False] * (2*len(energy_bin_centers) + 1)},
+                      {"title": label}],  # layout attribute
+            )
+            step["args"][0]["visible"][2*index+1] = True  # Toggle i'th trace to "visible"
+            step["args"][0]["visible"][2*index+2] = True  # Toggle i+1'th trace to "visible"
+            steps.append(step)
+        fig.update_yaxes(range=[0, _max_y*1.1])
+        sliders = [dict(
+            active=0,
+            currentvalue={"prefix": "time "},
+            pad={"t": 50},
+            steps=steps
+        )]
+
+        fig.update_layout(
+            sliders=sliders, bargap=0
+        )
+        # fig.update_layout(barmode='group', bargap=0.30,bargroupgap=0.0)
+
+        fig.show()
+
+    def time_slice(self, time_min, time_max):
+        """
+        Return the energies of all events which occurred between time_min and time_max
+        Args:
+            time_min:
+            time_max:
+
+        Returns:
+
+        """
+        return self.energies[np.where((self.times >= time_min) & (self.times <= time_max))]
+
+    def energy_slice(self, erg_min, erg_max, return_num_bins=False):
         """
         Return the times of all events with energy greater than `erg_min` and less than `erg_max`
         Args:
@@ -795,14 +1102,26 @@ if __name__ == '__main__':
     #     t0 = time.time()
     #     b = np.array(a, dtype=object)
     #     print(time.time() - t0)
-    l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot134.Lis')
-    l2 = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
-    # l2.pickle()
-    t0 = time.time()
-    l.est_half_life(218.5, debug_plot=True)
-    print(time.time() - t0)
-    # l.plot_erg_spectrum(remove_baseline=True)
-    # l2.plot_erg_spectrum(remove_baseline=True)
+    l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
 
-    plt.show()
+    # l.slicer()
+    l.plotly(erg_min=40, erg_max=1000, time_bin_width=20, time_step=3)
+    # l.get_time_dependence(218, debug_plot=True)
+    # plt.show()
+    # l.plot_erg_spectrum()
+
+    # sig, bg, bins = l.get_time_dependence(218.8, bins=15, signal_window_kev=3, bg_window_kev=30, debug_plot=True)
+    # ax = mpl_hist(bins, sig, label='sig')
+    # mpl_hist(bins, bg, label='sbg', ax=ax)
+
+    # l.pickle()
+    # l2 = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
+    # l2.pickle()
+    # t0 = time.time()
+    # hl = l.est_half_life(218.5, window=1.3, debug_plot=True, bg_window_width=3.5, left_right_bg_offset=(None, 2))
+    # print(time.time() - t0)
+    # print("Estimated half life:", hl)
+    # # l.plot_erg_spectrum(remove_baseline=True)
+    # # l2.plot_erg_spectrum(remove_baseline=True)
+
 

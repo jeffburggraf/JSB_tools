@@ -1189,6 +1189,15 @@ class Nuclide:
         else:
             return self.__decay_gamma_lines
 
+    def get_gamma_nearest(self, energy: float) -> GammaLine:
+        if isinstance(energy, UFloat):
+            energy = energy.n
+        if len(self.decay_gamma_lines) == 0:
+            raise IndexError(f"No gamma lines from {self.name}")
+        ergs = np.array([g.erg.n for g in self.decay_gamma_lines])
+        out = self.decay_gamma_lines[np.argmin(np.abs(ergs-energy))]
+        return out
+
     @property
     def decay_betaplus_lines(self) -> List[BetaPlusLine]:
         if not self.__decay_betaplus_lines:

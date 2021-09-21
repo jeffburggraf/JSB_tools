@@ -27,11 +27,28 @@ import matplotlib.ticker as ticker
 from uncertainties import UFloat
 from scipy.signal import convolve2d
 from scipy import ndimage
+from typeguard import check_type
 
 
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
+
+
+def interpolated_median(list_):
+    """
+    Find the median assuming data points are pulled from a unknown continuous frequency distribution.
+    Args:
+        list_:
+
+    Returns:
+
+    """
+    if len(list_) == 0:
+        return None
+    values, freqs = np.unique(list_, return_counts=True)
+    cdf = np.cumsum(freqs)
+    return np.interp(cdf[-1]/2., cdf, values)
 
 
 def rolling_median(window_width, values):
@@ -53,6 +70,11 @@ def rolling_median(window_width, values):
     medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
 
     return medians
+
+
+def plot_window(ax, window, color='blue', alpha=0.5, label=None):
+    y1, y2 = [ax.get_ylim()[0]] * 2, [ax.get_ylim()[1]] * 2
+    ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
 
 
 def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5):
@@ -130,7 +152,7 @@ def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
     sigma = int(sigma)
     if sigma == 0:
         return a
-    kernel_size = kernel_sigma_window * sigma
+    kernel_size = min([kernel_sigma_window * sigma, len(a)//2])
     if kernel_size % 2 == 0:
         kernel_size += 1
     kernel_x = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
@@ -158,17 +180,18 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     Returns:
 
     """
-    assert len(bin_Edges) == len(y) + 1, '`bin_edges` must be of length: len(y) + 1'
+    if not len(bin_Edges) == len(y) + 1:
+        raise ValueError(f'`bin_edges` must be of length: len(y) + 1, not {len(bin_Edges)} and {len(y)} ')
     if fig_kwargs is None:
         fig_kwargs = {}
     if ax is None:
         plt.figure(**fig_kwargs)
         ax = plt.gca()
     if isinstance(y[0], UFloat):
-        y = unp.nominal_values(y)
         yerr = unp.std_devs(y)
+        y = unp.nominal_values(y)
     if yerr is None and poisson_errors:
-        yerr = np.sqrt(y)
+        yerr = np.sqrt(np.where(y < 0, 0, y))
 
     if title is not None:
         ax.set_title(title)
@@ -177,13 +200,15 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     yp = np.concatenate([y, [0.]])
 
     lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', **mpl_kwargs)
-    c = lines[0].get_color()  # todo: Dont return this.
+    c = lines[0].get_color()
     mpl_kwargs['c'] = c
     mpl_kwargs.pop('ls', None)
     mpl_kwargs.pop('color', None)
 
     lines.append(ax.errorbar(bin_centers, y, yerr,
                              ls='None',  **mpl_kwargs))
+    if label is not None:
+        ax.legend()
     if return_line_color:
         return ax, c
     else:

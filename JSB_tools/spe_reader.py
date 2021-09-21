@@ -1,5 +1,6 @@
 from __future__ import annotations
 import time
+import warnings
 from pathlib import Path
 from datetime import datetime
 import re
@@ -197,6 +198,7 @@ class SPEFile:
         return self.channel_2_erg(ch)  # todo: Was channel_2_erg(ch - 0.5). Is this right?
 
     def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, remove_baseline=False,
+                   make_density=False,
                    nominal_values=False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get energy spectrum within (optionally) a specified energy range.
@@ -205,32 +207,41 @@ class SPEFile:
             erg_max: Max energy cut
             make_rate: If True, divide by livetime
             remove_baseline: Whether or not to remove baseline.
+            make_density: If True, result is divided by bin width
             nominal_values: If false, return uncertain array, else don't
 
         Returns: counts, bin_edges
 
 
         """
-        if any(x is None for x in [erg_min, erg_min]):
+        if not all(x is None for x in [erg_min, erg_min]):
             if erg_min is None:
                 erg_min = self.erg_bins[0]
             if erg_max is None:
                 erg_max = self.erg_bins[-1]
+            erg_max = min([self.energies[-1], erg_max])
+            erg_min = max([self.energies[0], erg_min])
             imin = self.__erg_index__(erg_min)
             imax = self.__erg_index__(erg_max)
-            bins = self.erg_bins[imin: imax]
-            counts = self.counts[imin: imax-1]
+            bins = self.erg_bins[imin: imax+1]
+            counts = self.counts[imin: imax]
+            b_widths = self.erg_bin_widths[imin: imax]
         else:
             bins = self.erg_bins
             counts = self.counts
-        if make_rate:
-            counts /= self.livetime
+            b_widths = self.erg_bin_widths
+
         if remove_baseline:
             counts = counts - calc_background(counts)
+        if make_rate:
+            counts /= self.livetime
+        if make_density:
+            counts /= b_widths
+
         return unp.nominal_values(counts) if nominal_values else counts, bins
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None,
-                          leg_label=None, make_rate=False, remove_baseline=False, **ax_kwargs):
+                          leg_label=None, make_rate=False, remove_baseline=False, make_density=False, **ax_kwargs):
         """
         Plot energy spectrum within (optionally) a specified energy range.
         Args:
@@ -240,6 +251,7 @@ class SPEFile:
             ax_kwargs:
             make_rate: If True, divide by livetime
             remove_baseline: Is True, remove baseline
+            make_density: y units will be counts/unit energy
             ax:
 
         Returns:
@@ -250,11 +262,19 @@ class SPEFile:
             ax = plt.gca()
 
         counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate,
-                                       remove_baseline=remove_baseline)
+                                       remove_baseline=remove_baseline, make_density=make_density)
 
         mpl_hist(bins, counts, ax=ax, label=leg_label, **ax_kwargs)
+        ylabel = 'Counts'
+        if make_rate:
+            ylabel += '/s'
+        if make_density:
+            ylabel += '/KeV'
+
+        ax.set_ylabel(ylabel)
+
         ax.set_xlabel('Energy [KeV]')
-        ax.set_ylabel('Counts')
+
         return ax
 
     @property
