@@ -1,8 +1,7 @@
-from __future__ import annotations
 """
 Core functions like ROOT_Loop, as well as functions that I didn't know where else to put
 """
-
+from __future__ import annotations
 import warnings
 from typing import List, Dict
 import numpy as np
@@ -25,9 +24,12 @@ import traceback
 from JSB_tools.nuke_data_tools import Nuclide, FissionYields
 import matplotlib.ticker as ticker
 from uncertainties import UFloat
-from scipy.signal import convolve2d
 from scipy import ndimage
-from typeguard import check_type
+try:
+    import ROOT
+    root_exists = True
+except ModuleNotFoundError:
+    root_exists = False
 
 
 cwd = Path(__file__).parent
@@ -67,33 +69,55 @@ def rolling_median(window_width, values):
         values = np.array(values)
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
 
-    medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
+    medians = np.array([np.median(values[idx]) for idx in window_indicies])
 
     return medians
 
 
-def plot_window(ax, window, color='blue', alpha=0.5, label=None):
+def shade_plot(ax, window, color='blue', alpha=0.5, label=None):
     y1, y2 = [ax.get_ylim()[0]] * 2, [ax.get_ylim()[1]] * 2
     ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
 
 
-def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5):
+def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5, median_window=None):
+    """
+
+    Args:
+        counts: Signal to operate on. Can be uarray
+        num_iterations:
+        clipping_window_order:
+        smoothening_order:
+        median_window: Only valid if ROOT isn't installed and thus background is calculated via a rolling median of
+            width `median_window`
+
+    Returns:
+
+    """
     assert clipping_window_order in [2, 4, 6, 8]
     assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
     spec = ROOT.TSpectrum()
+    result = unp.nominal_values(counts)
     if isinstance(counts[0], UFloat):
-        nom_counts = unp.nominal_values(counts)
-        nom_counts = np.where(nom_counts>0, nom_counts, 1)
-        rel_errors = unp.std_devs(counts)/nom_counts
+        rel_errors = unp.std_devs(counts)/np.where(result>0, result, 1)
     else:
         rel_errors = None
-    result = unp.nominal_values(counts)
+
+    if not root_exists:
+        warnings.warn("No ROOT. Background estimation accomplished by rolling median")
+        if median_window is None:
+            median_window = int(len(counts)//10)
+        result = rolling_median(median_window, result)
+        if rel_errors is not None:
+            return unp.uarray(result, result*rel_errors)
+    else:
+        assert median_window is None, '`median_window` is not needed when ROOT is installed. '
+
     cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
     smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
     spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
                     cliping_window, ROOT.kTRUE,
                     smoothening, ROOT.kTRUE)
-    if not rel_errors is not None:
+    if rel_errors is None:
         return result
     else:
         return unp.uarray(result, rel_errors*result)
@@ -101,13 +125,6 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
 
 def mpl_style():
     plt.style.use(style_path)
-
-
-try:
-    import ROOT
-    root_exists = True
-except ModuleNotFoundError:
-    root_exists = False
 
 
 def norm2d_kernel(length_x, sigma_x, length_y=None, sigma_y=None):

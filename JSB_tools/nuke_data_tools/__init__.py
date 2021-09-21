@@ -2,28 +2,15 @@ from __future__ import annotations
 import pickle
 import numpy as np
 import warnings
-def openmc_not_installed_warning():
-    warnings.warn("openmc not installed! some functionality is limited. ")
-try:
-    from openmc.data.endf import Evaluation
-    from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
-    from openmc.data import Reaction, Decay, Product
-    from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
-    avogadros_number = AVOGADRO
-except ModuleNotFoundError:
-    openmc_not_installed_warning()
 from matplotlib import pyplot as plt
 import re
 from pathlib import Path
 from warnings import warn
 from uncertainties import ufloat, UFloat
 from uncertainties import unumpy as unp
-import uncertainties
 import marshal
-from functools import cached_property
-from typing import Union, List, Dict, Collection, Tuple, TypedDict
+from typing import Union, List, Dict, Collection, Tuple
 from numbers import Number
-pwd = Path(__file__).parent
 from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
     NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
 from functools import cached_property
@@ -31,7 +18,21 @@ from scipy.interpolate import interp1d
 from datetime import datetime, timedelta
 
 
-__all__ = ['Nuclide', 'avogadros_number', 'FissionYields', 'openmc_not_installed_warning']
+def openmc_not_installed_warning():
+    warnings.warn("openmc not installed! some functionality is limited. ")
+
+
+try:
+    from openmc.data.endf import Evaluation
+    from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
+    from openmc.data import Reaction, Decay, Product
+    from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
+except ModuleNotFoundError:
+    openmc_not_installed_warning()
+
+
+__all__ = ['Nuclide', 'FissionYields', 'openmc_not_installed_warning']
+pwd = Path(__file__).parent
 
 DEBUG = False
 #  Units
@@ -46,7 +47,6 @@ __speed_of_light__ = 299792458   # c in m/s
 #   * Add documentation, and exception messages, to explain where the data can be downloaded and how to regenerate
 #     the pickle files.
 #   * Get rid of <additional_nuclide_data> functionality. too complex and stupid
-#   * Find a way to include data files in the pip package, maybe create a separate repository.
 
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
@@ -193,11 +193,8 @@ class _DiscreteSpectrum:
 
         try:
             self.__continuous_entries__ = []
-            # print(spectra_data['continuous'])
         except KeyError:
             pass
-                # print("spectra_data data: ", spectra_data['continuous'] )
-            # print(f"_DiscreteSpectrum failed: {self}. Error{e}")
 
     def __repr__(self):
         return f'{self.__nuclide_name} _DiscreteSpectrum; {self.radiation_type}...'
@@ -241,8 +238,8 @@ class _DiscreteSpectrum:
 class DecayModeHandlerMixin:
     def __init__(self, nuclide, emission_data):
         #  In some cases, a given decay mode can populate ground and excited states of the same child nucleus,
-        #  leading to multiple DecayMode objects for a given decay path. This situation is managed in
-        #  self.decay_mode property.
+        #  leading to multiple DecayMode objects for a given decay path (same parent and daughter).
+        #  Making obj.from_mode return a list in general is undersirable. This issue is managed in self.decay_mode property.
         try:
             self._from_modes: List[DecayMode] = nuclide.decay_modes[emission_data['from_mode']]
         except KeyError:
@@ -278,20 +275,14 @@ class DecayModeHandlerMixin:
 class GammaLine(DecayModeHandlerMixin):
     """
     Attributes:
-            erg:
-                Energy of gamma in KeV
-            intensity:
-                Mean number of gammas with energy self.erg emitted per parent nucleus decay (through any decay channel)
+        erg:
+            Energy of gamma in KeV
+        intensity:
+            Mean number of gammas with energy self.erg emitted per parent nucleus decay (through any decay channel)
 
-            # intensity_thu_mode:
-            #     Mean number of gammas with energy self.erg emitted per parent nucleus decay (through self.from_mode
-            #     decay channel)
-
-            from_mode:
-                DecayMode instance. Contains decay channel, branching ratio, among other information
+        from_mode:
+            DecayMode instance. Contains decay channel, branching ratio, among other information
     """
-    # def __init__(self, nuclide: Nuclide, erg: UFloat, intensity: UFloat, intensity_thu_mode: UFloat,
-    #              from_mode: DecayMode):
     def __new__(cls, *args, **kwargs):
         obj = super(GammaLine, cls).__new__(cls)
         if kwargs:
@@ -373,7 +364,6 @@ class BetaPlusLine(DecayModeHandlerMixin):
 
         self.erg = emission_data['energy']*1E-6
         self.intensity = emission_data['intensity']
-        # self.intensity_thu_mode = intensity_thu_mode
         self.absolute_rate = nuclide.decay_rate * self.intensity
         self.positron_intensity = emission_data['positron_intensity']
 

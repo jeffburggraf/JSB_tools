@@ -48,7 +48,7 @@ class SPEFile:
         self.counts = np.zeros(final_channel-init_channel+1)
         self.channels = np.arange(init_channel, final_channel+1)
         start_index = index + 2
-        re_counts = re.compile(' +([0-9]+)')
+        re_counts = re.compile(' *([0-9]+)')
         i = 0
         while m := re_counts.match(lines[start_index + i]):
             self.counts[i] = int(m.groups()[0])
@@ -139,7 +139,7 @@ class SPEFile:
                 f.writelines(lines)
             temp_file_path.rename(self.path)
 
-    def channel_2_erg(self, a):
+    def channel_2_erg(self, a) -> np.ndarray:
         return np.sum([coeff * a ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
 
     def erg_2_fwhm(self, erg):
@@ -194,8 +194,12 @@ class SPEFile:
         Returns:
 
         """
-        ch = np.concatenate([self.channels, [self.channels[-1] + 1]])
-        return self.channel_2_erg(ch)  # todo: Was channel_2_erg(ch - 0.5). Is this right?
+        ch = np.arange(len(self.counts) + 1, dtype=float)
+        return self.channel_2_erg(ch-0.5)
+
+    @property
+    def rates(self):
+        return self.counts/self.livetime
 
     def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, remove_baseline=False,
                    make_density=False,

@@ -6,23 +6,20 @@ Todo:
 from __future__ import annotations
 import plotly.graph_objects as go
 import marshal
-from typeguard import check_type
 import struct
 from struct import unpack, calcsize
 from pathlib import Path
 import datetime
-from JSB_tools.TH1 import TH1F
-import pytz
 from bitstring import BitStream
 import numpy as np
 from matplotlib import pyplot as plt
-from scipy.stats import norm
 from datetime import timezone
 from typing import List, Union, Tuple, Iterable
 import filetime
 from functools import cached_property
 import time
-from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, plot_window
+from uncertainties.core import UFloat
+from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, shade_plot
 from JSB_tools.spe_reader import SPEFile
 
 # HERE = pytz.timezone('US/Mountain')
@@ -96,12 +93,13 @@ class MaestroListFile:
         """
         return self._original_path.with_name(f'_{self._original_path.name}').with_suffix('.Spe')
 
-    def list2spe(self, save_path: Union[Path, None] = None) -> SPEFile:
+    def list2spe(self, save_path: Union[Path, None] = None, write_file=False) -> SPEFile:
         """
         Generate and write to disk an ASCII Spe file form data in the Lis file.
         Produces files identical to (and readable by) the Maestro application.
         Args:
             save_path: Path for new file. If None, use original file but with .Spe for the suffix.
+            write_file: If True, write the SPE file to disk
 
         Returns: SPE object.
 
@@ -112,9 +110,13 @@ class MaestroListFile:
             save_path = Path(save_path)
         save_path = save_path.with_suffix(".Spe")
         spe_text = '\n'.join(get_spe_lines(self))
-        with open(save_path, 'w') as f:
-            f.write(spe_text)
-        return SPEFile(save_path)
+        if write_file:
+            with open(save_path, 'w') as f:
+                f.write(spe_text)
+        spe = SPEFile(save_path)
+        assert all(self.erg_bins == spe.erg_bins)
+        assert all(self.get_erg_spectrum() == spe.counts)
+        return spe
 
     def read(self, byte_format, f, debug=False):
         s = calcsize(byte_format)
@@ -140,10 +142,14 @@ class MaestroListFile:
 
         """
         p = self.__default_spe_path__
-        if p.exists():
-            return SPEFile(p)
+        if self._spe is not None:
+            return self._spe
         else:
-            return self.list2spe()
+            if p.exists():
+                out = SPEFile(p)
+            else:
+                out = self.list2spe()
+        self._spe = out
 
     def set_energy_cal(self, *coeffs):
         self.erg_calibration = np.array(coeffs)
@@ -362,9 +368,9 @@ class MaestroListFile:
                 ax.plot(sig_window_bounds, [sig[index]/n_sig_bins] * 2,
                         label='Sig. +bg. est.', ls='--')
                 ax.legend()
-                plot_window(ax, sig_window_bounds, label='Signal window')
-                plot_window(ax, bg_window_left_bounds, color='red', label='Bg. window')
-                plot_window(ax, bg_window_right_bounds, color='red')
+                shade_plot(ax, sig_window_bounds, label='Signal window')
+                shade_plot(ax, bg_window_left_bounds, color='red', label='Bg. window')
+                shade_plot(ax, bg_window_right_bounds, color='red')
 
                 # ax.plot()
         return (sig - bg), bg, bins
@@ -474,15 +480,6 @@ class MaestroListFile:
 
         return np.log(2)/iterate()
 
-        # _y, _b = np.histogram(np.concatenate([times_raw, times_bg]),
-        #                       weights=np.concatenate([np.ones_like(times_raw), -bg_scale*np.ones_like(times_bg)]),
-        #                       bins=bins)  # [np.searchsorted(bins, min_time):]
-        # _y1, _b1 = np.histogram(times_bg, bins='auto')
-        # ax = mpl_hist(_b, _y)
-        # mpl_hist(_b1, _y1, ax=ax)
-        # print("min_time", min_time) P(H|ts) == P(th|H)*P(H)/P(ts)
-
-
     def __init__(self, path, max_words=None, debug=False):
         """
         self.adc_zero_time is the time you want to use for determining the system clock time of ADC events. DO NOT use
@@ -494,6 +491,8 @@ class MaestroListFile:
         """
         path = Path(path)
         self._original_path = path
+        self._spe: SPEFile  = None
+
         if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
             path = cwd/'user_saved_data'/'SpecTestingData'/path
 
@@ -634,9 +633,9 @@ class MaestroListFile:
             plt.xlabel("Real-time [s]")
             plt.ylabel("% live-time")
 
-            percent_live_hist = TH1F.from_raw_data(self.fraction_live, bins=100)
-            ax = percent_live_hist.plot(show_stats=True, xlabel="% live-time", ylabel="Counts")
-            ax.set_title("Frequencies of percent live-time")
+            # percent_live_hist = TH1F.from_raw_data(self.fraction_live, bins=100)
+            # ax = percent_live_hist.plot(show_stats=True, xlabel="% live-time", ylabel="Counts")
+            # ax.set_title("Frequencies of percent live-time")
 
     @property
     def file_name(self):
@@ -660,7 +659,7 @@ class MaestroListFile:
         indicies = np.searchsorted(self.realtimes, self.times)
         return 1.0/self.fraction_live[indicies]
 
-    def channel_to_erg(self, channel):
+    def channel_to_erg(self, channel) -> np.ndarray:
         return np.sum([channel ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
 
     @cached_property
@@ -669,19 +668,8 @@ class MaestroListFile:
 
     @cached_property
     def erg_bins(self):
-        channel_bins = np.arange(self.n_adc_channels) - 0.5   #
+        channel_bins = np.arange(self.n_adc_channels + 1) - 0.5   #
         return self.channel_to_erg(channel_bins)
-
-    def get_spectrum_hist(self, t1=0, t2=None) -> TH1F:
-        if t2 is None:
-            index2 = len(self.times)
-        else:
-            index2 = np.searchsorted(self.times, t2)
-        index1 = np.searchsorted(self.times, t1)
-        hist = TH1F(bin_left_edges=self.erg_bins)
-        for erg in self.energies[index1: index2]:
-            hist.Fill(erg)
-        return hist
 
     def plot_count_rate(self, ax=None, smooth=None, **ax_kwargs):
         if ax is None:
@@ -893,7 +881,7 @@ class MaestroListFile:
         return np.where(mask)
 
     def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', time_bin_width=15,
-               time_step: int = 5, percent_of_max=False, bg_subtract=None):
+               time_step: int = 5, percent_of_max=False):
         """
         Args:
             erg_min:
@@ -911,6 +899,7 @@ class MaestroListFile:
             erg_min = self.erg_bins[0]
         if erg_max is None:
             erg_max = self.erg_bins[-1]
+
         tmin = self.times[0]
         tmax = self.times[-1]
         time_centers = np.linspace(tmin, tmax, int((tmax-tmin) // time_step + 1))
@@ -934,12 +923,12 @@ class MaestroListFile:
         # y_tot *= np.max(ys)/np.max(y_tot)
         fig.add_trace(
             go.Bar(
-                opacity=0.5,
                 visible=True,
                 name=f"All time",
                 x=energy_bin_centers,
                 y=y_tot,
-                marker_color='red')
+                marker_color='red',
+            )
         )
 
         steps = [dict(
@@ -957,14 +946,12 @@ class MaestroListFile:
             b_center = (t1+t0)/2
             if max(y)>_max_y:
                 _max_y = max(y)
-            if bg_subtract:
-                y -= b_width*bg_subtract
+
             label = f"t ~= {b_center:.1f} [s] ({t0:.1f} < t < {t1:.1f})"
             assert len(energy_bin_centers) == len(y), [len(energy_bin_centers), len(y)]
             fig.add_trace(
                 go.Bar(
                     visible=False,
-                    name=label,
                     x=energy_bin_centers,
                     y=y,
                     marker_color='blue'))
@@ -972,15 +959,15 @@ class MaestroListFile:
                 go.Scatter(
                     visible=False,
                     x=energy_bin_centers,
-                    y=convolve_gauss(y, 4),
+                    y=convolve_gauss(y, 3),
                     ))
             step = dict(
                 method="update",
                 args=[{"visible": [False] * (2*len(energy_bin_centers) + 1)},
                       {"title": label}],  # layout attribute
             )
-            step["args"][0]["visible"][2*index+1] = True  # Toggle i'th trace to "visible"
-            step["args"][0]["visible"][2*index+2] = True  # Toggle i+1'th trace to "visible"
+            step["args"][0]["visible"][2*index+1] = True  # Toggle trace to "visible"
+            step["args"][0]["visible"][2*index+2] = True  # Toggle trace to "visible"
             steps.append(step)
         fig.update_yaxes(range=[0, _max_y*1.1])
         sliders = [dict(
@@ -991,7 +978,7 @@ class MaestroListFile:
         )]
 
         fig.update_layout(
-            sliders=sliders, bargap=0
+            sliders=sliders, bargap=0, bargroupgap=0.0
         )
         # fig.update_layout(barmode='group', bargap=0.30,bargroupgap=0.0)
 
@@ -1102,12 +1089,18 @@ if __name__ == '__main__':
     #     t0 = time.time()
     #     b = np.array(a, dtype=object)
     #     print(time.time() - t0)
-    l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
+    # l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
+    l = MaestroListFile(r'C:\Users\garag\PycharmProjects\IACExperiment\exp_data\Friday\shot122.Lis')
+    bg_spe = SPEFile(r'C:\Users\garag\PycharmProjects\IACExperiment\exp_data\tuesday\BG.Spe')
+    bg = bg_spe
+    # l.plot_erg_spectrum()
+    # print(l.counts)
+    # l.pickle()
 
     # l.slicer()
     l.plotly(erg_min=40, erg_max=1000, time_bin_width=20, time_step=3)
     # l.get_time_dependence(218, debug_plot=True)
-    # plt.show()
+    plt.show()
     # l.plot_erg_spectrum()
 
     # sig, bg, bins = l.get_time_dependence(218.8, bins=15, signal_window_kev=3, bg_window_kev=30, debug_plot=True)
