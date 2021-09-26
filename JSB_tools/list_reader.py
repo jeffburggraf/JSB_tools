@@ -83,6 +83,175 @@ class MaestroListFile:
             e.g. a change in the energy calibration.
         self._original_path: Path of .Lis file data was originally read from.
     """
+    def __init__(self, path, max_words=None, debug=False):
+        """
+        self.adc_zero_time is the time you want to use for determining the system clock time of ADC events. DO NOT use
+        the start time in the header (self.start_time)
+        Args:
+            path:
+            max_words:
+            debug:
+        """
+        path = Path(path)
+        self._original_path = path
+        self._spe: SPEFile  = None
+
+        if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
+            path = cwd/'user_saved_data'/'SpecTestingData'/path
+
+        assert path.exists(), f'List file not found,"{path}"'
+
+        with open(path, 'rb') as f:
+            lst_header = self.read('i', f)
+
+            self.adc_values: Union[np.ndarray, List[float]] = []
+            assert lst_header == -13, f"Invalid list mode header. Should be '-13', got " \
+                                      f"'{lst_header}' instead."
+            self.list_style = self.read('i', f)
+            if self.list_style != 2:
+                raise NotImplementedError("Digibase and other list styles not yet implemented.")
+            ole2datetime(self.read('d', f))  # read start time. Dont use this value.
+            self.device_address = self.read("80s", f)
+            self.MCB_type_string = self.read("9s", f)
+            self.serial_number = self.read("16s", f)
+            s = self.read('80s', f)
+            self.description = s
+            self.valid_erg_calibration = self.read('1s', f)
+            self.erg_units = self.read("4s", f)
+            self.erg_calibration = [self.read('f', f) for i in range(3)]
+            self.valid_shape_calibration = self.read('1s', f)
+            self.shape_calibration = [self.read('f', f) for i in range(3)]
+            self.n_adc_channels = self.read('i', f)
+            self.det_id_number = self.read('i', f)
+            self.total_real_time = self.read('f', f)
+            self.total_live_time = self.read('f', f)
+            self.read('9s', f)
+            self.start_time: Union[datetime.datetime, None] = None
+
+            self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
+            # we see an RT word indicating the number of roll overs.
+            self.wintime = [None] * 8
+
+            self.livetimes = []
+            self.realtimes = []
+            self.sample_ready_state = []
+            self.gate_state = []
+            self.__10ms_counts__ = 0  # The number of ADC events each 10ms clock tick. Used for self.counts_per_sec.
+            self.counts_per_sec = []
+
+            self.times = []
+            self.n_words = 0
+
+            f_size = path.stat().st_size
+            self.max_words = max_words
+            prog = ProgressReport(f_size if self.max_words is None else self.max_words)
+
+            t0 = time.time()
+            while self.process_32(f, debug=debug):
+                if self.n_words % 200 == 0:
+                    if self.max_words is None:
+                        progress_index = f.tell()
+                    else:
+                        progress_index = self.n_words
+
+                    prog.log(progress_index)
+
+                # print(progress_index, f_size)
+                if self.max_words is not None and self.n_words > self.max_words:
+                    if len(self.livetimes) == len(self.realtimes):
+                        break
+                self.n_words += 1
+        print(f"Done reading list data. Rate: {int(len(self.times)/(time.time()-t0)):.2g} events read per second.")
+
+        if time.time() - t0 > 25:
+            _print_progress = True
+            print("Processing...")
+        else:
+            _print_progress = False
+
+        self.counts_per_sec = np.array(self.counts_per_sec)/10E-3
+
+        if debug:
+            print("Start time: ", self.start_time)
+            print("Live time: ", self.total_live_time)
+            print("Real time: ", self.total_real_time)
+            print("Total % live: ", self.total_live_time/self.total_real_time)
+            print("N events/s = ", len(self.times) / self.total_real_time)
+            print(f"Total counts: {self.n_counts}")
+
+        self.adc_values = np.array(self.adc_values)
+        t_log = time.time()
+        if _print_progress:
+            print('Converting pulse height data to energy...', end='')
+        self.energies = self.channel_to_erg(self.adc_values)
+        if _print_progress:
+            print(f'Done. ({time.time() - t_log:.1f} seconds)')
+        if _print_progress:
+            t_log = time.time()
+            print("Done.\nCalculating livetime fractions...", end='')
+
+        dead_time_corr_window = 10
+
+        self.fraction_live = self._calc_fraction_live(self.livetimes, self.realtimes, dead_time_corr_window)
+
+        if _print_progress:
+            print(f'Done. ({time.time() - t_log:.1f} seconds)')
+
+        if _print_progress:
+            t_log = time.time()
+            print("Converting data to numpy arrays...", end='')
+        self.sample_ready_state = np.array(self.sample_ready_state)
+        self.gate_state = np.array(self.gate_state)
+        self.times = np.array(self.times)
+        self.energies = np.array(self.energies)
+        self.realtimes = np.array(self.realtimes)
+        self.livetimes = np.array(self.livetimes)
+        if _print_progress:
+            print(f'Done. ({time.time() - t_log:.1f} seconds)')
+
+        self.__needs_updating__ = False
+        self._energy_binned_times = None
+
+        if debug:
+            plt.plot(self.realtimes, self.livetimes)
+            plt.xlabel("Real-time [s]")
+            plt.ylabel("Live-time [s]")
+            plt.figure()
+
+            plt.plot(self.realtimes, self.fraction_live)
+            plt.title("")
+            plt.xlabel("Real-time [s]")
+            plt.ylabel("% live-time")
+
+    def time_offset(self, t):
+        """
+        Offset all times by `t`. Useful for activation applications. For example, if the signal of interest begins at
+            some point in time during data acquisition due to nuclear activation from a particle accelerator.
+            This time may be determined using a pulse fed into the SAMPLE READY port. In this case, do the following:
+                l = MaestroListFile(...)
+                times = l.realtimes[np.where(l.sample_ready_state == 1)]
+                time = np.median(times)
+                l.time_offset(-time)
+        Args:
+            t: Time to offset in seconds.
+
+        Returns: None
+
+        """
+        self.times = self.times + t
+
+    @staticmethod
+    def _calc_fraction_live(livetimes, realtimes, dead_time_corr_window=10):
+        fraction_live = np.gradient(livetimes) / np.gradient(realtimes)
+        fraction_live = convolve_gauss(fraction_live, dead_time_corr_window)
+
+        # correct edge effects
+        fraction_live[0:dead_time_corr_window // 2] = \
+            np.median(fraction_live[dead_time_corr_window // 2:dead_time_corr_window])
+
+        fraction_live[-dead_time_corr_window // 2:] = \
+            np.median(fraction_live[-dead_time_corr_window: -dead_time_corr_window // 2])
+        return fraction_live
 
     @property
     def __default_spe_path__(self):
@@ -310,24 +479,39 @@ class MaestroListFile:
     def n_counts(self):
         return len(self.times)
 
-    def get_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3, bg_window_kev=3,
-                            bg_offsets: Union[None, Tuple, float] = None, debug_plot=False):
+    @cached_property
+    def sample_ready_median(self):
         """
-        Get the time dependence around erg +/- signal_window_kev/2. Median baseline is estimated and subtracted.
+        median of the times for which SAMPLE READY port is ON.
+        For when SAMPLE READY port is used as a time stamp.
+        Returns:
+
+        """
+        return np.median(self.realtimes[np.where(self.sample_ready_state == 1)])
+
+    def get_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3,
+                            bg_window_kev=None,
+                            bg_offsets: Union[None, Tuple, float] = None, make_rate=False,
+                            offset_sample_ready=False,
+                            debug_plot=False):
+        """
+        Get the time dependence around erg +/- signal_window_kev/2. Baseline is estimated and subtracted.
+        Estimation of baseline is done by taking the median rate ( with an energy of `energy` +/- `bg_window_kev`/2,
+        excluding signal window) of events in each time bin. The median is then normalized to the width of the signal
+        window (in KeV), and finally subtracted from the time dependence of events in the signal window.
         Args:
             energy:
             bins:
-            signal_window_kev:
-            bg_window_kev:
-            bg_offsets:
+            signal_window_kev: Width around `energy` that will be considered the signal.
+            bg_window_kev: Size of the window used for baseline estimation.
+            bg_offsets: Offset the baseline window from the center (default will avoid signal window by distance of
+                half `signal_window_kev`)
+            make_rate: Makes units in Hz instead of counts.
+            offset_sample_ready: Subtract the median of the times for which SAMPLE READY port is ON.
             debug_plot:
 
-        Returns: signal_values, baseline, bins
-            where,
-                  signal_values is baseline subtracted number of events
-                  baseline is the median # of events in vicinity of peak
-                  bins is the time bins used.
 
+        Returns: Tuple[signal window rate, baseline rate estimation, bins used]
         """
         if bg_offsets is None:
             bg_offsets = [2*signal_window_kev]*2
@@ -339,41 +523,62 @@ class MaestroListFile:
             bg_offsets = tuple([bg_offsets]*2)
         else:
             raise ValueError(f'Bad value for `bg_offsets`: {bg_offsets}')
-        bg_offsets = np.abs(bg_offsets)
-        # bg_offsets[0] *= -1
 
-        # bg_window_left_bounds, bg_window_right_bounds =\
-        #     [np.array([-bg_window_kev/2, bg_window_kev/2]) + energy - bg_window_kev/2 + o for o in bg_offsets]
+        if bg_window_kev is None:
+            bg_window_kev = 6*signal_window_kev
+
+        bg_offsets = np.abs(bg_offsets)
+
         bg_window_left_bounds = np.array([-bg_window_kev/2, 0]) + energy - bg_offsets[0]
         bg_window_right_bounds = np.array([0, bg_window_kev/2]) + energy + bg_offsets[1]
         sig_window_bounds = [energy-signal_window_kev/2, energy+signal_window_kev/2]
+
         bg_window_left_is = self.__erg_index__(bg_window_left_bounds)
         bg_window_right_is = self.__erg_index__(bg_window_right_bounds)
+
         bg_times = self.__energy_binned_times__[slice(*bg_window_left_is)]
         bg_times += self.__energy_binned_times__[slice(*bg_window_right_is)]
-        _, bins = np.histogram(bg_times[np.argmax(list(map(len, bg_times)))], bins=bins)
-        bg = np.array([interpolated_median(x) for x in np.array([np.histogram(times, bins=bins)[0]for times in bg_times]).transpose()])
-        sig_times, n_sig_bins = self.energy_slice(*sig_window_bounds, return_num_bins=True)
-        sig = np.histogram(sig_times, bins=bins)[0]
-        bg *= n_sig_bins
+
+        sig_times, n_sig_erg_bins = self.energy_slice(*sig_window_bounds, return_num_bins=True)
+
+        if isinstance(bins, str):
+            _, time_bins = np.histogram(sig_times, bins=bins)
+        elif isinstance(bins, int):
+            time_bins = np.linspace(sig_times[0], sig_times[-1], bins)
+        else:
+            assert hasattr(bins, '__iter__')
+            time_bins = bins
+
+        bg = np.array([interpolated_median(x) for x in np.array([np.histogram(times, bins=time_bins)[0]for times in bg_times]).transpose()])
+        bg *= n_sig_erg_bins
+
+        sig = np.histogram(sig_times, bins=time_bins)[0]
+
         if debug_plot:
             # fig, ax = plt.subplots()
-            for index, (b1, b2) in enumerate(zip(bins[:-1], bins[1:])):
+            for index, (b1, b2) in enumerate(zip(time_bins[:-1], time_bins[1:])):
                 ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0]-signal_window_kev,
                                                bg_window_right_bounds[-1] + signal_window_kev, b1, b2,
                                                return_bin_values=True)
-                ax.plot(bg_window_left_bounds, [bg[index]/n_sig_bins] * 2,
+                ax.plot(bg_window_left_bounds, [bg[index]/n_sig_erg_bins] * 2,
                         label='Baseline est.', color='red', ls='--')
-                ax.plot(bg_window_right_bounds, [bg[index] / n_sig_bins] * 2, color='red', ls='--')
-                ax.plot(sig_window_bounds, [sig[index]/n_sig_bins] * 2,
+                ax.plot(bg_window_right_bounds, [bg[index] / n_sig_erg_bins] * 2, color='red', ls='--')
+                ax.plot(sig_window_bounds, [sig[index]/n_sig_erg_bins] * 2,
                         label='Sig. +bg. est.', ls='--')
                 ax.legend()
                 shade_plot(ax, sig_window_bounds, label='Signal window')
                 shade_plot(ax, bg_window_left_bounds, color='red', label='Bg. window')
                 shade_plot(ax, bg_window_right_bounds, color='red')
+                plt.show()
 
-                # ax.plot()
-        return (sig - bg), bg, bins
+        if make_rate:
+            b_widths = time_bins[1:] - time_bins[:-1]
+            sig /= b_widths
+            bg /= b_widths
+        if offset_sample_ready:
+            time_bins -= self.sample_ready_median
+
+        return (sig - bg), bg, time_bins
 
     def est_half_life(self, energy, window: float = 1.5, bg_window_width=None,
                       left_right_bg_offset:
@@ -480,163 +685,6 @@ class MaestroListFile:
 
         return np.log(2)/iterate()
 
-    def __init__(self, path, max_words=None, debug=False):
-        """
-        self.adc_zero_time is the time you want to use for determining the system clock time of ADC events. DO NOT use
-        the start time in the header (self.start_time)
-        Args:
-            path:
-            max_words:
-            debug:
-        """
-        path = Path(path)
-        self._original_path = path
-        self._spe: SPEFile  = None
-
-        if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
-            path = cwd/'user_saved_data'/'SpecTestingData'/path
-
-        assert path.exists(), f'List file not found,"{path}"'
-
-        with open(path, 'rb') as f:
-            lst_header = self.read('i', f)
-
-            self.adc_values: Union[np.ndarray, List[float]] = []
-            assert lst_header == -13, f"Invalid list mode header. Should be '-13', got " \
-                                      f"'{lst_header}' instead."
-            self.list_style = self.read('i', f)
-            if self.list_style != 2:
-                raise NotImplementedError("Digibase and other list styles not yet implemented.")
-            ole2datetime(self.read('d', f))  # read start time. Dont use this value.
-            self.device_address = self.read("80s", f)
-            self.MCB_type_string = self.read("9s", f)
-            self.serial_number = self.read("16s", f)
-            s = self.read('80s', f)
-            self.description = s
-            self.valid_erg_calibration = self.read('1s', f)
-            self.erg_units = self.read("4s", f)
-            self.erg_calibration = [self.read('f', f) for i in range(3)]
-            self.valid_shape_calibration = self.read('1s', f)
-            self.shape_calibration = [self.read('f', f) for i in range(3)]
-            self.n_adc_channels = self.read('i', f)
-            self.det_id_number = self.read('i', f)
-            self.total_real_time = self.read('f', f)
-            self.total_live_time = self.read('f', f)
-            self.read('9s', f)
-            self.start_time: Union[datetime.datetime, None] = None
-
-            self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
-            # we see an RT word indicating the number of roll overs.
-            self.wintime = [None] * 8
-
-            self.livetimes = []
-            self.realtimes = []
-            self.sample_ready_state = []
-            self.gate_state = []
-            self.__10ms_counts__ = 0  # The number of ADC events each 10ms clock tick. Used for self.counts_per_sec.
-            self.counts_per_sec = []
-
-            self.times = []
-            self.n_words = 0
-
-            f_size = path.stat().st_size
-            self.max_words = max_words
-            prog = ProgressReport(f_size if self.max_words is None else self.max_words)
-
-            t0 = time.time()
-            while self.process_32(f, debug=debug):
-                if self.n_words % 200 == 0:
-                    if self.max_words is None:
-                        progress_index = f.tell()
-                    else:
-                        progress_index = self.n_words
-
-                    prog.log(progress_index)
-
-                # print(progress_index, f_size)
-                if self.max_words is not None and self.n_words > self.max_words:
-                    if len(self.livetimes) == len(self.realtimes):
-                        break
-                self.n_words += 1
-        print(f"Done reading list data. Rate: {int(len(self.times)/(time.time()-t0)):.2g} events read per second.")
-
-        if time.time() - t0 > 25:
-            _print_progress = True
-            print("Processing...")
-        else:
-            _print_progress = False
-
-        self.counts_per_sec = np.array(self.counts_per_sec)/10E-3
-
-        if debug:
-            print("Start time: ", self.start_time)
-            print("Live time: ", self.total_live_time)
-            print("Real time: ", self.total_real_time)
-            print("Total % live: ", self.total_live_time/self.total_real_time)
-            print("N events/s = ", len(self.times) / self.total_real_time)
-            print(f"Total counts: {self.n_counts}")
-
-        self.adc_values = np.array(self.adc_values)
-        t_log = time.time()
-        if _print_progress:
-            print('Converting pulse height data to energy...', end='')
-        self.energies = self.channel_to_erg(self.adc_values)
-        if _print_progress:
-            print(f'Done. ({time.time() - t_log:.1f} seconds)')
-        if _print_progress:
-            t_log = time.time()
-            print("Done.\nCalculating livetime fractions...", end='')
-
-        # kernel_size = 5*dead_time_corr_window
-        # kernel = norm(loc=0, scale=dead_time_corr_window)\
-        #     .pdf(np.linspace(-kernel_size//2, kernel_size//2, kernel_size))  # scale: 0.1 seconds
-        # kernel /= np.sum(kernel)
-        dead_time_corr_window = 10
-
-        self.fraction_live = np.gradient(self.livetimes) / np.gradient(self.realtimes)
-        self.fraction_live = convolve_gauss(self.fraction_live, dead_time_corr_window)
-        # self.fraction_live = np.convolve(self.fraction_live, kernel, mode='same')
-
-        # correct edge effects
-        self.fraction_live[0:dead_time_corr_window // 2] = \
-            np.median(self.fraction_live[dead_time_corr_window // 2:dead_time_corr_window])
-
-        self.fraction_live[-dead_time_corr_window // 2:] = \
-            np.median(self.fraction_live[-dead_time_corr_window: -dead_time_corr_window // 2])
-
-        if _print_progress:
-            print(f'Done. ({time.time() - t_log:.1f} seconds)')
-
-        if _print_progress:
-            t_log = time.time()
-            print("Converting data to numpy arrays...", end='')
-        self.sample_ready_state = np.array(self.sample_ready_state)
-        self.gate_state = np.array(self.gate_state)
-        self.times = np.array(self.times)
-        self.energies = np.array(self.energies)
-        self.realtimes = np.array(self.realtimes)
-        self.livetimes = np.array(self.livetimes)
-        if _print_progress:
-            print(f'Done. ({time.time() - t_log:.1f} seconds)')
-
-        self.__needs_updating__ = False
-        self._energy_binned_times = None
-
-        if debug:
-            plt.plot(self.realtimes, self.livetimes)
-            plt.xlabel("Real-time [s]")
-            plt.ylabel("Live-time [s]")
-            plt.figure()
-
-            plt.plot(self.realtimes, self.fraction_live)
-            plt.title("")
-            plt.xlabel("Real-time [s]")
-            plt.ylabel("% live-time")
-
-            # percent_live_hist = TH1F.from_raw_data(self.fraction_live, bins=100)
-            # ax = percent_live_hist.plot(show_stats=True, xlabel="% live-time", ylabel="Counts")
-            # ax.set_title("Frequencies of percent live-time")
-
     @property
     def file_name(self):
         return self._original_path.name
@@ -645,6 +693,7 @@ class MaestroListFile:
         if ax is None:
             plt.figure()
             ax = plt.gca()
+        ax.set_title(self._original_path.name)
         ax.plot(self.realtimes, self.fraction_live, **ax_kwargs)
         ax.set_xlabel("Real time [s]")
         ax.set_ylabel("Fraction livetime")
@@ -684,6 +733,7 @@ class MaestroListFile:
         else:
             y = self.counts_per_sec
         ax.plot(self.realtimes, y, **ax_kwargs)
+        ax.set_title(self._original_path.name)
         ax.set_xlabel("Real time [s]")
         ax.set_ylabel("Count rate [Hz]")
         return ax
@@ -890,7 +940,6 @@ class MaestroListFile:
             time_bin_width: Width of time range for each slider step.
             time_step: delta t between each slider step
             percent_of_max: It True, each bin is fraction of max.
-            bg_subtract: An array filled with counts/sec at each energy that is subtracted from plots.
 
         Returns:
 
@@ -933,10 +982,9 @@ class MaestroListFile:
 
         steps = [dict(
                 method="update",
-                args=[{"visible": [True] + [False] * len(energy_bin_centers)},
+                args=[{"visible": [True] + [False] * len(time_centers)},
                       {"title": f"All time"}],  # layout attribute
             )]
-        # ys = [self.get_erg_spectrum(erg_min, erg_max, b1, b2) for b1, b2 in zip(time_bins[:-1], time_bins[1:])]
 
         _max_y = 0
         if percent_of_max:
@@ -950,11 +998,14 @@ class MaestroListFile:
             label = f"t ~= {b_center:.1f} [s] ({t0:.1f} < t < {t1:.1f})"
             assert len(energy_bin_centers) == len(y), [len(energy_bin_centers), len(y)]
             fig.add_trace(
-                go.Bar(
+                go.Scatter(
                     visible=False,
                     x=energy_bin_centers,
                     y=y,
-                    marker_color='blue'))
+                    marker_color='blue',
+                    line={'shape': 'hvh'}
+                ),
+            )
             fig.add_trace(
                 go.Scatter(
                     visible=False,
@@ -963,7 +1014,7 @@ class MaestroListFile:
                     ))
             step = dict(
                 method="update",
-                args=[{"visible": [False] * (2*len(energy_bin_centers) + 1)},
+                args=[{"visible": [False] * (2*len(time_centers) + 1)},
                       {"title": label}],  # layout attribute
             )
             step["args"][0]["visible"][2*index+1] = True  # Toggle trace to "visible"
@@ -980,9 +1031,8 @@ class MaestroListFile:
         fig.update_layout(
             sliders=sliders, bargap=0, bargroupgap=0.0
         )
-        # fig.update_layout(barmode='group', bargap=0.30,bargroupgap=0.0)
-
         fig.show()
+        return fig
 
     def time_slice(self, time_min, time_max):
         """
@@ -1089,16 +1139,18 @@ if __name__ == '__main__':
     #     t0 = time.time()
     #     b = np.array(a, dtype=object)
     #     print(time.time() - t0)
-    # l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
-    l = MaestroListFile(r'C:\Users\garag\PycharmProjects\IACExperiment\exp_data\Friday\shot122.Lis')
-    bg_spe = SPEFile(r'C:\Users\garag\PycharmProjects\IACExperiment\exp_data\tuesday\BG.Spe')
-    bg = bg_spe
+    l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
+    # l = MaestroListFile(r'C:\Users\garag\PycharmProjects\IACExperiment\exp_data\Friday\shot122.Lis')
+    # bg_spe = SPEFile(r'C:\Users\garag\PycharmProjects\IACExperiment\exp_data\tuesday\BG.Spe')
+    # bg = bg_spe
     # l.plot_erg_spectrum()
     # print(l.counts)
     # l.pickle()
 
     # l.slicer()
-    l.plotly(erg_min=40, erg_max=1000, time_bin_width=20, time_step=3)
+    f = l.plotly(erg_min=40, erg_max=500, time_bin_width=20, time_step=2)
+    f = l.plotly(erg_min=50, erg_max=500, time_bin_width=20, time_step=2, fig2=f)
+
     # l.get_time_dependence(218, debug_plot=True)
     plt.show()
     # l.plot_erg_spectrum()
