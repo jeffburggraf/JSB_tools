@@ -52,7 +52,7 @@ class FitBase(metaclass=ABCMeta):
             yerr = unp.std_devs(y)
             y = unp.nominal_values(y)
         if yerr is None:
-            yerr = np.zeros(len(x))
+            yerr = np.ones(len(x))
         self.x = np.array(x)
         self.y = np.array(y)
         self.yerr = np.array(yerr)

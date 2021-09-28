@@ -21,6 +21,7 @@ import subprocess
 from functools import cached_property
 import pickle
 from pickle import UnpicklingError
+from JSB_tools import mpl_hist
 #  Todo:
 #   Add function to access num particles entering cells
 
@@ -55,7 +56,7 @@ class OutpCell:
 
     def get_tally(self):
         assert len(self.tallys) <= 1, f'Multiple tallys for cell {self.number}. Use `get_tallys`.'
-        assert len(self.tallys) > 0, f'No tally for cell {self.number}.'
+        assert len(self.tallys) > 0, f'No tally_n for cell {self.number}.'
         return self.tallys[0]
 
     @cached_property
@@ -105,7 +106,7 @@ class F4Tally(Tally):
             assert isinstance(outp, OutP)
 
             self.tally_modifiers = set()
-            # find tally number is not given
+            # find tally_n number is not given
             found_tally = False
             names_found = []
             if self.tally_number is None:
@@ -122,13 +123,13 @@ class F4Tally(Tally):
 
                             break
                 else:
-                    assert False, '\nCould not find tally with name "{0}"\nExample of using a name tag to access tally:' \
+                    assert False, '\nCould not find tally_n with name "{0}"\nExample of using a name tag to access tally_n:' \
                                   '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text ' \
                                   'after the string "name:" is the name tag (names are case insensitive)\n' \
                                   'Names found:\n{1}' \
                         .format(self.tally_name, names_found)
 
-            # set name to tally number if name not specified
+            # set name to tally_n number if name not specified
             if self.tally_name is None:
                 self.tally_name = str(self.tally_number)
 
@@ -144,7 +145,7 @@ class F4Tally(Tally):
                 card = card.lower()
                 if _m := tally_declaration_match.match(card):
                     cell_number = int(_m.group('cell'))
-                    assert cell_number in outp.cells, 'Invalid cell number for tally {}. Card:\n\t{}' \
+                    assert cell_number in outp.cells, 'Invalid cell number for tally_n {}. Card:\n\t{}' \
                         .format(self.tally_number, card)
                     __cell__ = outp.cells[cell_number]
                     self.particle = _m.group('particle')
@@ -157,9 +158,9 @@ class F4Tally(Tally):
             self.cells: Set[OutpCell] = {__cell__}  # list of cells for when self.__add__ etc. is used
 
             if not found_tally:
-                assert False, "Could not find tally {} in input deck!".format(self.tally_number)
+                assert False, "Could not find tally_n {} in input deck!".format(self.tally_number)
 
-            assert self.tally_number[-1] == "4", "Incorrect tally type!"
+            assert self.tally_number[-1] == "4", "Incorrect tally_n type!"
             self.tally_number = int(self.tally_number)
 
             found_n_tallies = 0
@@ -173,12 +174,12 @@ class F4Tally(Tally):
                     found_n_tallies += 1
                     tally_begin_index = index
             if found_n_tallies == 0:
-                msg = "Cannot find tally {} in {}".format(self.tally_number, outp.__f_path__)
+                msg = "Cannot find tally_n {} in {}".format(self.tally_number, outp.__f_path__)
                 if len(f4tallies_found):
                     msg += '\nF4 tallies found:\n{}'.format(f4tallies_found)
                 assert False, msg
             elif found_n_tallies > 1:
-                warn('\nSeveral dumps of tally {0} found. Using last entry.'.format(self.tally_number))
+                warn('\nSeveral dumps of tally_n {0} found. Using last entry.'.format(self.tally_number))
             index = tally_begin_index
             # initialize
             if len((self.tally_modifiers - {'e', 'fm'})) == 0:
@@ -212,9 +213,9 @@ class F4Tally(Tally):
                         break
                     index += 1
                 else:
-                    assert False, "Could not find energy data for tally {}".format(self.tally_number)
+                    assert False, "Could not find energy data for tally_n {}".format(self.tally_number)
 
-                self.__energy_bins__ = []
+                self.energy_bins = []
                 fluxes = []
                 flux_errors = []
 
@@ -227,26 +228,26 @@ class F4Tally(Tally):
                         try:
                             erg_bin, flux, rel_error = tuple(map(float, line.split()))
                         except ValueError as e:
-                            assert False, 'Error parsing tally {0}. Outp line:\n{1}\n{2}'.format(self.tally_number,
+                            assert False, 'Error parsing tally_n {0}. Outp line:\n{1}\n{2}'.format(self.tally_number,
                                                                                                  line, e)
 
                         fluxes.append(flux)
                         flux_errors.append(flux*rel_error)
-                        self.__energy_bins__.append(erg_bin)
+                        self.energy_bins.append(erg_bin)
                         index += 1
                     else:
                         break
                 self.underflow = ufloat(fluxes[0], flux_errors[0])
                 self.__fluxes__ = unp.uarray(fluxes, flux_errors)[1:]
-                self.energies = np.array([0.5*(b_low+b_high) for b_low, b_high in
-                                          zip(self.__energy_bins__[:-1], self.__energy_bins__[1:])])
+                self.energies = np.array([0.5 * (b_low+b_high) for b_low, b_high in
+                                          zip(self.energy_bins[:-1], self.energy_bins[1:])])
 
-                self.__energy_bins__ = np.array(self.__energy_bins__)
+                self.energy_bins = np.array(self.energy_bins)
                 _flux = float(outp.__outp_lines__[index].split()[1])
                 _flux_error = _flux * float(outp.__outp_lines__[index].split()[2])
                 self.__flux__ = ufloat(_flux, _flux_error)  # total flux
             else:
-                assert False, "Tally modifiers {} not supported yet! (from tally {})"\
+                assert False, "Tally modifiers {} not supported yet! (from tally_n {})"\
                     .format(self.tally_modifiers, self.tally_number)
 
     def __assert_no_fm__(self):
@@ -270,12 +271,12 @@ class F4Tally(Tally):
     @property
     def cell(self) -> OutpCell:
         assert len(self.cells) == 1,\
-            'Multiple cells are used for this tally since __add__, ect was used. Use self.cells instead'
+            'Multiple cells are used for this tally_n since __add__, ect was used. Use self.cells instead'
         return next(iter(self.cells))
 
     @property
     def dx_per_src(self):
-        assert len(self.fluxes) > 0, "can't use `dx_per_src` unless tally has bins. Use `total_dx_per_src` instead"
+        assert len(self.fluxes) > 0, "can't use `dx_per_src` unless tally_n has bins. Use `total_dx_per_src` instead"
         return self.total_volume*self.__fluxes__
 
     @property
@@ -314,7 +315,7 @@ class F4Tally(Tally):
 
     @property
     def erg_bin_widths(self):
-        out = [e2-e1 for e1, e2 in zip(self.__energy_bins__[:-1], self.__energy_bins__[1:])]
+        out = [e2 - e1 for e1, e2 in zip(self.energy_bins[:-1], self.energy_bins[1:])]
         return np.array(out)
 
     @property
@@ -345,9 +346,9 @@ class F4Tally(Tally):
             c = 1
         if isinstance(other, F4Tally):
             assert self.tally_modifiers == other.tally_modifiers,\
-                'Tally {} and tally {} do not have same bins/modifiers'.format(self.tally_name, other.tally_name)
+                'Tally {} and tally_n {} do not have same bins/modifiers'.format(self.tally_name, other.tally_name)
             assert len(self.energies) == len(other.energies), \
-                'Tally {} and tally {} do not have same length'.format(len(self.__fluxes__), len(other.__fluxes__))
+                'Tally {} and tally_n {} do not have same length'.format(len(self.__fluxes__), len(other.__fluxes__))
             self.tally_name += '{} {}'.format('-' if subtract else '+', other.tally_name)
             new_total_volume = other.total_volume + self.total_volume
 
@@ -360,7 +361,7 @@ class F4Tally(Tally):
             self.cells = self.cells.union(other.cells)
 
         elif isinstance(other, Sized):
-            assert len(other) == len(self.__fluxes__), 'Adding iterable of incompatible length to tally: {} != {}'\
+            assert len(other) == len(self.__fluxes__), 'Adding iterable of incompatible length to tally_n: {} != {}'\
                 .format(len(self.__fluxes__), other.__len__())
             if isinstance(other, list):
                 if isinstance(other[0], UFloat):
@@ -404,7 +405,8 @@ class F4Tally(Tally):
             else:
                 ax.set_ylabel('flux')
                 c = 1
-        ax.errorbar(self.energies, c*self.nominal_fluxes, c*self.std_devs_of_fluxes, label=label)
+        mpl_hist(self.energy_bins, c*self.nominal_fluxes, c*self.std_devs_of_fluxes, label=label, ax=ax)
+        # ax.errorbar(self.energies, c*self.nominal_fluxes, c*self.std_devs_of_fluxes, label=label)
         return ax
 
 
@@ -425,7 +427,8 @@ def load_globals(pickle_path):
 class OutP:
     def __init__(self, file_path):
         self.__f_path__ = Path(file_path)
-        self.__outp_lines__ = open(file_path).readlines()
+        with open(file_path) as f:
+            self.__outp_lines__ = f.readlines()
         if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0]):
             warn('\nThe file\n"{}"\ndoes not appear to be an MCNP output file!\n'.format(file_path))
 
@@ -473,7 +476,7 @@ class OutP:
                 self.cells[cell_num].name = m.groups()[1]
 
     def get_cell_by_name(self, name: str):
-        match = name.rstrip().lstrip()
+        match = name.rstrip().lstrip().lower()
         for _, cell in self.cells.items():
             if match == cell.name:
                 out = cell

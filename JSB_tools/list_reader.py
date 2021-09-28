@@ -14,11 +14,12 @@ from bitstring import BitStream
 import numpy as np
 from matplotlib import pyplot as plt
 from datetime import timezone
-from typing import List, Union, Tuple, Iterable
+from typing import List, Union, Tuple, Iterable, Callable
 import filetime
 from functools import cached_property
 import time
 from uncertainties.core import UFloat
+from uncertainties.unumpy import uarray
 from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, shade_plot
 from JSB_tools.spe_reader import SPEFile
 
@@ -489,9 +490,15 @@ class MaestroListFile:
         """
         return np.median(self.realtimes[np.where(self.sample_ready_state == 1)])
 
-    def get_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3,
+    def get_time_dependence(self, energy,
+                            bins: Union[str, int, np.ndarray] = 'auto',
+                            signal_window_kev: float = 3,
                             bg_window_kev=None,
-                            bg_offsets: Union[None, Tuple, float] = None, make_rate=False,
+                            bg_offsets: Union[None, Tuple, float] = None,
+                            make_rate=False,
+                            normalization: Union[float, Callable, np.ndarray] = 1.,
+                            nominal_values=True,
+                            convolve: Union[float, int] = None,
                             offset_sample_ready=False,
                             debug_plot=False):
         """
@@ -507,6 +514,12 @@ class MaestroListFile:
             bg_offsets: Offset the baseline window from the center (default will avoid signal window by distance of
                 half `signal_window_kev`)
             make_rate: Makes units in Hz instead of counts.
+            normalization: User supplied float or array of floats (len(bins) - 1) used to scale rates.
+                If a Callable, the bins wil be passed to the supplied function which must return array of normalization
+                values of same length as bins.
+            nominal_values: If False, return unp.uarray (i.e. include Poissonian errors).
+            convolve: If not None, perform gaussian convolution with sigma according to this value
+                (sigma units are array indicies).
             offset_sample_ready: Subtract the median of the times for which SAMPLE READY port is ON.
             debug_plot:
 
@@ -554,6 +567,10 @@ class MaestroListFile:
 
         sig = np.histogram(sig_times, bins=time_bins)[0]
 
+        if not nominal_values:
+            bg = uarray(bg, np.sqrt(bg))
+            sig = uarray(sig, np.sqrt(sig))
+
         if debug_plot:
             # fig, ax = plt.subplots()
             for index, (b1, b2) in enumerate(zip(time_bins[:-1], time_bins[1:])):
@@ -575,115 +592,61 @@ class MaestroListFile:
             b_widths = time_bins[1:] - time_bins[:-1]
             sig /= b_widths
             bg /= b_widths
+
+        if convolve is not None:
+            sig, bg = convolve_gauss(sig, convolve), convolve_gauss(bg, convolve)
+
         if offset_sample_ready:
             time_bins -= self.sample_ready_median
 
-        return (sig - bg), bg, time_bins
-
-    def est_half_life(self, energy, window: float = 1.5, bg_window_width=None,
-                      left_right_bg_offset:
-                      Union[None, Tuple[Union[float, int, None], Union[float, int, None]], float] = None,
-                      rtol=1E-5,
-                      debug_plot=False):
-        """
-
-        Args:
-            energy:
-            window:
-            bg_window_width: Window for bg estimation. Should be large-ish. If None, 10*window. Data in the energy range
-                of twice the signal window are not included in background estimation.
-            left_right_bg_offset:
-                Distance of bg offset(s) from energy center. By default, use value of `window` for left and right.
-                    - If tuple of len 2, use separate offsets for left and right bs windows. If None appears in a tuple
-                      entry, don't include background window for that side.
-                    - If a float, use same value for both left and right offsets.
-            rtol: Smaller = better convergence. 
-            debug_plot:
-
-        Returns:
-
-        """
-        if bg_window_width is None:
-            bg_window_width = 20*window
-
-        if left_right_bg_offset is None:
-            left_right_bg_offset = (window, window)
-        elif isinstance(left_right_bg_offset, Iterable):
-            left_right_bg_offset = list(left_right_bg_offset)
-            assert len(left_right_bg_offset) == 2, '`left_right_bg_offset` must be of length 2 when supplying ' \
-                                                   'asymmetrical windows.'
-            left_right_bg_offset = tuple(map(lambda x: window if x is None else x, left_right_bg_offset))
+        if hasattr(normalization, '__call__'):
+            c = normalization(time_bins)
         else:
-            assert isinstance(left_right_bg_offset, (int, float)),'Invalid type of `left_right_bg_offset` ' \
-                                                                  '(must be number)'
-            left_right_bg_offset = tuple([left_right_bg_offset]*2)
+            if hasattr(normalization, '__len__'):
+                assert len(normalization) == len(time_bins) - 1, '`normalization` argument of incorrect length.'
+            c = normalization
 
-        sig_window = np.array([-window/2, window/2]) + energy
-        times_raw, n_bins_center = self.energy_slice(*sig_window, return_num_bins=True)
+        return (sig - bg)*c, bg*c, time_bins
 
-        bg_window_left = np.array([-bg_window_width/2, 0]) + energy - left_right_bg_offset[0]
-        bg_window_right = np.array([0, bg_window_width/2]) + energy + left_right_bg_offset[1]
+    def plot_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3,
+                             bg_window_kev=None, bg_offsets: Union[None, Tuple, float] = None, make_rate=False,
+                             normalization=1., plot_background=False, ax=None, offset_sample_ready=False, convolve=None,
+                             **mpl_kwargs):
+        sig, bg, bins = \
+            self.get_time_dependence(energy=energy, bins=bins, signal_window_kev=signal_window_kev,
+                                     bg_window_kev=bg_window_kev, bg_offsets=bg_offsets, make_rate=make_rate,
+                                     normalization=normalization, nominal_values=False,
+                                     offset_sample_ready=offset_sample_ready, convolve=convolve)
 
-        times_bg_left, n_bins_bg_left = self.energy_slice(*bg_window_left, return_num_bins=True)
-        times_bg_right, n_bins_bg_right = self.energy_slice(*bg_window_right, return_num_bins=True)
-        times_bg = np.concatenate([times_bg_right, times_bg_left])
+        if ax is None:
+            fig, ax = plt.subplots()
+            ax.set_title(self._original_path.name)
 
-        y_raw, bins = np.histogram(times_raw, bins='auto')
-        y_bg, _ = np.histogram(times_bg, bins=bins)
+        if mpl_kwargs.get('label', None) is None:
+            mpl_kwargs['label'] = self._original_path.name
 
-        bin_centers = 0.5*(bins[:-1] + bins[1:])
-        bg_scale = 1.0/(n_bins_bg_left+n_bins_bg_right)*n_bins_center
-        y_bg = y_bg*bg_scale
-        y_sig = y_raw - y_bg
-        if debug_plot:
-            ax = mpl_hist(bins, y_raw, title=f"tot., raw, and bg. for peak at {energy} +/- {window/2}", label='tot.')
-            mpl_hist(bins, y_bg, ax=ax, label='bg')
-            mpl_hist(bins, y_sig, ax=ax, label='sig')
+        if plot_background:
+            mpl_kwargs['label'] += ' (Signal)'
 
-            ax.set_xlabel('Time [s]')
-            ax.set_ylabel('Counts')
-            ax.legend()
-            ax = self.plot_erg_spectrum(erg_min=energy-bg_window_width/1.5-window, erg_max=energy+bg_window_width/1.5+window,
-                                   )
-            # fig = plt.figure()
-            # fig.suptitle(self.file_name)
-            ax = plt.gca()
-            y1, y2 = [ax.get_ylim()[0]]*2, [ax.get_ylim()[1]]*2
-            ax.fill_between(bg_window_left, y1, y2, color='red', alpha=0.6,label='bg')
-            ax.fill_between(bg_window_right, y1, y2, color='red', alpha=0.6)
-            ax.fill_between(sig_window, y1, y2, color='blue', alpha=0.6, label='sig')
-            ax.legend()
-        min_time = bin_centers[np.argmax(y_sig)]
-        print('min time:', min_time)
+        _, c = mpl_hist(bins, sig, return_line_color=True, ax=ax, **mpl_kwargs)
 
-        times_raw = times_raw[np.where(times_raw >= min_time)] - min_time
-        times_bg = times_bg[np.where(times_bg >= min_time)] - min_time
-        weights = np.interp(times_raw + min_time, bin_centers, np.sqrt(y_raw))
-        # weights_bg = np.interp(times_bg + min_time, bin_centers, np.sqrt(y_bg/bg_scale))
-        # lambda_est = (len(times_raw)-len(times_bg))/(np.sum(times_raw) - np.sum(times_bg))
-        data_len = len(times_raw)-bg_scale*len(times_bg)
-        # data_len = np.sum(weights)-bg_scale*np.sum(weights)
-        data_sum = np.sum(times_raw) - bg_scale*np.sum(times_bg)
-        tmax = self.times[-1]
-
-        def iterate(prev_lambda=None):
-            # global i
-            # i += 1
-            if prev_lambda is None:
-                out = data_len / data_sum
-                print('init:', np.log(2)/out)
-                return iterate(out)
+        if plot_background:
+            label_bg = mpl_kwargs.get('label', '')
+            if label_bg is None:
+                label_bg = 'Baseline'
             else:
-                corr = -data_len * (tmax / (1 - np.e ** (tmax * prev_lambda)))
-                # print(corr, data_len, data_sum)
-                next_lambda = data_len / (data_sum + corr)
-                # print(np.log(2)/next_lambda)
-                if np.isclose(prev_lambda, next_lambda, rtol=rtol):
-                    return next_lambda
-                else:
-                    return iterate(next_lambda)
+                label_bg += ' (baseline)'
+            mpl_kwargs['label'] = label_bg
+            mpl_kwargs['ls'] = '--'
+            mpl_kwargs.pop('c', None)
+            mpl_kwargs.pop('color', None)
+            mpl_kwargs['c'] = c
+            mpl_hist(bins, bg, return_line_color=True, ax=ax, **mpl_kwargs)
 
-        return np.log(2)/iterate()
+        return ax
+
+    def est_half_life(self, energy):
+        raise NotImplementedError()
 
     @property
     def file_name(self):
@@ -1128,6 +1091,49 @@ class MaestroListFile:
 
     def __len__(self):
         return len(self.times)
+
+
+def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
+                               time_bins: Union[str, int, np.ndarray] = 'auto',
+                               mean_value=False,
+                               signal_window_kev: float = 3,
+                               bg_window_kev=None,
+                               bg_offsets: Union[None, Tuple, float] = None,
+                               normalization_constants=None,
+                               make_rate=False,
+                               nominal_values=True,
+                               offset_sample_ready=False,):
+    if normalization_constants is None:
+        normalization_constants = np.ones(len(list_files), dtype=float)
+    bins_Set_flag = False
+
+    cs = normalization_constants
+    bg = None
+    sig = None
+    tot_time = 0
+    for l, c in zip(list_files, cs):
+        _sig, _bg, _bins = l.get_time_dependence(energy=energy, bins=time_bins, signal_window_kev=signal_window_kev,
+                                                 bg_window_kev=bg_window_kev, bg_offsets=bg_offsets, make_rate=False,
+                                                 normalization=c, nominal_values=nominal_values,
+                                                 offset_sample_ready=offset_sample_ready)
+
+        tot_time += l.total_live_time
+        if not bins_Set_flag:
+            time_bins = _bins  # set bins
+            sig = _sig
+            bg = _bg
+            bins_Set_flag = True
+        else:
+            sig += _sig
+            bg += _bg
+    if mean_value:
+        sig /= len(list_files)
+        bg /= len(list_files)
+    if make_rate:
+        sig /= tot_time
+        bg /= tot_time
+
+    return sig, bg, time_bins
 
 
 if __name__ == '__main__':

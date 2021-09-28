@@ -12,7 +12,7 @@ from JSB_tools import trace_prints
 
 # Todo:
 #  - Reorganize module structure. It is a mess. Merge geom_core, __geom_helpers, and primitives into two modules.
-#  - Redo tally reader. It's too complex.
+#  - Redo tally_n reader. It's too complex.
 #  - Test new Sphere primitive.
 #  - Make a module for Tallys
 #
@@ -48,7 +48,7 @@ class CylFMESH(TallyBase):
 
         self.tally_number = tally_number
         if self.tally_number is not None:
-            assert str(self.tally_number)[-1] == '4', 'F4 tally number must end in a "4"'
+            assert str(self.tally_number)[-1] == '4', 'F4 tally_n number must end in a "4"'
 
         self.__name__ = fmesh_name
 

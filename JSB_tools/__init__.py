@@ -154,7 +154,7 @@ def convolve_gauss2d(a, sigma_x, kernel_sigma_window: int = 8, sigma_y=None):
     return out
 
 
-def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
+def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 10, mode='same'):
     """
     Simple gaussian convolution.
     Args:
