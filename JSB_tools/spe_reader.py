@@ -9,7 +9,7 @@ import numpy as np
 import uncertainties.unumpy as unp
 from uncertainties import UFloat
 from uncertainties.core import AffineScalarFunc
-from JSB_tools import Nuclide, mpl_hist, calc_background
+from JSB_tools import Nuclide, mpl_hist, calc_background, human_friendly_time, rolling_median
 from typing import List, Tuple, Union
 import marshal
 from lmfit.models import GaussianModel
@@ -56,11 +56,33 @@ class SPEFile:
         self.counts = unp.uarray(self.counts, np.sqrt(self.counts))
         lines = lines[start_index + i:]
         mca_cal = lines[lines.index('$MCA_CAL:\n')+2].split()
-        self.erg_calibration = list(map(float, mca_cal[:-1]))
+        self._erg_calibration = list(map(float, mca_cal[:-1]))
+        self.__energies__ = None  # if None, this signals to the energies property that energies must be calculated.
         self.erg_units = mca_cal[-1]
-        self.energies = self.channel_2_erg(self.channels)
+        # self.energies = self.channel_2_erg(self.channels)
 
         self.shape_cal = list(map(float, lines[lines.index('$SHAPE_CAL:\n')+2].split()))
+        self.pretty_realtime = human_friendly_time(self.realtime)
+        self.pretty_livetime = human_friendly_time(self.livetime)
+
+    @property
+    def deadtime_corr(self):
+        return self.realtime/self.livetime
+
+    @property
+    def erg_calibration(self):
+        return self._erg_calibration
+
+    @erg_calibration.setter
+    def erg_calibration(self, value):
+        self._erg_calibration = value
+        self.__energies__ = None
+
+    @property
+    def energies(self):
+        if self.__energies__ is None:
+            self.__energies__ = self.channel_2_erg(self.channels)
+        return self.__energies__
 
     def pickle(self, f_name=None, directory=None):
         if f_name is None:
@@ -72,10 +94,10 @@ class SPEFile:
             assert directory.exists(), f"Specified directory doesn't exist:\n{directory}t"
 
         f_path = (directory/f_name).with_suffix('.marshalSpe')  # add suffix
-        d_simple = {'shape_cal': self.shape_cal, 'energies': self.energies, 'erg_units': self.erg_units,
+        d_simple = {'shape_cal': self.shape_cal, 'erg_units': self.erg_units,
                     'erg_calibration': self.erg_calibration, 'channels': self.channels, 'livetime': self.livetime,
                     'realtime': self.realtime, 'system_start_time': self.system_start_time.strftime(SPEFile.time_format)
-                    ,'description': self.description, 'maestro_version': self.maestro_version,
+                    , 'description': self.description, 'maestro_version': self.maestro_version,
                     'device_serial_number': self.device_serial_number, 'detector_id': self.detector_id,
                     'path': str(self.path)}
         d_unp = {'counts': (unp.nominal_values(self.counts), unp.std_devs(self.counts))}
@@ -116,7 +138,7 @@ class SPEFile:
 
     def set_energy_cal(self, *coeffs, update_file=False):
         self.erg_calibration = np.array(coeffs)
-        self.energies = self.channel_2_erg(self.channels)
+        # self.energies = self.channel_2_erg(self.channels)
         if len(coeffs) == 2:
             coeffs = list(coeffs) + [0.]
 
@@ -139,8 +161,8 @@ class SPEFile:
                 f.writelines(lines)
             temp_file_path.rename(self.path)
 
-    def channel_2_erg(self, a) -> np.ndarray:
-        return np.sum([coeff * a ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
+    def channel_2_erg(self, chs) -> np.ndarray:
+        return np.sum([coeff * chs ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
 
     def erg_2_fwhm(self, erg):
         """
@@ -180,6 +202,10 @@ class SPEFile:
         """
         if isinstance(erg, AffineScalarFunc):
             erg = erg.n
+        if erg >= self.erg_bins[-1]:
+            return len(self.counts) - 1
+        if erg < self.erg_bins[0]:
+            return 0
         return np.searchsorted(self.erg_bins, erg, side='right') - 1
 
     @property
@@ -194,8 +220,9 @@ class SPEFile:
         Returns:
 
         """
-        ch = np.arange(len(self.counts) + 1, dtype=float)
-        return self.channel_2_erg(ch-0.5)
+        # ch = np.arange(len(self.counts) + 1, dtype=float)
+        chs = np.concatenate([self.channels, [self.channels[-1]+1]])
+        return self.channel_2_erg(chs-0.5)
 
     @property
     def rates(self):
@@ -203,7 +230,10 @@ class SPEFile:
 
     def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, remove_baseline=False,
                    make_density=False,
-                   nominal_values=False) -> Tuple[np.ndarray, np.ndarray]:
+                   nominal_values=False,
+                   return_bin_edges=False,
+                   deadtime_corr=False,
+                   debug_plot=False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Get energy spectrum within (optionally) a specified energy range.
         Args:
@@ -213,36 +243,48 @@ class SPEFile:
             remove_baseline: Whether or not to remove baseline.
             make_density: If True, result is divided by bin width
             nominal_values: If false, return uncertain array, else don't
+            return_bin_edges: If True, return bin edges
+            deadtime_corr: If True, correct for deatime
+            debug_plot: Plot counts
 
         Returns: counts, bin_edges
 
 
         """
+        if remove_baseline:
+            counts = self.counts - calc_background(self.counts)
+        else:
+            counts = self.counts
         if not all(x is None for x in [erg_min, erg_min]):
             if erg_min is None:
                 erg_min = self.erg_bins[0]
             if erg_max is None:
                 erg_max = self.erg_bins[-1]
-            erg_max = min([self.energies[-1], erg_max])
-            erg_min = max([self.energies[0], erg_min])
+            # erg_max = min([self.energies[-1], erg_max])
+            # erg_min = max([self.energies[0], erg_min])
             imin = self.__erg_index__(erg_min)
             imax = self.__erg_index__(erg_max)
             bins = self.erg_bins[imin: imax+1]
-            counts = self.counts[imin: imax]
+            counts = counts[imin: imax]
             b_widths = self.erg_bin_widths[imin: imax]
         else:
             bins = self.erg_bins
-            counts = self.counts
             b_widths = self.erg_bin_widths
 
-        if remove_baseline:
-            counts = counts - calc_background(counts)
         if make_rate:
             counts /= self.livetime
         if make_density:
             counts /= b_widths
+        if deadtime_corr:
+            counts *= self.deadtime_corr
 
-        return unp.nominal_values(counts) if nominal_values else counts, bins
+        out = unp.nominal_values(counts) if nominal_values else counts
+        if debug_plot:
+            mpl_hist(bins, out, title='"get_counts()" debug plot')
+        if return_bin_edges:
+            return out, bins
+        else:
+            return out
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None,
                           leg_label=None, make_rate=False, remove_baseline=False, make_density=False, **ax_kwargs):
@@ -266,7 +308,8 @@ class SPEFile:
             ax = plt.gca()
 
         counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate,
-                                       remove_baseline=remove_baseline, make_density=make_density)
+                                       remove_baseline=remove_baseline, make_density=make_density,
+                                       return_bin_edges=True)
 
         mpl_hist(bins, counts, ax=ax, label=leg_label, **ax_kwargs)
         ylabel = 'Counts'
@@ -288,6 +331,27 @@ class SPEFile:
     def get_baseline(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
         return calc_background(self.counts, num_iterations=num_iterations, clipping_window_order=clipping_window_order,
                                smoothening_order=smoothening_order)
+
+    def get_baseline_median(self,  erg_min: float = None, erg_max: float = None, window_width_kev=30):
+        """
+        Calculate the median withing a rolling window of width `window_width`. Generally good at estimating baseline.
+        Args:
+            erg_min: Min energy cut
+            erg_max: Max energy cut
+            window_width_kev: Size of rolling median window in KeV
+
+        Returns:
+
+        """
+        if erg_min is None:
+            erg_min = self.erg_bins[0]
+        if erg_max is None:
+            erg_max = self.erg_bins[-1]
+        center = (erg_min + erg_max)/2
+        window_width = self.__erg_index__(center+window_width_kev/2) - self.__erg_index__(center-window_width_kev/2)
+        _slice = slice(self.__erg_index__(erg_min), self.__erg_index__(erg_max))
+        bg_est = rolling_median(window_width=window_width, values=self.counts)[_slice]
+        return bg_est
 
     def get_baseline_removed(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
         return self.counts - self.get_baseline(num_iterations=num_iterations,
@@ -332,146 +396,55 @@ class SPEFile:
         weights = 1.0/weights
         plt.plot(x, model.eval(params=params, x=x))
         fit_result = model.fit(data=unp.nominal_values(y), x=x, weights=weights, params=params)
-        print(fit_result.fit_report())
         fit_result.plot()
+        return fit_result
 
+    @classmethod
+    def build(cls, path, counts, erg_calibration: List[float], live_time, realtime, channels=None, erg_units='KeV',
+              shape_cal=None, description=None, system_start_time=None) -> SPEFile:
+        self = SPEFile.__new__(cls)
+        self.__energies__ = None
 
+        if isinstance(counts[0], UFloat):
+            self.counts = counts
+        else:
+            self.counts = unp.uarray(counts, np.sqrt(counts))
 
+        if channels is None:
+            self.channels = np.arange(len(self.counts))
+        else:
+            self.channels = channels
 
-# class EfficiencyCal:
-#     def __init__(self):
-#         self.erg_bin_centers = None
-#         self._cal_ergs = []
-#         self._cal_meas_counts = []
-#         self._cal_true_counts = []
-#         self._cal_sources = []
-#         self.window_widths = []
-#
-#     @property
-#     def cal_meas_counts(self):
-#         return np.array(self._cal_meas_counts)[np.argsort(self._cal_ergs)]
-#
-#     @property
-#     def cal_true_counts(self):
-#         return np.array(self._cal_true_counts)[np.argsort(self._cal_ergs)]
-#
-#     @property
-#     def cal_sources(self):
-#         return np.array(self._cal_sources)[np.argsort(self._cal_ergs)]
-#
-#     @property
-#     def cal_ergs(self):
-#         return np.array(self._cal_ergs)[np.argsort(self._cal_ergs)]
-#
-#     def add_cal_peak_with_spe(self, spe_file: SPEFile,
-#                               nuclide: Nuclide,
-#                               peak_energies: List[float],
-#                               counting_window_width,
-#                               ref_activity: float,
-#                               activity_ref_date: datetime,
-#                               activity_unit='uCi',
-#                               include_decay_chain=False,
-#                               **bg_kwargs):
-#         baseline_removed = spe_file.counts - spe_file.get_baseline(**bg_kwargs)
-#         if self.erg_bin_centers is None:
-#             self.erg_bin_centers = spe_file.energies
-#         else:
-#             assert all(spe_file.energies == self.erg_bin_centers),\
-#                 "Incompatible SPE files used! (they have different erg bins)"
-#         if include_decay_chain:
-#             all_gamma_lines = nuclide.decay_gamma_lines + nuclide.decay_chain_gamma_lines()
-#         else:
-#             all_gamma_lines = nuclide.decay_gamma_lines
-#         for erg in peak_energies:
-#             g = all_gamma_lines[np.argmin([abs(erg - _g.erg) for _g in all_gamma_lines])]
-#             if abs(g.erg - erg)<0.1:
-#                 self.window_widths.append(counting_window_width)
-#                 self._cal_ergs.append(erg)
-#
-#                 ngammas = g.get_n_gammas(ref_activity=ref_activity, activity_ref_date=activity_ref_date,
-#                                          tot_acquisition_time=spe_file.livetime, acquisition_ti=spe_file.system_start_time,
-#                                          activity_unit=activity_unit)
-#                 selector = np.where((spe_file.energies >= erg-counting_window_width//2) &
-#                                                         (spe_file.energies <= erg+counting_window_width//2))
-#                 peak_counts = baseline_removed[selector]
-#                 peak_counts = sum(peak_counts)
-#                 self._cal_meas_counts.append(peak_counts)
-#                 self._cal_true_counts.append(ngammas)
-#                 self._cal_sources.append(nuclide.name)
-#
-#     @property
-#     def eff_cal_points(self):
-#         out = np.array([m/t for m, t in zip(self.cal_meas_counts, self.cal_true_counts)])
-#         return out
-#
-#     @property
-#     def nominal_eff_cal_points(self):
-#         out = np.array([x.n for x in self.eff_cal_points])
-#         return out
-#
-#     @property
-#     def eff_cal_points_error(self):
-#         out = np.array([x.std_dev for x in self.eff_cal_points])
-#         return out
-#
-#     def plot_eff(self, ax=None):
-#         if ax is None:
-#             plt.figure()
-#             ax = plt.gca()
-#         for n_name in set(self.cal_sources):
-#             select = np.where(self.cal_sources == n_name)
-#             x = self.cal_ergs[select]
-#             y = self.nominal_eff_cal_points[select]
-#             yerr = self.eff_cal_points_error[select]
-#
-#             ax.errorbar(x, y, yerr=yerr, ls='None', marker='d', label=n_name)
-#         ax.legend()
-#         return ax
-#
-#     def plot_counts(self, ax=None):
-#         if ax is None:
-#             plt.figure()
-#             ax = plt.gca()
-#         ax.plot(self.cal_ergs, [x.n for x in self.cal_meas_counts], ls='None', marker='d')
-#         return ax
+        self.erg_calibration = list(erg_calibration)
+        self.erg_units = erg_units
+
+        if shape_cal is None:
+            self.shape_cal = [0, 1, 0]
+        else:
+            self.shape_cal = shape_cal
+
+        self.path = path
+
+        self.livetime = live_time
+        self.realtime = realtime
+
+        if system_start_time is None:
+            system_start_time = datetime(year=1, month=1, day=1)
+        self.system_start_time = system_start_time
+
+        if description is None:
+            description = ''
+        self.description = description
+
+        self.device_serial_number = 0
+        self.detector_id = 0
+
+        return self
 
 
 if __name__ == '__main__':
-    from JSB_tools import Nuclide
-    import time
-    import cProfile
-
-    p = '/Users/burggraf1/Desktop/__.Spe'
-    #
-    s = SPEFile(p)
-    s.set_energy_cal(666, 666, update_file=True)
-    # s = SPEFile(p)
-    # # s.plot_erg_spectrum(remove_baseline=True, erg_min=212, erg_max=230)
-    # s.multi_peak_fit([219, 221.3])
-    #
-    # plt.show()
-
-    # s = SPEFile(p)
-    # s.set_energy_cal(0.0179, 0.19410, update_file=True)
-    # s.plot_erg_spectrum(erg_max=500, remove_baseline=True)
-    # plt.figure()
-    # plt.plot(s.energies, s.erg_2_fwhm(s.energies))
-    # plt.show()
-    #
-    # # t = time.time()
-    # # for i in range(1000):
-    # #     s = SPEFile(p)
-    # # print((time.time() - t)/100)
-    # #
-    # # # s.pickle()
-    # # t = time.time()
-    # # for i in range(1000):
-    # #     s = SPEFile.from_pickle(p)
-    # # print((time.time() - t)/100)
-    # # print(dir(s))
-    # # s.get_spectrum_hist().plot()
-    # bins = [0, 1, 2, 3, 4]
-    #
-    # #
-    # #
-    # plt.show()
+    # from
+    pass
+    spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe')
+    spe.plot_erg_spectrum()
+    plt.show()

@@ -1169,9 +1169,9 @@ if __name__ == '__main__':
     # l2 = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot132.Lis')
     # l2.pickle()
     # t0 = time.time()
-    # hl = l.est_half_life(218.5, window=1.3, debug_plot=True, bg_window_width=3.5, left_right_bg_offset=(None, 2))
+    # time_in_seconds = l.est_half_life(218.5, window=1.3, debug_plot=True, bg_window_width=3.5, left_right_bg_offset=(None, 2))
     # print(time.time() - t0)
-    # print("Estimated half life:", hl)
+    # print("Estimated half life:", time_in_seconds)
     # # l.plot_erg_spectrum(remove_baseline=True)
     # # l2.plot_erg_spectrum(remove_baseline=True)
 

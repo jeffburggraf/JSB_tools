@@ -261,6 +261,13 @@ class F4Tally(Tally):
                 .format(self.tally_number)
 
     @property
+    def per_barn(self):
+        """
+        Return track length times atoms per barn per cm. Resulting units are barn^-1
+        """
+        return self.dx_per_src*self.cell.atom_density
+
+    @property
     def density(self):
         return self.cell_mass/self.total_volume
 
@@ -385,28 +392,28 @@ class F4Tally(Tally):
         copied_tally -= other
         return copied_tally
 
-    def plot(self, ax=None, track_length=True, title=None, label=None):
+    def plot(self, ax=None, track_length=True, title=None, label=None, norm=1):
         if ax is not None:
             if ax is plt:
                 ax = ax.gca()
         else:
             _, ax = plt.subplots(1,1)
 
-        if title is None and ax.lines == 0:
+        if title is None:
             title = self.tally_name
         ax.set_title(title)
         if 'fm' in self.tally_modifiers:
             ax.set_ylabel('reaction rate')
-            c = 1
+            c = norm
         else:
             if track_length:
                 ax.set_ylabel('track length [cm]')
-                c = self.total_volume
+                c = self.total_volume * norm
             else:
                 ax.set_ylabel('flux')
-                c = 1
+                c = norm
         mpl_hist(self.energy_bins, c*self.nominal_fluxes, c*self.std_devs_of_fluxes, label=label, ax=ax)
-        # ax.errorbar(self.energies, c*self.nominal_fluxes, c*self.std_devs_of_fluxes, label=label)
+        ax.ticklabel_format(style='sci', axis='y', scilimits=(-2, 3))
         return ax
 
 
