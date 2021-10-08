@@ -390,7 +390,7 @@ class BuildSpectrum:
         self.ch_br = np.array([0], dtype=float)
         self.t_br = np.array([0], dtype=float)
         self.tree.Branch('erg', self.erg_br, 'erg/F')
-        self.tree.Branch('eff', self.eff_br, 'eff/F')
+        self.tree.Branch('eff.py', self.eff_br, 'eff.py/F')
         self.tree.Branch('ch', self.ch_br, 'ch/F')
         self.tree.Branch('t', self.t_br, 't/F')
 
@@ -407,7 +407,7 @@ class ROOTSpectrum:
         The tree, named 'spectrum', must have (at least) the following branches:
             'ch': Channel
             't': time of gamma detection
-            'eff' efficiency of detector at energy erg.
+            'eff.py' efficiency of detector at energy erg.
             'erg': Energy
 
         As well as an associated pickle file with the following keys:

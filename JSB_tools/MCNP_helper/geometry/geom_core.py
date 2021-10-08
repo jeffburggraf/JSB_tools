@@ -32,10 +32,10 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
         for c in Surface.all_surfs.values():
             try:
                 if _max is None:
-                    _max = c.zmax
+                    _max = c.z1
                 else:
-                    if c.zmax > _max:
-                        _max = c.zmax
+                    if c.z1 > _max:
+                        _max = c.z1
             except AttributeError:
                 continue
         return _max

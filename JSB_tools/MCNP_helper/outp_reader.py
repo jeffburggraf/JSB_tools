@@ -174,9 +174,12 @@ class F4Tally(Tally):
                     found_n_tallies += 1
                     tally_begin_index = index
             if found_n_tallies == 0:
-                msg = "Cannot find tally_n {} in {}".format(self.tally_number, outp.__f_path__)
+                msg = "\nCannot find tally number {} in '{}'".format(self.tally_number, outp.__f_path__.relative_to(
+                    outp.__f_path__.parent.parent.parent))
                 if len(f4tallies_found):
                     msg += '\nF4 tallies found:\n{}'.format(f4tallies_found)
+                else:
+                    msg += '\nNo tallys found in output file!'
                 assert False, msg
             elif found_n_tallies > 1:
                 warn('\nSeveral dumps of tally_n {0} found. Using last entry.'.format(self.tally_number))
@@ -392,7 +395,7 @@ class F4Tally(Tally):
         copied_tally -= other
         return copied_tally
 
-    def plot(self, ax=None, track_length=True, title=None, label=None, norm=1):
+    def plot(self, ax=None, track_length=True, title=None, label=None, norm=1, ylabel=None):
         if ax is not None:
             if ax is plt:
                 ax = ax.gca()
@@ -402,17 +405,22 @@ class F4Tally(Tally):
         if title is None:
             title = self.tally_name
         ax.set_title(title)
+        ax.set_xlabel("Energy [Mev]")
         if 'fm' in self.tally_modifiers:
             ax.set_ylabel('reaction rate')
             c = norm
         else:
             if track_length:
-                ax.set_ylabel('track length [cm]')
+                ax.set_ylabel('Track length [cm]')
                 c = self.total_volume * norm
             else:
-                ax.set_ylabel('flux')
+                ax.set_ylabel('Particle flux [1/cm^2]')
                 c = norm
-        mpl_hist(self.energy_bins, c*self.nominal_fluxes, c*self.std_devs_of_fluxes, label=label, ax=ax)
+
+        if ylabel is not None:
+            ax.set_ylabel(ylabel)
+
+        mpl_hist(self.energy_bins, c*self.fluxes, label=label, ax=ax)
         ax.ticklabel_format(style='sci', axis='y', scilimits=(-2, 3))
         return ax
 

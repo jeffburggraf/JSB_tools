@@ -631,7 +631,8 @@ def __clean__(paths, warn_message):
             if not (yes_or_no == "yes"):
                 return
 
-    m = re.compile("(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)")
+    m = re.compile(r"(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
+                   r"(plot[m-z]\.ps)")
 
     for p in paths:
         for f_path in Path(p).iterdir():

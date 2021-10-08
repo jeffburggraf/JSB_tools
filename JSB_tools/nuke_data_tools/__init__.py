@@ -31,7 +31,7 @@ except ModuleNotFoundError:
     openmc_not_installed_warning()
 
 
-__all__ = ['Nuclide', 'FissionYields', 'openmc_not_installed_warning']
+__all__ = ['Nuclide', 'FissionYields', 'openmc_not_installed_warning', 'GammaLine']
 pwd = Path(__file__).parent
 
 DEBUG = False
@@ -337,7 +337,7 @@ class GammaLine(DecayModeHandlerMixin):
         else:
             mode = self.from_mode
 
-        return "Gamma line at {0:.2f} KeV; eff. intensity = {1:.2e}; decay: {2} "\
+        return "Gamma line at {0:.2f} KeV; eff.py. intensity = {1:.2e}; decay: {2} "\
             .format(self.erg, self.intensity, mode)
 
 
@@ -1179,13 +1179,18 @@ class Nuclide:
         else:
             return self.__decay_gamma_lines
 
-    def get_gamma_nearest(self, energy: float) -> GammaLine:
+    def get_gamma_nearest(self, energy: Union[float, List[float]]) -> GammaLine:
         if isinstance(energy, UFloat):
             energy = energy.n
         if len(self.decay_gamma_lines) == 0:
             raise IndexError(f"No gamma lines from {self.name}")
         ergs = np.array([g.erg.n for g in self.decay_gamma_lines])
-        out = self.decay_gamma_lines[np.argmin(np.abs(ergs-energy))]
+        if isinstance(energy, (float, int)):
+            out = self.decay_gamma_lines[np.argmin(np.abs(ergs-energy))]
+        else:
+            if not hasattr(energy, '__iter__'):
+                raise ValueError(f'Invalid value for arg `energy`: {energy}')
+            out = [self.decay_gamma_lines[np.argmin(np.abs(ergs - erg))] for erg in energy]
         return out
 
     @property

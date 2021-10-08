@@ -5,6 +5,7 @@ from JSB_tools.MCNP_helper.input_deck import InputDeck
 from JSB_tools.MCNP_helper.outp_reader import OutP, StoppingPowerData
 from JSB_tools.MCNP_helper.input_deck import F4Tally, TallyBase
 import JSB_tools.MCNP_helper.units
+from typing import Union
 __all__ = []
 from JSB_tools import trace_prints
 
@@ -23,16 +24,21 @@ class CylFMESH(TallyBase):
 
     # all_meshes = MCNPNumberMapping('CylFMESH', 1)
     # all_meshes = F4Tally.all_f4_tallies
-
-    def __init__(self, particle: str, rmax, axis_length, origin=(0, 0, 0), rbins=10, axis_bins=10, axs_hat=(0, 0, 1),
-                 radius_hat=(1, 0, 0), tally_number=None, fmesh_name=None,theta_bins=1, theta_max=1, ref=None):
+    def __init__(self, particle: str,
+                 rmaxs,
+                 axis_lengths,
+                 origin=(0, 0, 0),
+                 rbins: Union[int, tuple] = 10,
+                 axis_bins: Union[int, tuple] = 10, axs_hat=(0, 0, 1),
+                 theta_bins=1, theta_maxs=1,
+                 radius_hat=(1, 0, 0), tally_number=None, fmesh_name=None, ref=None):
         """
 
 
         Args:
             particle:
-            rmax:
-            axis_length: Distance along axis specified by `axs`
+            rmaxs:
+            axis_lengths: Distance along axis specified by `axs`
             origin: max theta in revolutions
             rbins: Number of radial bins.
             axis_bins: Number of bins along the axis
@@ -41,7 +47,7 @@ class CylFMESH(TallyBase):
             tally_number:
             fmesh_name:
             theta_bins: Number of bins in theta. Pretty much always should be 1.
-            theta_max:
+            theta_maxs:
             ref: REF keyword for mesh weight windows
         """
         super(CylFMESH, self).__init__()
@@ -52,14 +58,14 @@ class CylFMESH(TallyBase):
 
         self.__name__ = fmesh_name
 
-        self.rmax = rmax
-        self.rbins = rbins
+        self.rmax = rmaxs if hasattr(rmaxs, '__iter__') else (rmaxs,)
+        self.rbins = rbins if hasattr(rbins, '__iter__') else (rbins,)
 
-        self.axis_length = axis_length
-        self.axis_bins = axis_bins
+        self.axis_length = axis_lengths if hasattr(axis_lengths, '__iter__') else (axis_lengths,)
+        self.axis_bins = axis_bins if hasattr(axis_bins, '__iter__') else (axis_bins,)
 
-        self.theta_max = theta_max
-        self.theta_bins = theta_bins
+        self.theta_max = theta_maxs if hasattr(theta_maxs, '__iter__') else (theta_maxs,)
+        self.theta_bins = theta_bins if hasattr(theta_bins, '__iter__') else (theta_bins,)
 
         self.origin = origin
         self.particle = particle
@@ -85,9 +91,9 @@ class CylFMESH(TallyBase):
         optional = ' '.join(f'{k}={v}' for k, v in optional.items())
         out = f'FMESH{self.fmesh_number}:{self.particle} GEOM=cyl ORIGIN={f(self.origin)} AXS={f(self.axs_hat)} ' \
               f'VEC={f(self.radius_hat)} {optional} $ {self.__name__}\n' \
-              f'     IMESH {self.rmax}  IINTS {self.rbins}\n' \
-              f'     JMESH {self.axis_length}  JINTS {self.axis_bins}\n' \
-              f'     KMESH {self.theta_max}  KINTS {self.theta_bins}'
+              f'     IMESH {f(self.rmax)}  IINTS {f(self.rbins)}\n' \
+              f'     JMESH {f(self.axis_length)}  JINTS {f(self.axis_bins)}\n' \
+              f'     KMESH {f(self.theta_max)}  KINTS {f(self.theta_bins)}'
         return out
 
 

@@ -24,6 +24,7 @@ class SPEFile:
         assert self.path.exists(), self.path
         with open(self.path) as f:
             lines = f.readlines()
+
         index = lines.index('$SPEC_REM:\n')+1
         self.detector_id = int(lines[index][5:])
         index += 1
@@ -84,27 +85,28 @@ class SPEFile:
             self.__energies__ = self.channel_2_erg(self.channels)
         return self.__energies__
 
-    def pickle(self, f_name=None, directory=None):
-        if f_name is None:
-            f_name = self.path
+    def pickle(self, f_name: Union[str, Path] = None, directory: Path = None):
         if directory is None:
             directory = self.path.parent
         else:
             directory = Path(directory)
             assert directory.exists(), f"Specified directory doesn't exist:\n{directory}t"
 
-        f_path = (directory/f_name).with_suffix('.marshalSpe')  # add suffix
-        d_simple = {'shape_cal': self.shape_cal, 'erg_units': self.erg_units,
+        if f_name is None:
+            f_name = self.path
+            f_path = (directory/f_name).with_suffix('.marshalSpe')  # add suffix
+
+        d_simple = {'counts': list(self.counts), 'shape_cal': self.shape_cal, 'erg_units': self.erg_units,
                     'erg_calibration': self.erg_calibration, 'channels': self.channels, 'livetime': self.livetime,
                     'realtime': self.realtime, 'system_start_time': self.system_start_time.strftime(SPEFile.time_format)
                     , 'description': self.description, 'maestro_version': self.maestro_version,
                     'device_serial_number': self.device_serial_number, 'detector_id': self.detector_id,
                     'path': str(self.path)}
-        d_unp = {'counts': (unp.nominal_values(self.counts), unp.std_devs(self.counts))}
+        # d_unp = {'counts': (unp.nominal_values(self.counts), unp.std_devs(self.counts))}
         np_dtypes = {'channels': 'int'}
         with open(f_path, 'wb') as f:
             marshal.dump(d_simple, f)
-            marshal.dump(d_unp, f)
+            # marshal.dump(d_unp, f)
             marshal.dump(np_dtypes, f)
 
     @classmethod
@@ -113,7 +115,7 @@ class SPEFile:
         self = cls.__new__(cls)
         with open(f_path, 'rb') as f:
             d_simple = marshal.load(f)
-            d_unp = marshal.load(f)
+            # d_unp = marshal.load(f)
             np_dtypes = marshal.load(f)
         for k, v in d_simple.items():
             if isinstance(v, bytes):
@@ -123,9 +125,9 @@ class SPEFile:
                     t = np.float
                 v = np.frombuffer(v, t)
             setattr(self, k, v)
-        for k, v in d_unp.items():
-            v = unp.uarray(np.frombuffer(v[0], np.float), np.frombuffer(v[1], np.float))
-            setattr(self, k, v)
+        # for k, v in d_unp.items():
+        #     v = unp.uarray(np.frombuffer(v[0], np.float), np.frombuffer(v[1], np.float))
+        #     setattr(self, k, v)
         self.path = Path(self.path)
         self.system_start_time = datetime.strptime(self.system_start_time, SPEFile.time_format)
         return self
@@ -203,7 +205,7 @@ class SPEFile:
         if isinstance(erg, AffineScalarFunc):
             erg = erg.n
         if erg >= self.erg_bins[-1]:
-            return len(self.counts) - 1
+            return len(self.counts)
         if erg < self.erg_bins[0]:
             return 0
         return np.searchsorted(self.erg_bins, erg, side='right') - 1
@@ -233,7 +235,9 @@ class SPEFile:
                    nominal_values=False,
                    return_bin_edges=False,
                    deadtime_corr=False,
-                   debug_plot=False) -> Tuple[np.ndarray, np.ndarray]:
+                   baseline_method='root',
+                   baseline_kwargs=None,
+                   debug_plot=False):
         """
         Get energy spectrum within (optionally) a specified energy range.
         Args:
@@ -245,23 +249,33 @@ class SPEFile:
             nominal_values: If false, return uncertain array, else don't
             return_bin_edges: If True, return bin edges
             deadtime_corr: If True, correct for deatime
+            baseline_method: Either 'root' or 'median'. If 'median', use rolling median technique. Else use
+                ROOT.TSpectrum
+            baseline_kwargs: kwargs passed to baseline remove function.
             debug_plot: Plot counts
 
         Returns: counts, bin_edges
 
 
         """
+
         if remove_baseline:
-            counts = self.counts - calc_background(self.counts)
+            if baseline_kwargs is None:
+                baseline_kwargs = {}
+            if baseline_method.lower() == 'root':
+                counts = self.counts - calc_background(self.counts, **baseline_kwargs)
+            elif baseline_method.lower() == 'median':
+                counts = self.counts - self.get_baseline_median(**baseline_kwargs)
+            else:
+                assert False, f'Invalid `baseline_method` argument, "{baseline_method}"'
         else:
             counts = self.counts
+
         if not all(x is None for x in [erg_min, erg_min]):
             if erg_min is None:
                 erg_min = self.erg_bins[0]
             if erg_max is None:
                 erg_max = self.erg_bins[-1]
-            # erg_max = min([self.energies[-1], erg_max])
-            # erg_min = max([self.energies[0], erg_min])
             imin = self.__erg_index__(erg_min)
             imax = self.__erg_index__(erg_max)
             bins = self.erg_bins[imin: imax+1]
@@ -271,6 +285,11 @@ class SPEFile:
             bins = self.erg_bins
             b_widths = self.erg_bin_widths
 
+        if nominal_values:
+            out = unp.nominal_values(counts)
+        else:
+            out = counts
+
         if make_rate:
             counts /= self.livetime
         if make_density:
@@ -278,16 +297,17 @@ class SPEFile:
         if deadtime_corr:
             counts *= self.deadtime_corr
 
-        out = unp.nominal_values(counts) if nominal_values else counts
         if debug_plot:
-            mpl_hist(bins, out, title='"get_counts()" debug plot')
+            mpl_hist(bins, counts, title=f'"({self.path.name}).get_counts(); tot = {sum(out)}" debug plot')
+
         if return_bin_edges:
             return out, bins
         else:
             return out
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None,
-                          leg_label=None, make_rate=False, remove_baseline=False, make_density=False, **ax_kwargs):
+                          leg_label=None, make_rate=False, remove_baseline=False, make_density=False,
+                          scale=1, **ax_kwargs):
         """
         Plot energy spectrum within (optionally) a specified energy range.
         Args:
@@ -298,6 +318,7 @@ class SPEFile:
             make_rate: If True, divide by livetime
             remove_baseline: Is True, remove baseline
             make_density: y units will be counts/unit energy
+            scale: Arbitrary scaling constant
             ax:
 
         Returns:
@@ -310,6 +331,8 @@ class SPEFile:
         counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate,
                                        remove_baseline=remove_baseline, make_density=make_density,
                                        return_bin_edges=True)
+        if not isinstance(scale, (int, float)) or scale != 1:
+            counts *= scale
 
         mpl_hist(bins, counts, ax=ax, label=leg_label, **ax_kwargs)
         ylabel = 'Counts'
@@ -321,6 +344,7 @@ class SPEFile:
         ax.set_ylabel(ylabel)
 
         ax.set_xlabel('Energy [KeV]')
+        ax.set_title(self.path.name)
 
         return ax
 
@@ -332,13 +356,13 @@ class SPEFile:
         return calc_background(self.counts, num_iterations=num_iterations, clipping_window_order=clipping_window_order,
                                smoothening_order=smoothening_order)
 
-    def get_baseline_median(self,  erg_min: float = None, erg_max: float = None, window_width_kev=30):
+    def get_baseline_median(self, erg_min: float = None, erg_max: float = None, window_kev=30):
         """
         Calculate the median withing a rolling window of width `window_width`. Generally good at estimating baseline.
         Args:
             erg_min: Min energy cut
             erg_max: Max energy cut
-            window_width_kev: Size of rolling median window in KeV
+            window_kev: Size of rolling median window in KeV
 
         Returns:
 
@@ -348,7 +372,7 @@ class SPEFile:
         if erg_max is None:
             erg_max = self.erg_bins[-1]
         center = (erg_min + erg_max)/2
-        window_width = self.__erg_index__(center+window_width_kev/2) - self.__erg_index__(center-window_width_kev/2)
+        window_width = self.__erg_index__(center + window_kev / 2) - self.__erg_index__(center - window_kev / 2)
         _slice = slice(self.__erg_index__(erg_min), self.__erg_index__(erg_max))
         bg_est = rolling_median(window_width=window_width, values=self.counts)[_slice]
         return bg_est

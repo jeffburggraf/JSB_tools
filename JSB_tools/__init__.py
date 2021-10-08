@@ -152,8 +152,11 @@ def rolling_median(window_width, values):
 
 
 def shade_plot(ax, window, color='blue', alpha=0.5, label=None):
+    _ylims = ax.get_ylim()
     y1, y2 = [ax.get_ylim()[0]] * 2, [ax.get_ylim()[1]] * 2
-    ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
+    out = ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
+    ax.set_ylim(*_ylims)
+    return out
 
 
 def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5, median_window=None):
@@ -189,10 +192,10 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
     else:
         assert median_window is None, '`median_window` is not needed when ROOT is installed. '
 
-    cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+    clipping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
     smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
     spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
-                    cliping_window, ROOT.kTRUE,
+                    clipping_window, ROOT.kTRUE,
                     smoothening, ROOT.kTRUE)
     if rel_errors is None:
         return result
@@ -291,7 +294,7 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         ax.set_title(title)
 
     bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
-    yp = np.concatenate([y, [0.]])
+    yp = np.concatenate([y, [y[-1]]])
 
     lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', **mpl_kwargs)
     c = lines[0].get_color()
