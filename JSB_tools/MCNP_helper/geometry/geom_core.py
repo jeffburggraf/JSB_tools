@@ -17,8 +17,28 @@ Base class definitions for geometry primitives defined in primitives.py
 #  todo: In outp_reader, return a Cell instance (the one defnied here). Impliment this in the Cell class,
 #   e.g. a from_outp method
 
+
 class Surface(GeomSpecMixin, metaclass=ABCMeta):
     all_surfs = MCNPNumberMapping('Surface', 1)
+
+    @staticmethod
+    def global_zmax():
+        """
+        Return the largest .zmax attribute of all surfaces.
+        Returns:
+
+        """
+        _max = None
+        for c in Surface.all_surfs.values():
+            try:
+                if _max is None:
+                    _max = c.z1
+                else:
+                    if c.z1 > _max:
+                        _max = c.z1
+            except AttributeError:
+                continue
+        return _max
 
     @staticmethod
     def clear():
@@ -198,7 +218,7 @@ class Cell(GeomSpecMixin):
     def set_volume_kwarg(self, vol: float):
         """
         Set volume to be used internally by MCNP for this cell. Set to 1 to normalize volume out of
-                tallies (e.g. to get an F4 tally in units of track length per source particle)
+                tallies (e.g. to get an F4 tally_n in units of track length per source particle)
 
         Returns: None
         """

@@ -37,6 +37,74 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 
+def human_friendly_time(time_in_seconds, unit_precision=2):
+    """
+
+    Args:
+        time_in_seconds:
+        unit_precision: Number of units to print, e.g. for 3 months and 2 days and 10 minutes
+            If 1: 3 months
+            If 2: 3 months 2 days
+            If 3: 3 months 2 days  # num hours of 0 is omitted
+            If 4: 3 months 2 days 10 minutes
+
+    Returns:
+
+    """
+
+    rel_error = None
+    time = time_in_seconds
+    assert unit_precision >= 1
+    if isinstance(time_in_seconds, UFloat):
+        time = time_in_seconds.n
+        rel_error = time_in_seconds.std_dev/time_in_seconds.n
+
+    if time == np.inf or time == np.nan:
+        return str(time)
+
+    if time < 1:
+        out = "{:.2e} seconds ".format(time.n)
+        if rel_error is not None:
+            out += f'+/- {100*rel_error:.1f}%'
+        return out
+    elif time < 60:
+        out = "{:.1f} seconds ".format(time.n)
+        if rel_error is not None:
+            out += f'+/- {100 * rel_error:.1f}%'
+        return out
+
+    seconds_in_a_minute = 60
+    seconds_in_a_hour = 60 * seconds_in_a_minute
+    seconds_in_a_day = seconds_in_a_hour * 24
+    seconds_in_a_month = seconds_in_a_day * 30
+    seconds_in_a_year = 12 * seconds_in_a_month
+
+    n_seconds = time % seconds_in_a_minute
+    n_minutes = (time % seconds_in_a_hour) / seconds_in_a_minute
+    n_hours = (time % seconds_in_a_day) / seconds_in_a_hour
+    n_days = (time % seconds_in_a_month) / seconds_in_a_day
+    n_months = (time % seconds_in_a_year) / seconds_in_a_month
+    n_years = (time / seconds_in_a_year)
+    units = np.array(['years', 'months', 'days', 'hours', 'minutes', 'seconds'])
+    values = np.array([n_years, n_months, n_days, n_hours, n_minutes, n_seconds])
+    outs = []
+
+    printables = np.where(values>1)[0]
+    printables = printables[np.where(printables - printables[0] < unit_precision)]
+    value, unit = None, None
+    for unit, value in zip(units[printables], values[printables]):
+        outs.append(f"{int(value)} {unit}")
+    if unit == 'seconds':
+        outs[-1] = f'{value:.2e} {unit}'
+    else:
+        outs[-1] = f'{value:.2f} {unit}'
+    out = ' '.join(outs)
+    if rel_error is not None:
+        out += f' (+/- {100*rel_error:.1f}$)'
+
+    return out
+
+
 def interpolated_median(list_):
     """
     Find the median assuming data points are pulled from a unknown continuous frequency distribution.
@@ -63,6 +131,13 @@ def rolling_median(window_width, values):
     Returns:
 
     """
+    if isinstance(values[0], UFloat):
+        _v = unp.nominal_values(values)
+        rel_errors = unp.std_devs(values)/np.where(_v != 0, _v, 1)
+        values = _v
+    else:
+        rel_errors = None
+
     window_width = int(window_width)
     n = min([window_width, len(values)])
     if not isinstance(values, np.ndarray):
@@ -70,13 +145,18 @@ def rolling_median(window_width, values):
     window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
 
     medians = np.array([np.median(values[idx]) for idx in window_indicies])
-
-    return medians
+    if rel_errors is None:
+        return medians
+    else:
+        return unp.uarray(medians, np.abs(rel_errors*medians))
 
 
 def shade_plot(ax, window, color='blue', alpha=0.5, label=None):
+    _ylims = ax.get_ylim()
     y1, y2 = [ax.get_ylim()[0]] * 2, [ax.get_ylim()[1]] * 2
-    ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
+    out = ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
+    ax.set_ylim(*_ylims)
+    return out
 
 
 def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5, median_window=None):
@@ -98,7 +178,7 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
     spec = ROOT.TSpectrum()
     result = unp.nominal_values(counts)
     if isinstance(counts[0], UFloat):
-        rel_errors = unp.std_devs(counts)/np.where(result>0, result, 1)
+        rel_errors = unp.std_devs(counts)/np.where(result != 0, result, 1)
     else:
         rel_errors = None
 
@@ -112,15 +192,15 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
     else:
         assert median_window is None, '`median_window` is not needed when ROOT is installed. '
 
-    cliping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+    clipping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
     smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
     spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
-                    cliping_window, ROOT.kTRUE,
+                    clipping_window, ROOT.kTRUE,
                     smoothening, ROOT.kTRUE)
     if rel_errors is None:
         return result
     else:
-        return unp.uarray(result, rel_errors*result)
+        return unp.uarray(result, np.abs(rel_errors*result))
 
 
 def mpl_style():
@@ -154,7 +234,7 @@ def convolve_gauss2d(a, sigma_x, kernel_sigma_window: int = 8, sigma_y=None):
     return out
 
 
-def convolve_gauss(a, sigma: int, kernel_sigma_window: int = 10, mode='same'):
+def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 10, mode='same'):
     """
     Simple gaussian convolution.
     Args:
@@ -214,7 +294,7 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         ax.set_title(title)
 
     bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
-    yp = np.concatenate([y, [0.]])
+    yp = np.concatenate([y, [y[-1]]])
 
     lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', **mpl_kwargs)
     c = lines[0].get_color()
@@ -719,7 +799,8 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-
-    plt.show()
+    h = human_friendly_time(24*60*60*32 + 3*60+3.234455, 2)
+    print(h)
+    # plt.show()
 
 

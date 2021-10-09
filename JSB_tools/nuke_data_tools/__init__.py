@@ -31,7 +31,7 @@ except ModuleNotFoundError:
     openmc_not_installed_warning()
 
 
-__all__ = ['Nuclide', 'FissionYields', 'openmc_not_installed_warning']
+__all__ = ['Nuclide', 'FissionYields', 'openmc_not_installed_warning', 'GammaLine']
 pwd = Path(__file__).parent
 
 DEBUG = False
@@ -337,7 +337,7 @@ class GammaLine(DecayModeHandlerMixin):
         else:
             mode = self.from_mode
 
-        return "Gamma line at {0:.2f} KeV; eff. intensity = {1:.2e}; decay: {2} "\
+        return "Gamma line at {0:.2f} KeV; eff.py. intensity = {1:.2e}; decay: {2} "\
             .format(self.erg, self.intensity, mode)
 
 
@@ -1024,11 +1024,11 @@ def get_z_a_m_from_name(name: str) -> Dict[str, int]:
 
 def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only) -> bool:
     """
-    Does a nuclide with a given z, a, and hl (half life) make fit the criteria given by `a_z_hl_cut`?
+    Does a nuclide with a given z, a, and time_in_seconds (half life) make fit the criteria given by `a_z_hl_cut`?
 
     Args:
         a_z_hl_cut: The criteria to be evaluated as python code, where z=atomic number, a=mass_number,
-            and hl=half life in seconds
+            and time_in_seconds=half life in seconds
         a: mass number
         z: atomic number
         hl: half life in seconds
@@ -1045,16 +1045,16 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
 
     if len(a_z_hl_cut) > 0:
         a_z_hl_cut = a_z_hl_cut.lower()
-        if 'hl' in a_z_hl_cut and hl is None:
+        if 'time_in_seconds' in a_z_hl_cut and hl is None:
             makes_cut = False
         else:
             try:
-                makes_cut = eval(a_z_hl_cut, {"hl":hl, 'a': a, 'z': z})
+                makes_cut = eval(a_z_hl_cut, {"time_in_seconds":hl, 'a': a, 'z': z})
                 assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
             except NameError as e:
                 invalid_name = str(e).split("'")[1]
 
-                raise Exception("\nInvalid name '{}' used in cut. Valid names are: 'z', 'a', and 'hl',"
+                raise Exception("\nInvalid name '{}' used in cut. Valid names are: 'z', 'a', and 'time_in_seconds',"
                                 " which stand for atomic-number, mass-number, and half-life, respectively."
                                 .format(invalid_name)) from e
 
@@ -1179,13 +1179,18 @@ class Nuclide:
         else:
             return self.__decay_gamma_lines
 
-    def get_gamma_nearest(self, energy: float) -> GammaLine:
+    def get_gamma_nearest(self, energy: Union[float, List[float]]) -> GammaLine:
         if isinstance(energy, UFloat):
             energy = energy.n
         if len(self.decay_gamma_lines) == 0:
             raise IndexError(f"No gamma lines from {self.name}")
         ergs = np.array([g.erg.n for g in self.decay_gamma_lines])
-        out = self.decay_gamma_lines[np.argmin(np.abs(ergs-energy))]
+        if isinstance(energy, (float, int)):
+            out = self.decay_gamma_lines[np.argmin(np.abs(ergs-energy))]
+        else:
+            if not hasattr(energy, '__iter__'):
+                raise ValueError(f'Invalid value for arg `energy`: {energy}')
+            out = [self.decay_gamma_lines[np.argmin(np.abs(ergs - erg))] for erg in energy]
         return out
 
     @property
@@ -1664,6 +1669,8 @@ class Nuclide:
         Returns:
 
         """
+        if projectile == 'gamma':
+            warn("Gamma activation cross-sections are wrong! Needs investigating.")
         reaction = ActivationReactionContainer.from_pickle(self.name, projectile)
 
         assert isinstance(reaction, ActivationReactionContainer)
@@ -1713,7 +1720,7 @@ class Nuclide:
             a_z_hl_cut: Criteria (python code) to be evaluated, where
                 z=atomic number
                 a=mass number,
-                hl=half life in seconds.
+                time_in_seconds=half life in seconds.
                 Defaults to all known nuclides.
             is_stable_only:  Only include stable nuclides.
 

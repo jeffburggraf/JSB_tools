@@ -509,7 +509,6 @@ class Helper:
                     yield {'parent_symbol': symbol, 'f_path': f_path}
 
 
-
 def pickle_fission_product_yields():
     """
     To add more fission yield sources/ search for the tag 'Add here for fiss yield' and make the needed changes.
@@ -664,9 +663,16 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
+    p = '/Users/burggraf1/Downloads/TENDL-g/g-Ni058.tendl'
+    e = Evaluation(p)
+    r =  Reaction.from_endf(e, 5)
+    p = r.products[-3]
+    print(p)
+    plt.plot(p.y)
+    e.reaction_list
     import JSB_tools.nuke_data_tools
     # JSB_tools.nuke_data_tools.DEBUG = True
-    debug_nuclide("Cd109", library="Jeff")
+    # debug_nuclide("Cd109", library="Jeff")
     # pickle_decay_data(pickle_data=True, nuclides_to_process=None)
     # n = Nuclide.from_symbol("Na22")
     # print(n.positron_intensity)

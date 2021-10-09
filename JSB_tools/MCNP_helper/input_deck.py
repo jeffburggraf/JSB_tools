@@ -107,7 +107,7 @@ class MCNPSICard:
             si_card_number = MCNPSICard.get_next_si_number()
         else:
             assert isinstance(si_card_number, int), '`si_card_number` must be an integer.'
-        self.si_card_number = si_card_number
+        self.si_card_number = int(si_card_number)
 
         if discrete:
             self.si_option = 'L'
@@ -120,8 +120,10 @@ class MCNPSICard:
         else:
             self.sp_option = ''
 
-        self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option, ' '.join(map(str, self.variable_values)))
-        self.card += 'SP{0} {1} {2}'.format(self.si_card_number, self.sp_option, ' '.join(map(str, self.variable_probs)))
+        self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option,
+                                             ' '.join(map(lambda x: f'{x:.4e}', self.variable_values)))
+        self.card += 'SP{0} {1} {2}'.format(self.si_card_number,
+                                            self.sp_option, ' '.join(map(lambda x: f'{x:.4e}', self.variable_probs)))
 
     @classmethod
     def from_function(cls, function, variable_values, si_card_number=None, discrete=False, *func_args, **func_kwargs):
@@ -180,7 +182,7 @@ class F4Tally(TallyBase):
     def __init__(self, cell: Cell, particle: str, tally_number=None, tally_name=None, tally_comment=None):
         """
         Args:
-            cell: Cell instance for which the tally will be applied
+            cell: Cell instance for which the tally_n will be applied
             particle: MCNP particle designator
             tally_number: Must end in a 4. Or, just leave as None and let the code pick for you
             tally_name:  Used in JSB_tools.outp_reader to fetch tallies by name.
@@ -191,7 +193,7 @@ class F4Tally(TallyBase):
         self.erg_bins_array = None
         self.tally_number = tally_number
         if self.tally_number is not None:
-            assert str(self.tally_number)[-1] == '4', 'F4 tally number must end in a "4"'
+            assert str(self.tally_number)[-1] == '4', 'F4 tally_n number must end in a "4"'
         self.__name__ = tally_name
         self.tally_comment = tally_comment
         TallyBase.all_f4_tallies[self.tally_number] = self
@@ -213,7 +215,7 @@ class F4Tally(TallyBase):
 
     def add_fission_rate_multiplier(self, mat: int) -> None:
         """
-        Makes this tally a fissionXS rate tally [fissions/(src particle)/cm3] for neutrons and protons
+        Makes this tally_n a fissionXS rate tally_n [fissions/(src particle)/cm3] for neutrons and protons
         Args:
             mat: Material number
 
@@ -629,7 +631,8 @@ def __clean__(paths, warn_message):
             if not (yes_or_no == "yes"):
                 return
 
-    m = re.compile("(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)")
+    m = re.compile(r"(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
+                   r"(plot[m-z]\.ps)")
 
     for p in paths:
         for f_path in Path(p).iterdir():
