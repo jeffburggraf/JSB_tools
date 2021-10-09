@@ -890,7 +890,6 @@ class MaestroListFile:
             time_bin_width: Width of time range for each slider step.
             time_step: delta t between each slider step
             percent_of_max: It True, each bin is fraction of max.
-            bg_subtract: An array filled with counts/sec at each energy that is subtracted from plots.
 
         Returns:
 
