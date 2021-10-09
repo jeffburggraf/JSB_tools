@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import pickle
 import time
 import warnings
 from pathlib import Path
@@ -9,11 +11,12 @@ import numpy as np
 import uncertainties.unumpy as unp
 from uncertainties import UFloat
 from uncertainties.core import AffineScalarFunc
-from JSB_tools import Nuclide, mpl_hist, calc_background, human_friendly_time, rolling_median
+from JSB_tools import Nuclide, mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
 from typing import List, Tuple, Union
 import marshal
 from lmfit.models import GaussianModel
 from scipy.signal import find_peaks
+from matplotlib.axes import Axes
 
 
 class SPEFile:
@@ -65,6 +68,45 @@ class SPEFile:
         self.shape_cal = list(map(float, lines[lines.index('$SHAPE_CAL:\n')+2].split()))
         self.pretty_realtime = human_friendly_time(self.realtime)
         self.pretty_livetime = human_friendly_time(self.livetime)
+
+        self._efficiency = None
+
+    @property
+    def efficiency(self):
+        if self._efficiency is None:
+            eff_dir = self.path.parent/'effs'
+            eff_dir.mkdir(exist_ok=True)
+            eff_path = eff_dir/self.path.with_suffix('.eff').name
+            # eff_path = self.path.with_suffix('.eff')
+            if not eff_path.exists():
+                raise AttributeError("Efficiency not available. You must set an efficiency using self.efficiency = ...")
+            with open(eff_path, 'rb') as f:
+                self._efficiency = pickle.load(f)
+
+        return self._efficiency
+
+    def set_efficiency(self, efficiencies, pickle_eff=True):
+        """
+
+        Args:
+            efficiencies: Array of efficiencies for each bin. If None, remove efficiency pickle file and set efficiencies to 1
+            pickle_eff: If true, save efficiencies to file.
+
+        Returns:
+
+        """
+        assert len(efficiencies) == len(self.counts)
+        self._efficiency = efficiencies
+        eff_dir = self.path.parent / 'effs'
+        eff_path = eff_dir / self.path.with_suffix('.eff').name
+        if not eff_dir.exists():
+            eff_dir.mkdir()
+        if pickle_eff and efficiencies is not None:
+            with open(eff_path, 'wb') as f:
+                pickle.dump(self._efficiency, f)
+
+        if efficiencies is None:
+            eff_path.unlink(missing_ok=True)
 
     @property
     def deadtime_corr(self):
@@ -226,6 +268,20 @@ class SPEFile:
         chs = np.concatenate([self.channels, [self.channels[-1]+1]])
         return self.channel_2_erg(chs-0.5)
 
+    def erg_bins_cut(self, erg_min, erg_max):
+        """
+        Get array of energy bins in range specified by arguments.
+        Args:
+            erg_min:
+            erg_max:
+
+        Returns:
+
+        """
+        i0 = self.__erg_index__(erg_min)
+        i1 = self.__erg_index__(erg_max) + 1
+        return self.erg_bins[i0: i1]
+
     @property
     def rates(self):
         return self.counts/self.livetime
@@ -252,7 +308,8 @@ class SPEFile:
             baseline_method: Either 'root' or 'median'. If 'median', use rolling median technique. Else use
                 ROOT.TSpectrum
             baseline_kwargs: kwargs passed to baseline remove function.
-            debug_plot: Plot counts
+            debug_plot: If not False, plot counts for debugging purposes. If axis instance, plot on that axis.
+
 
         Returns: counts, bin_edges
 
@@ -297,8 +354,31 @@ class SPEFile:
         if deadtime_corr:
             counts *= self.deadtime_corr
 
-        if debug_plot:
-            mpl_hist(bins, counts, title=f'"({self.path.name}).get_counts(); tot = {sum(out)}" debug plot')
+        if debug_plot is not False:
+            if isinstance(debug_plot, Axes):
+                debug_ax = debug_plot
+            else:
+                plt.figure()
+                debug_ax = plt.gca()
+
+            extra_range = 20
+            _label = 'counts'
+            if make_rate:
+                _label += '/s'
+            if make_density:
+                _label += '/KeV'
+
+            debug_counts = self.get_counts(erg_min=erg_min-extra_range, erg_max=erg_max+extra_range, make_rate=make_rate,
+                                           remove_baseline=remove_baseline, make_density=make_density,
+                                           nominal_values=nominal_values, deadtime_corr=deadtime_corr,
+                                           baseline_method=baseline_method, baseline_kwargs=baseline_kwargs)
+            debug_bins = self.erg_bins_cut(erg_min - extra_range, erg_max + extra_range)
+            mpl_hist(debug_bins, debug_counts, title=f'"({self.path.name}).get_counts(); '
+                                                          f'integral= {sum(out)}" debug plot', ax=debug_ax)
+            shade_plot(debug_ax, [erg_min, erg_max], label='Counts range')
+            debug_ax.set_xlabel('[KeV]')
+            debug_ax.set_ylabel(f'[{_label}]')
+            debug_ax.legend()
 
         if return_bin_edges:
             return out, bins

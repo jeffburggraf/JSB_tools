@@ -20,7 +20,8 @@ from functools import cached_property
 import time
 from uncertainties.core import UFloat, ufloat
 from uncertainties.unumpy import uarray
-from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, shade_plot
+from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, shade_plot, \
+    rolling_median
 from JSB_tools.spe_reader import SPEFile
 
 # HERE = pytz.timezone('US/Mountain')
@@ -585,9 +586,9 @@ class MaestroListFile:
                                                time_max=time_bins[-1],
                                                return_bin_values=True,
                                                )
-                shade_plot(ax, bg_window_left_bounds, color='red', label='Sig. window')
+                shade_plot(ax, bg_window_left_bounds, color='red')
                 shade_plot(ax, bg_window_right_bounds, color='red', label='Bg. window')
-                shade_plot(ax, sig_window_bounds, color='blue')
+                shade_plot(ax, sig_window_bounds, color='blue', label='Sig. window')
                 ax.legend()
             else:
                 axs = None
@@ -849,7 +850,7 @@ class MaestroListFile:
         # return self.erg_bins[np.where((self.erg_bins >= erg_min) & (self.erg_bins <= erg_max))]
 
     def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
-                         time_max: float = None, return_bins=False):
+                         time_max: float = None, make_density=False, return_bins=False):
         """
         Get energy spectrum according to provided condition.
         Args:
@@ -857,6 +858,7 @@ class MaestroListFile:
             erg_max:
             time_min:
             time_max:
+            make_density: If True, divide by bin widths.
             return_bins: Return the energy bins, e.g. for use in a histogram.
 
         Returns:
@@ -882,8 +884,13 @@ class MaestroListFile:
         func = get_n_events()
         out = np.fromiter(map(func, time_arrays), dtype=int)
 
+        bins = self.erg_bins_cut(erg_min, erg_max)
+
+        if make_density:
+            out = out/(bins[1:] - bins[:-1])
+
         if return_bins:
-            return out, self.erg_bins_cut(erg_min, erg_max)
+            return out, bins
         else:
             return out
 
@@ -961,7 +968,7 @@ class MaestroListFile:
         return np.where(mask)
 
     def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', time_bin_width=15,
-               time_step: int = 5, percent_of_max=False):
+               time_step: int = 5, percent_of_max=False, remove_background=False):
         """
         Args:
             erg_min:
@@ -970,6 +977,7 @@ class MaestroListFile:
             time_bin_width: Width of time range for each slider step.
             time_step: delta t between each slider step
             percent_of_max: It True, each bin is fraction of max.
+            remove_background:
 
         Returns:
 
@@ -992,8 +1000,12 @@ class MaestroListFile:
         ys = []
 
         for b_width, (b0, b1) in zip(time_bin_widths, time_groups):
-            ys.append(self.get_erg_spectrum(erg_min, erg_max, b0, b1) / b_width)
+            _y = self.get_erg_spectrum(erg_min, erg_max, b0, b1) / b_width
+            if remove_background:
+                _y -= rolling_median(45, _y)
+            ys.append(_y)
             labels4bins.append((b0, b1))
+
         ys = np.array(ys)
 
         fig = go.Figure()
@@ -1128,7 +1140,7 @@ class MaestroListFile:
 
             total_livetime = self.livetimes[rt_i_max] - self.livetimes[rt_i_min]
             total_realtime = self.realtimes[rt_i_max] - self.realtimes[rt_i_min]
-
+        # path = (self._file_path.parent/f'{self._file_path.with_suffix("").name}').with_suffix('.Spe')
         data = {'counts': uarray(counts, np.sqrt(counts)), 'shape_cal': self.shape_cal,
                 'erg_units': self.erg_units, 'erg_calibration': self.erg_calibration,
                 'channels': np.arange(self.n_adc_channels), 'livetime': total_livetime,
