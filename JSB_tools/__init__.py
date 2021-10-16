@@ -63,12 +63,12 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
         return str(time)
 
     if time < 1:
-        out = "{:.2e} seconds ".format(time.n)
+        out = "{:.2e} seconds ".format(time)
         if rel_error is not None:
             out += f'+/- {100*rel_error:.1f}%'
         return out
     elif time < 60:
-        out = "{:.1f} seconds ".format(time.n)
+        out = "{:.1f} seconds ".format(time)
         if rel_error is not None:
             out += f'+/- {100 * rel_error:.1f}%'
         return out
@@ -105,20 +105,26 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     return out
 
 
-def interpolated_median(list_):
+def discrete_interpolated_median(list_):
     """
-    Find the median assuming data points are pulled from a unknown continuous frequency distribution.
+    Median of a list of integers.
+    Solves the problem of the traditional median being unaffected by values equal to the traditional median value.
     Args:
-        list_:
+        list_: An iterable of integers
 
     Returns:
 
     """
-    if len(list_) == 0:
-        return None
+
     values, freqs = np.unique(list_, return_counts=True)
-    cdf = np.cumsum(freqs)
-    return np.interp(cdf[-1]/2., cdf, values)
+    cumsum = np.cumsum(freqs)
+    m_i = np.searchsorted(cumsum, cumsum[-1]/2)
+    m = values[m_i]
+    nl = np.sum(freqs[:m_i])
+    ne = freqs[m_i]
+    ng = np.sum(freqs[m_i + 1:])
+    return m + (ng-nl)/(2*ne)
+
 
 
 def rolling_median(window_width, values):
@@ -258,7 +264,7 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 10, m
     return np.convolve(a, kernel, mode=mode)
 
 
-def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=True,
+def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
              return_line_color=False, **mpl_kwargs):
     """
 
@@ -287,6 +293,9 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     if isinstance(y[0], UFloat):
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
+    else:
+        if not isinstance(y, np.ndarray):
+            y = np.array(y)
     if yerr is None and poisson_errors:
         yerr = np.sqrt(np.where(y < 0, 0, y))
 

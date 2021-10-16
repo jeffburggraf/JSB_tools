@@ -20,7 +20,7 @@ from functools import cached_property
 import time
 from uncertainties.core import UFloat, ufloat
 from uncertainties.unumpy import uarray
-from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, interpolated_median, shade_plot, \
+from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, discrete_interpolated_median, shade_plot, \
     rolling_median
 from JSB_tools.spe_reader import SPEFile
 
@@ -569,7 +569,7 @@ class MaestroListFile:
             assert hasattr(bins, '__iter__')
             time_bins = bins
 
-        bg = np.array([interpolated_median(x) for x in np.array([np.histogram(times, bins=time_bins)[0]for times in bg_times]).transpose()])
+        bg = np.array([discrete_interpolated_median(x) for x in np.array([np.histogram(times, bins=time_bins)[0] for times in bg_times]).transpose()])
         bg *= n_sig_erg_bins
 
         sig = np.histogram(sig_times, bins=time_bins)[0]
@@ -623,6 +623,9 @@ class MaestroListFile:
 
                     bg_est = bg[bin_index] / n_sig_erg_bins
                     sig_est = sig[bin_index] / n_sig_erg_bins
+                    if isinstance(bg_est, UFloat):
+                        bg_est = bg_est.n
+                        sig_est = sig_est.n
 
                     l = ax.plot(bg_window_right_bounds, [bg_est] * 2, color='red', ls='--')[0]
                     _ = ax.plot(bg_window_left_bounds, [bg_est] * 2,  color='red', ls='--')
@@ -666,12 +669,12 @@ class MaestroListFile:
     def plot_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3,
                              bg_window_kev=None, bg_offsets: Union[None, Tuple, float] = None, make_rate=False,
                              normalization=1., plot_background=False, ax=None, offset_sample_ready=False, convolve=None,
-                             **mpl_kwargs):
+                             debug_plot=False, **mpl_kwargs):
         sig, bg, bins = \
             self.get_time_dependence(energy=energy, bins=bins, signal_window_kev=signal_window_kev,
                                      bg_window_kev=bg_window_kev, bg_offsets=bg_offsets, make_rate=make_rate,
                                      normalization=normalization, nominal_values=False,
-                                     offset_sample_ready=offset_sample_ready, convolve=convolve)
+                                     offset_sample_ready=offset_sample_ready, convolve=convolve, debug_plot=debug_plot)
 
         if ax is None:
             fig, ax = plt.subplots()

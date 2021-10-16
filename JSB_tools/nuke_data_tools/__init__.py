@@ -602,6 +602,9 @@ class FissionYields:
         """
         if isinstance(energies, (float, int)):
             energies = [energies]
+        if len(energies) == 0:
+            warn('len of `energies` is zero! Falling back on default library energy points.')
+            energies = None
         self.target = target
         yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
         if inducing_par is None:
@@ -664,6 +667,17 @@ class FissionYields:
         self.__unweighted_yields = None
         self.weights = np.ones_like(self.energies)
 
+    def get_yield(self, nuclide_name):
+        """
+        Simply return yield of nuclide.
+        """
+
+        try:
+            assert isinstance(nuclide_name, str)
+            return self.yields[nuclide_name]
+        except KeyError:
+            return ufloat(0, 0)
+
     @property
     def __is_weighted(self):
         return not (self.__unweighted_yields is None)
@@ -704,7 +718,7 @@ class FissionYields:
                 _y = np.sum(yield_)
                 # print(type(_y), _y)
             else:
-                _y = np.sum(yield_*weights)
+                _y = np.average(yield_, weights=weights)
             y.append(_y.n)
             y_err.append(_y.std_dev)
 
@@ -1579,9 +1593,31 @@ class Nuclide:
     def decay_rate(self):
         return np.log(2)/self.half_life
 
-    @property
-    def decay_parents(self):
-        return list([self.from_symbol(name) for name in self.__decay_parents_str__])
+    def get_decay_parents(self, return_branching_ratios=False) -> Union[List[Nuclide], List[Tuple[Nuclide, UFloat]]]:
+        """
+        Return list (or more, see `return_branching_ratios`) of nuclides which decay to self.
+        Args:
+            return_branching_ratios:
+                If False, return list of parents.
+                If True, return 2-tuple of parents and corresponding decay branching ratio, i.e.
+                    as follows:
+                            [(parent1, branching_ratio1), (parent2, branching_ratio2)]
+
+        Returns:
+
+        """
+        if return_branching_ratios:
+            out_dict = {}
+            for n in self.__decay_parents_str__:
+                par = self.from_symbol(n)
+                out_dict[n] = ufloat(0, 0)
+                for modes in par.decay_modes.values():
+                    for mode in modes:
+                        if mode.daughter_name == self.name:
+                            out_dict[n] += mode.branching_ratio
+            return [(Nuclide.from_symbol(k), v) for k, v in out_dict.items()]
+        else:
+            return list([self.from_symbol(name) for name in self.__decay_parents_str__])
 
     @property
     def decay_daughters(self):

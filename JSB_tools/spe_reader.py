@@ -58,6 +58,7 @@ class SPEFile:
             self.counts[i] = int(m.groups()[0])
             i += 1
         self.counts = unp.uarray(self.counts, np.sqrt(self.counts))
+        self.counts.flags.writeable = False
         lines = lines[start_index + i:]
         mca_cal = lines[lines.index('$MCA_CAL:\n')+2].split()
         self._erg_calibration = list(map(float, mca_cal[:-1]))
@@ -172,6 +173,7 @@ class SPEFile:
         #     setattr(self, k, v)
         self.path = Path(self.path)
         self.system_start_time = datetime.strptime(self.system_start_time, SPEFile.time_format)
+        self.counts.flags.writeable = False
         return self
 
     @classmethod
@@ -289,10 +291,11 @@ class SPEFile:
     def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, remove_baseline=False,
                    make_density=False,
                    nominal_values=False,
-                   return_bin_edges=False,
                    deadtime_corr=False,
                    baseline_method='root',
                    baseline_kwargs=None,
+                   return_bin_edges=False,
+                   return_background=False,
                    debug_plot=False):
         """
         Get energy spectrum within (optionally) a specified energy range.
@@ -303,30 +306,39 @@ class SPEFile:
             remove_baseline: Whether or not to remove baseline.
             make_density: If True, result is divided by bin width
             nominal_values: If false, return uncertain array, else don't
-            return_bin_edges: If True, return bin edges
             deadtime_corr: If True, correct for deatime
             baseline_method: Either 'root' or 'median'. If 'median', use rolling median technique. Else use
                 ROOT.TSpectrum
             baseline_kwargs: kwargs passed to baseline remove function.
+            return_bin_edges: If True, return bin edges (changes return signature)
+            return_background: If True, return background (changes return signature)
             debug_plot: If not False, plot counts for debugging purposes. If axis instance, plot on that axis.
 
 
-        Returns: counts, bin_edges
+        Returns:
+            counts # if return_background == return_bin_edges == False
+            counts, bin_edges  # if return_background == False and return_bin_edges == True
+            counts, back_ground  # if return_background == True and return_bin_edges == False
+            counts, back_ground, bin_edges  # if return_background == return_bin_edges == True
 
 
         """
-
+        bg = None
         if remove_baseline:
             if baseline_kwargs is None:
                 baseline_kwargs = {}
             if baseline_method.lower() == 'root':
-                counts = self.counts - calc_background(self.counts, **baseline_kwargs)
+                bg = calc_background(self.counts, **baseline_kwargs)
             elif baseline_method.lower() == 'median':
-                counts = self.counts - self.get_baseline_median(**baseline_kwargs)
+                bg = self.get_baseline_median(**baseline_kwargs)
             else:
                 assert False, f'Invalid `baseline_method` argument, "{baseline_method}"'
+            counts = self.counts - bg
         else:
-            counts = self.counts
+            if any(([make_rate, make_density, deadtime_corr])):  # don't modify self.counts
+                counts = self.counts.copy()
+            else:
+                counts = self.counts
 
         if not all(x is None for x in [erg_min, erg_min]):
             if erg_min is None:
@@ -337,6 +349,8 @@ class SPEFile:
             imax = self.__erg_index__(erg_max)
             bins = self.erg_bins[imin: imax+1]
             counts = counts[imin: imax]
+            if bg is not None:
+                bg = bg[imin: imax]
             b_widths = self.erg_bin_widths[imin: imax]
         else:
             bins = self.erg_bins
@@ -355,11 +369,17 @@ class SPEFile:
             counts *= self.deadtime_corr
 
         if debug_plot is not False:
+            debug_ax2 = None
             if isinstance(debug_plot, Axes):
-                debug_ax = debug_plot
+                debug_ax1 = debug_plot
+                fig = plt.gcf()
             else:
-                plt.figure()
-                debug_ax = plt.gca()
+                if bg is not None:
+                    fig, debug_axs = plt.subplots(1, 2, sharex='all')
+                    debug_ax1, debug_ax2 = debug_axs
+                else:
+                    fig, debug_axs = plt.subplots(1, 1)
+                    debug_ax1 = debug_axs[0]
 
             extra_range = 20
             _label = 'counts'
@@ -368,20 +388,35 @@ class SPEFile:
             if make_density:
                 _label += '/KeV'
 
-            debug_counts = self.get_counts(erg_min=erg_min-extra_range, erg_max=erg_max+extra_range, make_rate=make_rate,
-                                           remove_baseline=remove_baseline, make_density=make_density,
-                                           nominal_values=nominal_values, deadtime_corr=deadtime_corr,
-                                           baseline_method=baseline_method, baseline_kwargs=baseline_kwargs)
-            debug_bins = self.erg_bins_cut(erg_min - extra_range, erg_max + extra_range)
-            mpl_hist(debug_bins, debug_counts, title=f'"({self.path.name}).get_counts(); '
-                                                          f'integral= {sum(out)}" debug plot', ax=debug_ax)
-            shade_plot(debug_ax, [erg_min, erg_max], label='Counts range')
-            debug_ax.set_xlabel('[KeV]')
-            debug_ax.set_ylabel(f'[{_label}]')
-            debug_ax.legend()
+            debug_counts, debug_bg, debug_bins = \
+                self.get_counts(erg_min=erg_min-extra_range, erg_max=erg_max+extra_range,
+                                make_rate=make_rate,
+                                remove_baseline=remove_baseline, make_density=make_density,
+                                nominal_values=nominal_values, deadtime_corr=deadtime_corr,
+                                baseline_method=baseline_method,
+                                baseline_kwargs=baseline_kwargs,
+                                return_bin_edges=True,
+                                return_background=True)
+            # debug_bins = self.erg_bins_cut(erg_min - extra_range, erg_max + extra_range)
+            mpl_hist(debug_bins, debug_counts, ax=debug_ax1, label='Sig.')
+            if debug_ax2 is not None:
+                mpl_hist(debug_bins, debug_bg, label='Bg.', ax=debug_ax2)
+                mpl_hist(debug_bins, debug_bg + debug_counts, label='Bg. + Sig.', ax=debug_ax2)
+                debug_ax2.legend()
 
-        if return_bin_edges:
-            return out, bins
+            shade_plot(debug_ax1, [erg_min, erg_max], label='Counts range')
+            debug_ax1.set_xlabel('[KeV]')
+            debug_ax1.set_ylabel(f'[{_label}]')
+            fig.suptitle(f'"({self.path.name}).get_counts(); integral= {sum(out)}" debug plot')
+            debug_ax1.legend()
+
+        if return_bin_edges or return_background:
+            out = [out]
+            if return_background:
+                out += [bg]
+            if return_bin_edges:
+                out += [bins]
+            return tuple(out)
         else:
             return out
 
@@ -506,6 +541,23 @@ class SPEFile:
     @classmethod
     def build(cls, path, counts, erg_calibration: List[float], live_time, realtime, channels=None, erg_units='KeV',
               shape_cal=None, description=None, system_start_time=None) -> SPEFile:
+        """
+        Build Spe file from arguments.
+        Args:
+            path:
+            counts:
+            erg_calibration:
+            live_time:
+            realtime:
+            channels:
+            erg_units:
+            shape_cal:
+            description:
+            system_start_time:
+
+        Returns:
+
+        """
         self = SPEFile.__new__(cls)
         self.__energies__ = None
 
@@ -513,6 +565,7 @@ class SPEFile:
             self.counts = counts
         else:
             self.counts = unp.uarray(counts, np.sqrt(counts))
+        self.counts.flags.writeable = False
 
         if channels is None:
             self.channels = np.arange(len(self.counts))
@@ -547,8 +600,28 @@ class SPEFile:
 
 
 if __name__ == '__main__':
-    # from
+    from scipy.stats.mstats import winsorize
     pass
     spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe')
-    spe.plot_erg_spectrum()
+
+    def win(a, w):
+        w = int(w/np.mean(spe.erg_bin_widths))
+        _hw = w//2
+        g = (a[i - _hw if _hw < i else 0: i + _hw if i + _hw < len(a) else len(a) - 1] for i in range(len(a)))
+
+        def _win(x):
+            return np.mean(winsorize(x, limits=(0.25, 0.5)))
+
+        out = np.fromiter(map(_win, g), dtype=float)
+        # slices = [slice(max([0, i-w//2]), min([len(a)-1, i+w//2])) for i in range(len(a))]  # works
+        # out = [np.mean(winsorize(a[s], limits=(0.25, 0.5))) for s in slices]  # works
+        return out
+    ar = spe.get_counts(nominal_values=True)
+    ax = spe.plot_erg_spectrum()
+    w = win(ar, 30)
+    mpl_hist(spe.erg_bins, w, ax=ax, poisson_errors=False)
+    mpl_hist(spe.erg_bins, calc_background(ar), ax=ax, label='convent.')
+    ax.legend()
+
+
     plt.show()
