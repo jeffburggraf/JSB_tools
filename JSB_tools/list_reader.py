@@ -139,7 +139,7 @@ class MaestroListFile:
             self.sample_ready_state = []
             self.gate_state = []
             self.__10ms_counts__ = 0  # The number of ADC events each 10ms clock tick. Used for self.counts_per_sec.
-            self.rate_meter = []
+            self.count_rate_meter = []
 
             self.times = []
             self.n_words = 0
@@ -171,7 +171,7 @@ class MaestroListFile:
         else:
             _print_progress = False
 
-        self.rate_meter = np.array(self.rate_meter) / 10E-3
+        self.count_rate_meter = np.array(self.count_rate_meter) / 10E-3
 
         if debug:
             print("Start time: ", self.start_time)
@@ -208,6 +208,12 @@ class MaestroListFile:
         self.energies = np.array(self.energies)
         self.realtimes = np.array(self.realtimes)
         self.livetimes = np.array(self.livetimes)
+
+        self.times.flags.writable = False
+        self.energies.flags.writable = False
+        self.realtimes.flags.writable = False
+        self.livetimes.flags.writable = False
+
         if _print_progress:
             print(f'Done. ({time.time() - t_log:.1f} seconds)')
 
@@ -265,31 +271,6 @@ class MaestroListFile:
         """
         return self._file_path.with_name(f'_{self._file_path.name}').with_suffix('.Spe')
 
-    # def list2spe(self, save_path: Union[Path, None] = None, write_file=False) -> SPEFile:
-    #     """
-    #     Generate and write to disk an ASCII Spe file form data in the Lis file.
-    #     Produces files identical to (and readable by) the Maestro application.
-    #     Args:
-    #         save_path: Path for new file. If None, use original file but with .Spe for the suffix.
-    #         write_file: If True, write the SPE file to disk
-    #
-    #     Returns: SPE object.
-    #
-    #     """
-    #     if save_path is None:
-    #         save_path = self.__default_spe_path__
-    #     else:
-    #         save_path = Path(save_path)
-    #     save_path = save_path.with_suffix(".Spe")
-    #     spe_text = '\n'.join(get_spe_lines(self))
-    #     if write_file:
-    #         with open(save_path, 'w') as f:
-    #             f.write(spe_text)
-    #     spe = SPEFile(save_path)
-    #     assert all(self.erg_bins == spe.erg_bins)
-    #     assert all(self.get_erg_spectrum() == spe.counts)
-    #     return spe
-
     def read(self, byte_format, f, debug=False):
         s = calcsize(byte_format)
         _bytes = f.read(s)
@@ -316,16 +297,6 @@ class MaestroListFile:
         if self.__spe is None or self.__needs_updating__:
             self.build_spe()
         return self.__spe
-
-        # p = self.__default_spe_path__
-        # if self._spe is not None:
-        #     return self._spe
-        # else:
-        #     if p.exists():
-        #         out = SPEFile(p)
-        #     else:
-        #         out = self.list2spe()
-        # self._spe = out
 
     def set_energy_cal(self, *coeffs):
         self.erg_calibration = np.array(coeffs)
@@ -396,7 +367,7 @@ class MaestroListFile:
         elif word[:2] == "01":  # LiveTime word
             live_time_10ms = int(word[2:], 2)
             self.livetimes.append(10E-3*live_time_10ms)
-            self.rate_meter.append(self.__10ms_counts__)
+            self.count_rate_meter.append(self.__10ms_counts__)
             self.__10ms_counts__ = 0
 
             if debug:
@@ -750,9 +721,9 @@ class MaestroListFile:
         if smooth is not None:
             assert smooth > 0 and isinstance(smooth, int)
             smooth = int(smooth)
-            y = convolve_gauss(self.rate_meter, smooth)
+            y = convolve_gauss(self.count_rate_meter, smooth)
         else:
-            y = self.rate_meter
+            y = self.count_rate_meter
         ax.plot(self.realtimes, y, **ax_kwargs)
         ax.set_title(self._file_path.name)
         ax.set_xlabel("Real time [s]")
@@ -1172,7 +1143,7 @@ class MaestroListFile:
              'gate_state': self.gate_state,
              'sample_ready_state': self.sample_ready_state,
              'adc_values': self.adc_values,
-             'rate_meter': self.rate_meter,
+             'rate_meter': self.count_rate_meter,
              '_file_path': str(self._file_path),
              'start_time': datetime.datetime.strftime(self.start_time, MaestroListFile.datetime_format),
              'device_address': self.device_address,

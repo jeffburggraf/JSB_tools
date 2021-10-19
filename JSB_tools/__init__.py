@@ -95,9 +95,9 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     for unit, value in zip(units[printables], values[printables]):
         outs.append(f"{int(value)} {unit}")
     if unit == 'seconds':
-        outs[-1] = f'{value:.2e} {unit}'
+        outs[-1] = f'{value:.2g} {unit}'
     else:
-        outs[-1] = f'{value:.2f} {unit}'
+        outs[-1] = f'{value:.2g} {unit}'
     out = ' '.join(outs)
     if rel_error is not None:
         out += f' (+/- {100*rel_error:.1f}$)'

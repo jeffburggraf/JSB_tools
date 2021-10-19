@@ -9,14 +9,15 @@ import re
 from matplotlib import pyplot as plt
 import numpy as np
 import uncertainties.unumpy as unp
-from uncertainties import UFloat
+from uncertainties import UFloat, ufloat
 from uncertainties.core import AffineScalarFunc
 from JSB_tools import Nuclide, mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict
 import marshal
 from lmfit.models import GaussianModel
 from scipy.signal import find_peaks
 from matplotlib.axes import Axes
+from scipy.signal import argrelextrema
 
 
 class SPEFile:
@@ -467,7 +468,7 @@ class SPEFile:
     def nominal_counts(self) -> np.ndarray:
         return unp.nominal_values(self.counts)
 
-    def get_baseline(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
+    def get_baseline_ROOT(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
         return calc_background(self.counts, num_iterations=num_iterations, clipping_window_order=clipping_window_order,
                                smoothening_order=smoothening_order)
 
@@ -492,26 +493,92 @@ class SPEFile:
         bg_est = rolling_median(window_width=window_width, values=self.counts)[_slice]
         return bg_est
 
-    def get_baseline_removed(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
-        return self.counts - self.get_baseline(num_iterations=num_iterations,
-                                               clipping_window_order=clipping_window_order,
-                                               smoothening_order=smoothening_order)
+    def get_baseline_removed(self, method='ROOT', **kwargs) -> np.ndarray:
+        """
 
-    def multi_peak_fit(self, centers: List[float], sigma_guess=3, fit_window=100):
+        Args:
+            method: Either 'ROOT' or 'median'.
+                The former used ROOT.TSpectrum, with the following optional kwargs:
+                    num_iterations=20
+                    clipping_window_order=2
+                    smoothening_order=5
+                The latter will calculate the rolling median with the following keyword argumets:
+                    window_kev=30
+
+            kwargs: Keyword arguments to pass to baseline estimation method. See above.
+
+
+        Returns:
+
+        """
+        if method.lower() == 'root':
+            _valid_kwargs = ['num_iterations', 'clipping_window_order', 'smoothening_order']
+            assert all(x in _valid_kwargs for x in kwargs), \
+                f'Invalid kwargs for method "ROOT": {[x for x in kwargs if x not in _valid_kwargs]}'
+            return self.counts - self.get_baseline_ROOT(**kwargs)
+        elif method.lower() == 'median':
+            _valid_kwargs = ['window_kev']
+            assert all(x in _valid_kwargs for x in kwargs), \
+                f'Invalid kwargs for method "ROOT": {[x for x in kwargs if x not in _valid_kwargs]}'
+            return self.counts - self.get_baseline_median(**kwargs)
+        else:
+            raise TypeError(f'Invalid method, "{method}". Valid methods are "ROOT" or "median"')
+
+    def multi_peak_fit(self, centers: List[float], baseline_method='ROOT', baseline_kwargs=None,
+                       fit_window: float = None, deadtime_corr=True, debug_plot=False):
+        """
+        Fit one or more peaks in a close vicinity.
+        Args:
+            centers: List of centers of peaks of interest. Doesn't have to be exact, but the closer the better.
+            baseline_method: either 'ROOT' or 'median'
+            baseline_kwargs: Arguments send to calc_background() or rolling_median() (See JSB_tools.__init__)
+            fit_window: A window that should at least encompass the peaks (single number in KeV).
+            deadtime_corr: If True, correct for deadtime.
+            debug_plot: Produce an informative plot.
+
+        Returns:
+
+        """
         model = None
         params = None
-        y = self.get_baseline_removed()
-        _center = int(np.median(list(map(self.__erg_index__, centers))))
+
+        y = self.counts
+        if deadtime_corr:
+            y = y * self.deadtime_corr
+
+        if baseline_kwargs is None:
+            baseline_kwargs = {}
+        baseline_method = baseline_method.lower()
+
+        if baseline_method == 'root':
+            baseline = calc_background(y, **baseline_kwargs)
+        elif baseline_method == 'median':
+            if 'window_width_kev' in baseline_kwargs:
+                _window_width = baseline_kwargs['window_width_kev']
+            else:
+                _window_width = 30
+            _window_width /= self.erg_bin_widths[len(self.erg_bins)//2]
+            baseline = rolling_median(values=y, window_width=_window_width)
+        else:
+            raise TypeError(f"Invalid `baseline_method`: '{baseline_method}'")
+
+        y -= baseline
+
+        centers_idx = list(sorted(map(self.__erg_index__, centers)))
+        _center = int((centers_idx[0] + centers_idx[-1])/2)
+
+        if fit_window is None:
+            fit_window = 1.5*max([max(centers)-min(centers)])
+
         _slice = slice(max([0, _center - fit_window//2]), min([len(y)-1, _center+fit_window//2]))
         y = y[_slice]
         x = self.energies[_slice]
         plt.figure()
-        y /= self.erg_bin_widths[_slice]  # make density
-        mpl_hist(self.erg_bins[_slice.start: _slice.stop + 1], y)
+        density_sale = self.erg_bin_widths[_slice]  # array to divide by bin widths.
+        y /= density_sale  # make density
 
-        # y /= np.mean(x[1:] - x[:-1])
         peaks, peak_infos = find_peaks(unp.nominal_values(y), height=unp.std_devs(y), width=0)
-        # plt.plot(peaks, peak_infos['prominences'], ls='None', marker='o')
+
         select_peak_ixs = np.argmin(np.array([np.abs(c-np.searchsorted(x, centers)) for c in peaks]).T, axis=1)
         peak_widths = peak_infos['widths'][select_peak_ixs]*self.erg_bin_widths[_center]
         amplitude_guesses = peak_infos['peak_heights'][select_peak_ixs]*peak_widths
@@ -519,6 +586,7 @@ class SPEFile:
 
         for i, erg in enumerate(centers):
             m = GaussianModel(prefix=f'_{i}')
+            # erg = extrema_centers[np.argmin(np.abs(erg-extrema_centers))]
             if model is None:
                 params = m.make_params()
                 params[f'_{i}center'].set(value=erg)
@@ -526,16 +594,35 @@ class SPEFile:
             else:
                 model += m
                 params.update(m.make_params())
-            # bin_index = self.__erg_index__(erg)
+
             params[f'_{i}amplitude'].set(value=amplitude_guesses[i], min=0)
-            params[f'_{i}center'].set(value=erg, min=erg-0.1, max=erg+0.1)
+            params[f'_{i}center'].set(value=erg)
             params[f'_{i}sigma'].set(value=sigma_guesses[i])
+
         weights = unp.std_devs(y)
         weights = np.where(weights>0, weights, 1)
         weights = 1.0/weights
-        plt.plot(x, model.eval(params=params, x=x))
+
         fit_result = model.fit(data=unp.nominal_values(y), x=x, weights=weights, params=params)
-        fit_result.plot()
+
+        if debug_plot:
+            ax = mpl_hist(self.erg_bins[_slice.start: _slice.stop + 1], y*density_sale, label='Observed')
+            _xs_upsampled = np.linspace(x[0], x[-1], 5*len(x))
+            density_sale_upsampled = density_sale[np.searchsorted(x, _xs_upsampled)]
+            model_ys = fit_result.eval(x=_xs_upsampled, params=fit_result.params)*density_sale_upsampled
+            model_errors = fit_result.eval_uncertainty(x=_xs_upsampled, params=fit_result.params)*density_sale_upsampled
+            ax.plot(_xs_upsampled, model_ys, label='Model')
+            ax.fill_between(_xs_upsampled, model_ys-model_errors, model_ys+model_errors, alpha=0.5, label='Model error')
+            ax.legend()
+            ax.set_ylabel("Counts")
+            ax.set_xlabel("Energy")
+            for i in range(len(centers)):
+                amp = ufloat(fit_result.params[f'_{i}amplitude'].value, fit_result.params[f'_{i}amplitude'].stderr)
+                _x = fit_result.params[f'_{i}center'].value
+                _y = model_ys[np.searchsorted(_xs_upsampled, _x)]
+                ax.text(_x, _y*1.05, f'N={amp:.2e}')
+            ax.set_title(self.path.name)
+
         return fit_result
 
     @classmethod
