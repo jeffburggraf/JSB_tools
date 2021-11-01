@@ -160,7 +160,7 @@ class CustomUnpickler(pickle.Unpickler):
             return GammaLine
         elif name == 'DecayMode':
             return DecayMode
-        elif name == '_Reaction':
+        elif name == 'ActivationReactionContainer':
             return ActivationReactionContainer
         elif name == 'CrossSection1D':
             return CrossSection1D
@@ -602,6 +602,9 @@ class FissionYields:
         """
         if isinstance(energies, (float, int)):
             energies = [energies]
+        if len(energies) == 0:
+            warn('len of `energies` is zero! Falling back on default library energy points.')
+            energies = None
         self.target = target
         yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
         if inducing_par is None:
@@ -664,6 +667,17 @@ class FissionYields:
         self.__unweighted_yields = None
         self.weights = np.ones_like(self.energies)
 
+    def get_yield(self, nuclide_name):
+        """
+        Simply return yield of nuclide.
+        """
+
+        try:
+            assert isinstance(nuclide_name, str)
+            return self.yields[nuclide_name]
+        except KeyError:
+            return ufloat(0, 0)
+
     @property
     def __is_weighted(self):
         return not (self.__unweighted_yields is None)
@@ -704,7 +718,7 @@ class FissionYields:
                 _y = np.sum(yield_)
                 # print(type(_y), _y)
             else:
-                _y = np.sum(yield_*weights)
+                _y = np.average(yield_, weights=weights)
             y.append(_y.n)
             y_err.append(_y.std_dev)
 
@@ -825,7 +839,7 @@ class FissionYields:
             __keys.insert(i, k)
             self.yields[k] = new_values
         self.yields = {k: self.yields[k] for k in __keys[::-1]}
-        self.weights *= weights
+        self.weights = self.weights*weights
         return self.yields
 
     def plot_weights(self, ax=None):
@@ -884,7 +898,7 @@ class CrossSection1D:
     def interp(self, new_energies) -> np.ndarray:
         return np.interp(new_energies, self.ergs, self.xss)
 
-    def plot(self, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None):
+    def plot(self, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, **mpl_kwargs):
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
         try:
             unit_factor = unit_convert[units]
@@ -903,7 +917,8 @@ class CrossSection1D:
         if erg_min is None:
             erg_min = self.__ergs__[0]
         selector = np.where((self.__ergs__ <= erg_max) & (self.__ergs__ >= erg_min))
-        ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=self.__fig_label__)
+        label = mpl_kwargs.pop('label', self.__fig_label__)
+        ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label)
         y_label = "Cross-section [{}]".format(units)
         x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
         if ax is plt:
@@ -912,7 +927,7 @@ class CrossSection1D:
         else:
             ax.set_xlabel(x_label)
             ax.set_ylabel(y_label)
-
+        ax.legend()
         return ax
 
     @property
@@ -1369,7 +1384,7 @@ class Nuclide:
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['A']
 
-    def human_friendly_half_life(self, include_errors: bool=True) -> str:
+    def human_friendly_half_life(self, include_errors: bool = True) -> str:
         """
         Gives the half life in units of seconds, hours, days, months, etc.
         Args:
@@ -1570,7 +1585,11 @@ class Nuclide:
         return instance
 
     def __repr__(self):
-        out = "<Nuclide: {}; t_1/2 = {}>".format(self.name, self.half_life)
+        try:
+            hl = self.human_friendly_half_life()
+        except ValueError:
+            hl = self.half_life
+        out = "<Nuclide: {}; t_1/2 = {}>".format(self.name, hl)
         if self.__decay_mode_for_print__ is not None:
             out += f" (from decay {self.__decay_mode_for_print__.__repr__()})"
         return out
@@ -1579,9 +1598,31 @@ class Nuclide:
     def decay_rate(self):
         return np.log(2)/self.half_life
 
-    @property
-    def decay_parents(self):
-        return list([self.from_symbol(name) for name in self.__decay_parents_str__])
+    def get_decay_parents(self, return_branching_ratios=False) -> Union[List[Nuclide], List[Tuple[Nuclide, UFloat]]]:
+        """
+        Return list (or more, see `return_branching_ratios`) of nuclides which decay to self.
+        Args:
+            return_branching_ratios:
+                If False, return list of parents.
+                If True, return 2-tuple of parents and corresponding decay branching ratio, i.e.
+                    as follows:
+                            [(parent1, branching_ratio1), (parent2, branching_ratio2)]
+
+        Returns:
+
+        """
+        if return_branching_ratios:
+            out_dict = {}
+            for n in self.__decay_parents_str__:
+                par = self.from_symbol(n)
+                out_dict[n] = ufloat(0, 0)
+                for modes in par.decay_modes.values():
+                    for mode in modes:
+                        if mode.daughter_name == self.name:
+                            out_dict[n] += mode.branching_ratio
+            return [(Nuclide.from_symbol(k), v) for k, v in out_dict.items()]
+        else:
+            return list([self.from_symbol(name) for name in self.__decay_parents_str__])
 
     @property
     def decay_daughters(self):
@@ -1650,12 +1691,18 @@ class Nuclide:
 
     def get_incident_proton_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
         return self.__get_daughters__('proton', a_z_hl_cut, is_stable_only)
-    #
+
     def get_incident_gamma_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
         return self.__get_daughters__('gamma', a_z_hl_cut, is_stable_only)
-    #
+
     def get_incident_gamma_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         return self.__get_parents__('gamma', a_z_hl_cut, is_stable_only)
+
+    def get_incident_neutron_daughters(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+        return self.__get_daughters__('neutron', a_z_hl_cut, is_stable_only)
+
+    def get_incident_neutron_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+        return self.__get_parents__('neutron', a_z_hl_cut, is_stable_only)
 
     def __get_daughters__(self, projectile, a_z_hl_cut='', is_stable_only=False):
         """
@@ -1669,8 +1716,6 @@ class Nuclide:
         Returns:
 
         """
-        if projectile == 'gamma':
-            warn("Gamma activation cross-sections are wrong! Needs investigating.")
         reaction = ActivationReactionContainer.from_pickle(self.name, projectile)
 
         assert isinstance(reaction, ActivationReactionContainer)
@@ -1799,10 +1844,11 @@ class ActivationReactionContainer:
         self.parent_nuclide_names: A list of strings corresponding to all targets that can produce this nuclide
             (self.name) via activation. This allows traveling both directions in an activation chain.
     """
-    all_instances: Dict[str, Dict[str, ActivationReactionContainer]] = {'gamma': {}, 'proton': {}}
+    all_instances: Dict[str, Dict[str, ActivationReactionContainer]] = {'gamma': {}, 'proton': {}, 'neutron': {}}
     directories: Dict[str, Path] = \
         {'proton': PROTON_PICKLE_DIR,
-         'gamma': GAMMA_PICKLE_DIR}
+         'gamma': GAMMA_PICKLE_DIR,
+         'neutron': NEUTRON_PICKLE_DIR}
 
     def __init__(self, nuclide_name: str, projectile: str):
         """
@@ -1815,7 +1861,6 @@ class ActivationReactionContainer:
         self.nuclide_name = nuclide_name
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
-
         ActivationReactionContainer.all_instances[projectile][nuclide_name] = self
 
     @classmethod
@@ -1898,8 +1943,15 @@ class ActivationReactionContainer:
 
             xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){activation_product_name}"
             # ['Pu240', 'Np237', 'U235', 'Am241', 'U238', 'Pu239']
+            x_tot = openmc_reaction.xs['0K'].x / 1E6
+            y_tot = openmc_reaction.xs['0K'].y
             try:
-                xs = CrossSection1D(openmc_product.yield_.x / 1E6, openmc_product.yield_.y, xs_fig_label,
+                x = openmc_product.yield_.x / 1E6
+            except AttributeError:
+                continue
+            tot_xs = np.interp(x, x_tot, y_tot)
+            try:
+                xs = CrossSection1D(x, openmc_product.yield_.y*tot_xs, xs_fig_label,
                                     self.projectile)
             except AttributeError:
                 continue
@@ -1955,19 +2007,6 @@ if __name__ == "__main__":
     # # y = unp.uarray(x, x)
     # # np.interp(np.linspace(0,10,100), x, y)
     # import time
-    ergs = np.linspace(1, 70, 70)
-
-
-    f = FissionYields('U238', 'proton',  None, None,  True)
-    print(f.library, f.file_path)
-    f.plot_A(at_energy=140)
-    # f.plot()
-    # w = f.weight_by_fission_xs()
-    # w *= get_proton_erg_prob_1(ergs, normalize=True)
-    # f.weight_by_erg(get_proton_erg_prob_1(ergs, normalize=True))
-    # new_x = f.yields['Xe139']
-    # plt.plot(f.energies, unp.nominal_values(new_x/old_x))
-    # plt.plot(f.energies,w)
-
-
-    plt.show()
+    n = Nuclide.from_symbol('C12')
+    ax = n.get_incident_neutron_parents()['O16'].xs.plot()
+    Nuclide.from_symbol('O16').get_incident_neutron_daughters()['He4'].xs.plot(ax=ax)

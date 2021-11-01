@@ -77,7 +77,17 @@ class OutpCell:
 
 
 class F4Tally(Tally):
-    #  Verify summing methods.
+    """
+    Load tally data from Outp
+
+    Attributes:
+        fluxes: The fluxes from the tally in 1/cm2 (note that first bin is an underflow bin and is not included.)
+        energies: Centers of tally energy bins
+        dx_per_src: self.fluxes*cell_volume (i.e. track length traversed per source particle).
+
+
+    """
+    #  todo: Verify summing methods.
     def __init__(self, tally_number_or_name=None, outp=None, __copy__tally__=None):
         if __copy__tally__ is not None:
             assert isinstance(__copy__tally__, F4Tally)
@@ -182,7 +192,7 @@ class F4Tally(Tally):
                     msg += '\nNo tallys found in output file!'
                 assert False, msg
             elif found_n_tallies > 1:
-                warn('\nSeveral dumps of tally_n {0} found. Using last entry.'.format(self.tally_number))
+                warn('Several dumps of tally_n {0} found. Using last entry.'.format(self.tally_number))
             index = tally_begin_index
             # initialize
             if len((self.tally_modifiers - {'e', 'fm'})) == 0:

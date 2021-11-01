@@ -37,6 +37,31 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 
+class Marshal:
+    def __init__(self, path, data_dict, overwrite=True):
+        """
+        Todo: Impliment this! Test msgpack.
+        Helper class for Marshaling objects for speed, but uses pickle when marshaling is not possible.
+        Args:
+            path: Path for Marshal/Pickle files. If an extention is given, the extension will be appended
+                to .marshal/.pickle.
+            data_dict: Dictionary of strings and value to be saved.
+            overwrite:
+
+        Returns:
+
+        """
+        for k, value in data_dict.items():
+            print(k, value, type(value))
+
+
+
+# p = Path(__file__).parent/'delete.fuck'
+# fast_pickle(p, {'np.int':np.int(0),
+#                 'uarray': unp.uarray(np.linspace(0,100, 10), np.arange(10)),
+#                 'py_float': 0.1})
+
+
 def human_friendly_time(time_in_seconds, unit_precision=2):
     """
 
@@ -51,7 +76,6 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     Returns:
 
     """
-
     rel_error = None
     time = time_in_seconds
     assert unit_precision >= 1
@@ -63,12 +87,12 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
         return str(time)
 
     if time < 1:
-        out = "{:.2e} seconds ".format(time.n)
+        out = "{:.2e} seconds ".format(time)
         if rel_error is not None:
             out += f'+/- {100*rel_error:.1f}%'
         return out
     elif time < 60:
-        out = "{:.1f} seconds ".format(time.n)
+        out = "{:.1f} seconds ".format(time)
         if rel_error is not None:
             out += f'+/- {100 * rel_error:.1f}%'
         return out
@@ -89,15 +113,15 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     values = np.array([n_years, n_months, n_days, n_hours, n_minutes, n_seconds])
     outs = []
 
-    printables = np.where(values>1)[0]
+    printables = np.where(values >= 1)[0]
     printables = printables[np.where(printables - printables[0] < unit_precision)]
     value, unit = None, None
     for unit, value in zip(units[printables], values[printables]):
         outs.append(f"{int(value)} {unit}")
     if unit == 'seconds':
-        outs[-1] = f'{value:.2e} {unit}'
+        outs[-1] = f'{value:.2g} {unit}'
     else:
-        outs[-1] = f'{value:.2f} {unit}'
+        outs[-1] = f'{value:.2g} {unit}'
     out = ' '.join(outs)
     if rel_error is not None:
         out += f' (+/- {100*rel_error:.1f}$)'
@@ -105,20 +129,31 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     return out
 
 
-def interpolated_median(list_):
+def discrete_interpolated_median(list_, poisson_errors=False):
     """
-    Find the median assuming data points are pulled from a unknown continuous frequency distribution.
+    Median of a list of integers.
+    Solves the problem of the traditional median being unaffected by values equal to the traditional median value.
     Args:
-        list_:
+        list_: An iterable of integers
+        poisson_errors: Return ufloat
 
     Returns:
 
     """
-    if len(list_) == 0:
-        return None
+
     values, freqs = np.unique(list_, return_counts=True)
-    cdf = np.cumsum(freqs)
-    return np.interp(cdf[-1]/2., cdf, values)
+    cumsum = np.cumsum(freqs)
+    m_i = np.searchsorted(cumsum, cumsum[-1]/2)
+    m = values[m_i]
+    nl = np.sum(freqs[:m_i])
+    ne = freqs[m_i]
+    ng = np.sum(freqs[m_i + 1:])
+    dx = values[m_i + 1] - values[m_i] if ng > nl else values[m_i] - values[m_i - 1]
+    out = m + dx*(ng-nl)/(2*ne)
+    if not poisson_errors:
+        return out
+    else:
+        return ufloat(out, np.sqrt(cumsum[-1]))
 
 
 def rolling_median(window_width, values):
@@ -258,7 +293,7 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 10, m
     return np.convolve(a, kernel, mode=mode)
 
 
-def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=True,
+def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
              return_line_color=False, **mpl_kwargs):
     """
 
@@ -287,6 +322,9 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     if isinstance(y[0], UFloat):
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
+    else:
+        if not isinstance(y, np.ndarray):
+            y = np.array(y)
     if yerr is None and poisson_errors:
         yerr = np.sqrt(np.where(y < 0, 0, y))
 
@@ -295,21 +333,57 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
     yp = np.concatenate([y, [y[-1]]])
+    invalid_plt_kwargs = ['elinewidth', 'capsize', 'barsabove', 'lolims', 'uplims', 'errorevery', 'capthick']
+    plt_kwargs = {k: v for k, v in mpl_kwargs.items() if k not in invalid_plt_kwargs}
+    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', marker='None', **plt_kwargs)
 
-    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', **mpl_kwargs)
     c = lines[0].get_color()
     mpl_kwargs['c'] = c
     mpl_kwargs.pop('ls', None)
     mpl_kwargs.pop('color', None)
 
     lines.append(ax.errorbar(bin_centers, y, yerr,
-                             ls='None',  **mpl_kwargs))
+                             ls='None',  marker='None', **mpl_kwargs))
     if label is not None:
         ax.legend()
     if return_line_color:
         return ax, c
     else:
         return ax
+
+
+def fill_between(x, y, yerr=None, ax=None, fig_kwargs=None, label=None, binsxQ=False, **mpl_kwargs):
+    if fig_kwargs is None:
+        fig_kwargs = {}
+
+    if yerr is not None:
+        assert not isinstance(y[0], UFloat)
+        y = unp.uarray(y, yerr)
+
+    if binsxQ:
+        assert len(x) == len(y) + 1
+        x = np.array(x)
+        x = (x[1:] + x[:-1])/2
+
+    if ax is None:
+        plt.figure(**fig_kwargs)
+        ax = plt.gca()
+    y1 = unp.nominal_values(y) + unp.std_devs(y)
+    y2 = unp.nominal_values(y) - unp.std_devs(y)
+    alpha = mpl_kwargs.pop('alpha', None)
+    ls = mpl_kwargs.pop('ls', None)
+    fill_color = mpl_kwargs.pop('c', None)
+    if fill_color is None:
+        fill_color = mpl_kwargs.pop('color', None)
+    if alpha is None:
+        alpha = 0.4
+
+    ax.fill_between(x, y1, y2, alpha=alpha, color=fill_color, **mpl_kwargs)
+    ax.plot(x, unp.nominal_values(y), label=label, ls=ls, c=fill_color, **mpl_kwargs)
+
+    if label is not None:
+        ax.legend()
+    return ax
 
 
 class __TracePrints(object):
