@@ -574,10 +574,6 @@ class MaestroListFile:
 
         sig = np.histogram(sig_times, bins=time_bins)[0]
 
-        if not nominal_values:
-            bg = uarray(bg, np.sqrt(bg))
-            sig = uarray(sig, np.sqrt(sig))
-
         if debug_plot is not False:
             if isinstance(debug_plot, str) and debug_plot.lower() == 'simple':
                 ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0] - signal_window_kev,
@@ -643,6 +639,10 @@ class MaestroListFile:
                             horizontalalignment='center',
                             verticalalignment='center', color='blue', size='small', rotation='vertical')
 
+        if not nominal_values:
+            bg = uarray(bg, np.sqrt(bg))
+            sig = uarray(sig, np.sqrt(sig))
+
         if make_rate:
             b_widths = time_bins[1:] - time_bins[:-1]
             sig /= b_widths
@@ -666,12 +666,12 @@ class MaestroListFile:
     def plot_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3,
                              bg_window_kev=None, bg_offsets: Union[None, Tuple, float] = None, make_rate=False,
                              normalization=1., plot_background=False, ax=None, offset_sample_ready=False, convolve=None,
-                             **mpl_kwargs):
+                             debug_plot=False, **mpl_kwargs):
         sig, bg, bins = \
             self.get_time_dependence(energy=energy, bins=bins, signal_window_kev=signal_window_kev,
                                      bg_window_kev=bg_window_kev, bg_offsets=bg_offsets, make_rate=make_rate,
                                      normalization=normalization, nominal_values=False,
-                                     offset_sample_ready=offset_sample_ready, convolve=convolve)
+                                     offset_sample_ready=offset_sample_ready, convolve=convolve, debug_plot=debug_plot)
 
         if ax is None:
             fig, ax = plt.subplots()
@@ -1192,8 +1192,8 @@ class MaestroListFile:
             marshal.dump(d, f)
             marshal.dump(d_np_types, f)
 
-        if write_spe:
-            self.SPE.pickle()
+        # if write_spe:
+        #     self.SPE.pickle()
 
     @classmethod
     def from_pickle(cls, fpath) -> MaestroListFile:

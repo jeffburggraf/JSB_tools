@@ -262,20 +262,23 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
 
 
 if __name__ == '__main__':
-    #   For IAC models
+      # For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
-    atoms = ['He4', 'Ar40']
-    he_fracs = list(np.arange(0, 1.2, 0.2)) + [0.5]
-    # he_fracs = [0.5]
-    for he_frac in sorted(he_fracs):
-        fractions = [he_frac, 1-he_frac]
-        g = _IdealGas(atoms)
-        density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
-        run_srim(atoms, fractions, density, 'Xe139', 120, True)
-        run_srim(atoms, fractions, density, 'Kr91', 120, True)
-        # run_srim()
-    run_srim(['U'], [1], 19.1, "Xe139", 120, False)
-    run_srim(['U'], [1], 19.1, "Kr91", 120, False)
 
-    run_srim(['H', 'C', 'O'], [0.364, 0.45, 0.181], 1.38, "Kr91", 120, False)
-    run_srim(['H', 'C', 'O'], [0.364, 0.45, 0.181], 1.38, "Xe139", 120, False)
+    g = _IdealGas(['Ar'])
+    density = g.get_density_from_atom_fractions([1], pressure=1.3)
+    for n in ['Xe139', 'Kr91', 'Sr94']:
+        run_srim(['Ar'], [1], density, n, 120, True )
+    # atoms = ['Ar40', 'He4']
+    # he_fracs = list(np.arange(0, 1.2, 0.2)) + [0.5]
+    # # he_fracs = [0.5]
+    # for he_frac in sorted(he_fracs):
+    #     fractions = [he_frac, 1-he_frac]
+    #     g = _IdealGas(atoms)
+    #     density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
+    #     run_srim(atoms, fractions, density, 'Xe139', 120, True)
+    #     run_srim(atoms, fractions, density, 'Kr91', 120, True)
+    #     # run_srim()
+    # run_srim(['U'], [1], 19.1, "Xe139", 120, False)
+    # run_srim(['U'], [1], 19.1, "Kr91", 120, False)
+
