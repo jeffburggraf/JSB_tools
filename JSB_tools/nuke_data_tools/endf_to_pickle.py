@@ -19,8 +19,8 @@ from uncertainties import ufloat
 from numbers import Number
 import numpy as np
 from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
-    gamma_enfd_b_data_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
-    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy  # Add here for fiss yield
+    photonuclear_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
+    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir
 
 cwd = Path(__file__).parent
 
@@ -408,7 +408,7 @@ def pickle_proton_fission_xs_data():
 
 def pickle_gamma_fission_xs_data():
     photo_fission_data = {}
-    for file in gamma_enfd_b_data_dir.iterdir():
+    for file in photonuclear_endf_dir.iterdir():
         _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file.name)
         if _m:
             a = _m.groups()[2]
@@ -444,14 +444,35 @@ def pickle_proton_activation_data():
             pickle.dump(reaction, f)
 
 
-def pickle_gamma_activation_data():
-    assert GAMMA_PICKLE_DIR.exists()
+def pickle_neutron_activation_data():
+    assert NEUTRON_PICKLE_DIR.exists()
 
-    for file_path in gamma_enfd_b_data_dir.iterdir():
-        _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
+    for file_path in neutron_enfd_b_data_dir.iterdir():
+        _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
         if _m:
             a = int(_m.groups()[2])
             symbol = _m.groups()[1]
+            nuclide_name = '{0}{1}'.format(symbol, a)
+            ActivationReactionContainer.from_endf(file_path, nuclide_name, 'neutron')
+
+    for nuclide_name, reaction in ActivationReactionContainer.all_instances['neutron'].items():
+        pickle_file_name = NEUTRON_PICKLE_DIR / (nuclide_name + ".pickle")
+        if len(reaction) == 0:  # this is probably not needed
+            continue
+        with open(pickle_file_name, "bw") as f:
+            print('Creating and writing {}'.format(f.name))
+            pickle.dump(reaction, f)
+
+
+def pickle_gamma_activation_data():
+    assert GAMMA_PICKLE_DIR.exists()
+
+    for file_path in photonuclear_endf_dir.iterdir():
+        # _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)  # Old, ENDF III
+        _m = re.match(r'g_(?P<Z>[0-9]+)-(?P<S>[A-Z][a-z]{0,2})-(?P<A>[0-9]+)_[0-9]+.+endf', file_path.name)
+        if _m:
+            a = int(_m['A'])
+            symbol = _m['S']
             nuclide_name = '{0}{1}'.format(symbol, a)
             ActivationReactionContainer.from_endf(file_path, nuclide_name, 'gamma')
 
@@ -663,20 +684,5 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
-    p = '/Users/burggraf1/Downloads/TENDL-g/g-Ni058.tendl'
-    e = Evaluation(p)
-    r =  Reaction.from_endf(e, 5)
-    p = r.products[-3]
-    print(p)
-    plt.plot(p.y)
-    e.reaction_list
-    import JSB_tools.nuke_data_tools
-    # JSB_tools.nuke_data_tools.DEBUG = True
-    # debug_nuclide("Cd109", library="Jeff")
-    # pickle_decay_data(pickle_data=True, nuclides_to_process=None)
-    # n = Nuclide.from_symbol("Na22")
-    # print(n.positron_intensity)
-    #
-
-
+    pickle_neutron_activation_data()
 

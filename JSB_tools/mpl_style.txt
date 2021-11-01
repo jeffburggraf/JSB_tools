@@ -34,11 +34,12 @@ axes.xmargin: 0
 axes.ymargin: 0
 axes.labelweight: normal
 axes.labelsize: 16
-axes.autolimit_mode: round_numbers
+# axes.autolimit_mode: round_numbers
 axes.formatter.limits: -4, 4
 grid.color: b1afb5
 axes.spines.right : False
 axes.spines.top : False
+
 
 
 ##***************************************************************************************************
@@ -83,7 +84,7 @@ figure.figsize: 8, 6
 figure.subplot.left: 0.177
 figure.subplot.right: 0.946
 figure.subplot.bottom: 0.156
-figure.subplot.top: 0.965
+figure.subplot.top: 0.875
 
 
 ##***************************************************************************************************

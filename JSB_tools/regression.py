@@ -149,24 +149,26 @@ class FitBase(metaclass=ABCMeta):
         #     # yerr = np.interp(x, self.x, self.fit_y_err)
         #     return unp.uarray(y, yerr)
 
-    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, xlabel=None, ylabel=None, upsampling=10):
+    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, label=None, marker='.', upsampling=10, color=None
+                ):
         if ax is None:
             plt.figure()
             ax = plt.gca()
-        if xlabel is not None:
-            ax.set_xlabel(xlabel)
-        if ylabel is not None:
-            ax.set_ylabel(ylabel)
 
-        points_line = ax.errorbar(self.x, self.y, self.yerr, label='Data', ls='None', marker='.', zorder=0)
+        if label is None:
+            label = 'Data'
+        points_line = ax.errorbar(self.x, self.y, self.yerr, label=label, ls='None', marker=marker, zorder=0, c=color)
+        if color is None:
+            color = points_line[0].get_color()
+
         if fit_x is None:
             fit_x = np.linspace(self.x[0], self.x[-1], len(self.x)*upsampling)
         fit_y = self.eval_fit(x=fit_x, params=params)
         fit_err = unp.std_devs(fit_y)
         fit_y = unp.nominal_values(fit_y)
-        # ax.plot(fit_x, fit_y )
-        fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--')[0]
-        fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit')
+
+        fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--', color=color)[0]
+        fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit', color=color)
         ax.legend([points_line, (fill_poly, fit_line)], ["data", "Fit"])
         return ax
 

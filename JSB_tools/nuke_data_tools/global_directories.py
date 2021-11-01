@@ -28,9 +28,13 @@ proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
 proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
-gamma_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
+neutron_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_neutrons'
 neutron_fission_yield_data_dir_endf = parent_data_dir / 'ENDF-B-VIII.0_nfy'
 tendl_2019_proton_dir = parent_data_dir/'TENDL2019-PROTONS'
+
+
+# download below at https://www-nds.iaea.org/photonuclear/  Replaced previous ENDF-B-VIII.0 Library.
+photonuclear_endf_dir = parent_data_dir / 'iaea-pd2019'
 
 #  Download SF yields (gefy model) from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
 sf_yield_data_dir = parent_data_dir / 'gefy81_s'

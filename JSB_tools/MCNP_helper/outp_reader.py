@@ -192,7 +192,7 @@ class F4Tally(Tally):
                     msg += '\nNo tallys found in output file!'
                 assert False, msg
             elif found_n_tallies > 1:
-                warn('\nSeveral dumps of tally_n {0} found. Using last entry.'.format(self.tally_number))
+                warn('Several dumps of tally_n {0} found. Using last entry.'.format(self.tally_number))
             index = tally_begin_index
             # initialize
             if len((self.tally_modifiers - {'e', 'fm'})) == 0:

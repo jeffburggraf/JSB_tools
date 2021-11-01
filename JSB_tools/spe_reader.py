@@ -1,11 +1,12 @@
 from __future__ import annotations
-
 import pickle
 import time
 import warnings
 from pathlib import Path
 from datetime import datetime
 import re
+
+import lmfit
 from matplotlib import pyplot as plt
 import numpy as np
 import uncertainties.unumpy as unp
@@ -20,95 +21,393 @@ from matplotlib.axes import Axes
 from scipy.signal import argrelextrema
 
 
-class SPEFile:
-    time_format = '%m/%d/%Y %H:%M:%S'
+def _get_SPE_data(path):
+    with open(path) as f:
+        lines = f.readlines()
 
-    def __init__(self, path):
-        self.path = Path(path)
-        assert self.path.exists(), self.path
-        with open(self.path) as f:
-            lines = f.readlines()
+    top_header = lines[:lines.index('$DATA:\n') + 2]
+    out = {}
+    i = 0
 
-        index = lines.index('$SPEC_REM:\n')+1
-        self.detector_id = int(lines[index][5:])
-        index += 1
+    while i < len(top_header):
+        try:
+            if lines[i] == '$SPEC_ID:\n':
+                i += 1
+                out['description'] = lines[i].rstrip()
+                i += 1
+            if lines[i] == '$SPEC_REM:\n':
+                i += 1
+                out['detector_id'] = int(lines[i][5:])
+                i += 1
+            if lines[i][:8] == 'DETDESC#':
+                out['device_serial_number'] = lines[i][8:].rstrip().lstrip()
+                i += 1
+            if 'Maestro Version' in lines[i]:
+                out['maestro_version'] = lines[i].split()[-1]
+                i += 1
+            if lines[i] == '$DATE_MEA:\n':
+                i += 1
+                try:
+                    out['system_start_time'] = datetime.strptime(lines[i].rstrip(),
+                                                             SPEFile.time_format)
+                except ValueError:
+                    warnings.warn(f"Spe file, '{path}' contains invalid date format:\n{lines[i]}")
+                    out['system_start_time'] = datetime(1, 1, 1)
+                i += 1
+            if lines[i] == '$MEAS_TIM:\n':
+                i += 1
+                try:
+                    out['livetime'], out['realtime'] = map(int, lines[i].split())
+                except ValueError:
+                    raise ValueError(
+                        f"Livetime and realtime did not appear in correct format after '$MEAS_TIM:'. in '{path}'\n"
+                          "What I expected, e.g.,\n"
+                          "\t$MEAS_TIM:\n\t220 230\n"
+                          "What I got,\n"
+                          f"\t$MEAS_TIM:\n\t{lines[i]}\n"
+                          "There is a problem in Spe file.")
+                i += 1
+            if lines[i] == '$DATA:\n':
+                i += 1
+                try:
+                    out['n_channels'] = int(lines[i].split()[-1]) + 1
+                except ValueError:
+                    raise ValueError(
+                        f"Number of channels did not appear in correct format after '$DATA:' in '{path}'\n"
+                        "What I expected, e.g.,\n"
+                        "\t$DATA:\n\t0 16383\n"
+                        "What I got,\n"
+                        f"\t$DATA:\n\t{lines[i]}\n"
+                        "There is a problem in Spe file.")
 
-        if m := re.match(r".+# ([a-zA-Z0-9-]+)", lines[index]):
-            self.device_serial_number = (m.groups()[0])
-        else:
-            self.device_serial_number = None
-
-        index += 1
-        if m := re.match(r".+Maestro Version ([0-9.]+)", lines[index]):
-            self.maestro_version = m.groups()[0]
-        else:
-            self.maestro_version = None
-
-        self.description = lines[lines.index('$SPEC_ID:\n')+1].rstrip()
-        self.system_start_time = datetime.strptime(lines[lines.index('$DATE_MEA:\n') + 1].rstrip(), SPEFile.time_format)
-
-        self.livetime, self.realtime = map(float, lines[lines.index('$MEAS_TIM:\n')+1].split())
-        index = lines.index('$DATA:\n')
-        init_channel, final_channel = map(int, lines[index+1].split())
-        self.counts = np.zeros(final_channel-init_channel+1)
-        self.channels = np.arange(init_channel, final_channel+1)
-        start_index = index + 2
-        re_counts = re.compile(' *([0-9]+)')
-        i = 0
-        while m := re_counts.match(lines[start_index + i]):
-            self.counts[i] = int(m.groups()[0])
+        except (IndexError, ValueError) as e:
+            continue
+        finally:
             i += 1
-        self.counts = unp.uarray(self.counts, np.sqrt(self.counts))
-        self.counts.flags.writeable = False
-        lines = lines[start_index + i:]
-        mca_cal = lines[lines.index('$MCA_CAL:\n')+2].split()
-        self._erg_calibration = list(map(float, mca_cal[:-1]))
-        self.__energies__ = None  # if None, this signals to the energies property that energies must be calculated.
-        self.erg_units = mca_cal[-1]
-        # self.energies = self.channel_2_erg(self.channels)
 
-        self.shape_cal = list(map(float, lines[lines.index('$SHAPE_CAL:\n')+2].split()))
-        self.pretty_realtime = human_friendly_time(self.realtime)
-        self.pretty_livetime = human_friendly_time(self.livetime)
+    for key in ['description', 'detector_id', 'device_serial_number', 'maestro_version']:
+        if key not in out:
+            out[key] = None
+    counts = []
 
-        self._efficiency = None
+    while True:
+        try:
+            counts.append(int(lines[i]))
+            i += 1
+        except ValueError:
+            break
+
+    counts = unp.uarray(counts, np.sqrt(counts))
+    out['counts'] = counts
+
+    bot_header = lines[i:]
+    try:
+        data = bot_header[bot_header.index('$MCA_CAL:\n') + 2].split()
+        erg_cal = []
+        for val in data:
+            try:
+                erg_cal.append(float(val))
+            except ValueError:
+                break
+        out['_erg_calibration'] = erg_cal
+        out['erg_units'] = data[-1]
+    except ValueError as e:
+        raise ValueError(f"InvLid energy calibration in Spe file '{path}'\n{e}")
+
+    try:
+        data = bot_header[bot_header.index('$SHAPE_CAL:\n') + 2].split()
+        out['shape_cal'] = list(map(float, data))
+    except (ValueError, IndexError) as e:
+        warnings.warn(f"Invalid shape calibration in Spe file '{path}'\n{e}")
+        out['shape_cal'] = None
+
+    return out
+
+
+class EnergyCalMixin:
+    """
+    Mixin for MaestroListFile and SPEFile that allows to override energy calibration by loading pickled values.
+    For this to work, you must first do self.save_erg_cal
+    """
+    def __init__(self, erg_calibration, load_erg_cal=None):
+        """
+        If load_erg_cal is None, look for energy calibration automatically with appropriate name and override
+            `erg_calibration` argument.
+        if load_erg_cal is a Path or str, look for erg cal in path
+        If load_erg_cal is False, use erg cal from file.
+        Args:
+            erg_calibration:
+            load_erg_cal:
+        """
+        self._erg_calibration = erg_calibration
+        if load_erg_cal is not False:
+            if isinstance(load_erg_cal, (str, Path)):
+                load_erg_cal = Path(load_erg_cal)
+            else:
+                load_erg_cal = None
+            self.load_erg_cal(load_erg_cal)
+        self._load_erg_cal = load_erg_cal
+
+    def __erg_cal_path__(self, other_path=None) -> Path:
+        if other_path is not None:
+            path = other_path
+        else:
+            path = self.path
+            if path is None:
+                raise FileNotFoundError
+
+        eff_dir = path.parent / 'cal_files'
+        if not eff_dir.exists():
+            eff_dir.mkdir(exist_ok=True)
+        return eff_dir / path.with_suffix('.erg').name
+
+    def load_erg_cal(self, path=None):
+        try:
+            path = self.__erg_cal_path__(path)
+            with open(path, 'rb') as f:
+                self._erg_calibration = pickle.load(f)
+        except FileNotFoundError:
+            return
+
+    def save_erg_cal(self, path=None):
+        path = self.__erg_cal_path__(path)
+        path.parent.mkdir(exist_ok=True)
+        with open(path, 'wb') as f:
+            pickle.dump(self._erg_calibration, f)
+
+
+class EfficiencyCalMixin:
+    """
+    Mixin class for storing and maneging spectra's efficiency calibrations.
+
+    Each Spe/List file has one associated with it. By default, all fields are None (efficiency is unity).
+
+    There are two representations of efficiency.
+        1. An lmfit.model.ModelResult object
+            (stored in self.eff_model)
+        2. A list of efficiencies with length equal to the number of channels
+            (stored in self.effs)
+
+    Only one representation can be used at a time, and this is enforced in the code.
+
+    When using representation 1, calls to self.effs will evaluate self.eff_model.
+    When using representation 2, self.eff_model is None and all efficiency information is accessible
+        via self.effs
+
+    There is an option to set a constant scale of the efficiency by changing
+        the value of self.eff_scale to something other than 1.0 (this works when using either representation).
+
+    Efficiency information can be pickled and unpickled. This is handled automatically when pickleing either a
+        list file or an Spe file.
+
+    """
+    def __init__(self):
+        self._effs = None
+        self._eff_model: lmfit.model.ModelResult = None
+        self.eff_scale = 1
+
+    def interp_eff(self, new_energies):
+        eff = np.interp(new_energies, self.erg_centers, unp.nominal_values(self.effs))
+        eff_errs = np.interp(new_energies, self.erg_centers, unp.std_devs(self.effs))
+        return unp.uarray(eff, eff_errs)
+
+    def __eff_path__(self, other_path=None) -> Path:
+        if other_path is not None:
+            path = other_path
+        else:
+            assert hasattr(self, 'path') and self.path is not None, 'No self.path instance! Cannot pickle the ' \
+                                                                    'efficiency.'
+            path = self.path
+            if path is None:
+                raise FileNotFoundError
+
+        eff_dir = path.parent / 'cal_files'
+        if not eff_dir.exists():
+            eff_dir.mkdir(exist_ok=True)
+        return eff_dir / path.with_suffix('.eff').name
+
+    def unpickle_eff(self):
+        """
+        Unpickle from auto-determined path. If no file exists, set atribs to defaults.
+        Returns:
+
+        """
+        try:
+            path = self.__eff_path__()
+            with open(path, 'rb') as f:
+                # out = EfficiencyCalMixin.__new__(EfficiencyCalMixin)
+                d = pickle.load(f)
+                for k, v in d.items():
+                    setattr(self, k, v)
+
+        except FileNotFoundError:
+            pass
+        except Exception:
+            warnings.warn("Could not unpickle efficiency")
+            raise
+
+    def pickle_eff(self, path=None):
+        path = self.__eff_path__(path)
+        if self.effs is self.eff_model is None:  # no efficiency data. Delete old if it exists.
+            path.unlink(missing_ok=True)
+        else:
+            d = {'effs': self.effs, 'eff_model':self.eff_model, 'eff_scale': self.eff_scale}
+            with open(path, 'wb') as f:
+                pickle.dump(d, f)
 
     @property
-    def efficiency(self):
-        if self._efficiency is None:
-            eff_dir = self.path.parent/'effs'
-            eff_dir.mkdir(exist_ok=True)
-            eff_path = eff_dir/self.path.with_suffix('.eff').name
-            # eff_path = self.path.with_suffix('.eff')
-            if not eff_path.exists():
-                raise AttributeError("Efficiency not available. You must set an efficiency using self.efficiency = ...")
-            with open(eff_path, 'rb') as f:
-                self._efficiency = pickle.load(f)
+    def effs(self):
+        if self._effs is not None:
+            return self.eff_scale*self._effs
+        else:
+            return None
 
-        return self._efficiency
+    @effs.setter
+    def effs(self, value):
+        self.eff_model = None
+        self._effs = value
 
-    def set_efficiency(self, efficiencies, pickle_eff=True):
+    @property
+    def eff_model(self):
+        return self._eff_model
+
+    @eff_model.setter
+    def eff_model(self, value: lmfit.model.ModelResult):
+        self._eff_model = value
+        if isinstance(value, lmfit.model.ModelResult):
+            self.recalc_effs()
+
+    def recalc_effs(self, old_energies=None):
         """
-
+        Recalculate for new energies of parent class, *or* if old_energies and new_energies are specified, recalculate
+          efficiency points (and delete the model if it exists).
         Args:
-            efficiencies: Array of efficiencies for each bin. If None, remove efficiency pickle file and set efficiencies to 1
-            pickle_eff: If true, save efficiencies to file.
+            old_energies:
 
         Returns:
 
         """
-        assert len(efficiencies) == len(self.counts)
-        self._efficiency = efficiencies
-        eff_dir = self.path.parent / 'effs'
-        eff_path = eff_dir / self.path.with_suffix('.eff').name
-        if not eff_dir.exists():
-            eff_dir.mkdir()
-        if pickle_eff and efficiencies is not None:
-            with open(eff_path, 'wb') as f:
-                pickle.dump(self._efficiency, f)
+        # if not hasattr(self, '_eff_model'):
+        #     self._eff_model = None
+        # if not hasattr(self, 'effs'):
+        #     self.effs = None
+        if self.eff_model is not None:
+            eff = self.eff_model.eval(x=self.erg_centers)
+            eff = np.where(eff > 1E-6, eff, 1E-6)
+            eff_err = self.eff_model.eval_uncertainty(x=self.erg_centers)
+            self.effs = unp.uarray(eff, eff_err)
+        else:
+            if not (old_energies is self.effs is None):
+                # eff = np.interp(self.erg_centers, old_energies, unp.nominal_values(self.effs))
+                # eff_errs = np.interp(self.erg_centers, old_energies, unp.std_devs(self.effs))
+                self.effs = self.interp_eff(self.erg_centers)
 
-        if efficiencies is None:
-            eff_path.unlink(missing_ok=True)
+    def print_eff(self):
+        if self.eff_model is not None:
+            return self.eff_model.fit_report()
+        else:
+            return self.effs.__repr__()
+
+    def plot_efficiency(self, ax=None, **mpl_kwargs):
+        assert self.effs is not None, 'No efficiency to plot. '
+
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        ls = mpl_kwargs.pop('ls', None)
+        alpha = mpl_kwargs.pop('alpha', 0.35)
+
+        _y = unp.nominal_values(self.effs)
+        yerr = unp.std_devs(self.effs)
+        label = mpl_kwargs.pop('label', None)
+
+        lines = ax.plot(self.erg_centers, _y, ls=ls, **mpl_kwargs, label=label)
+        c = lines[0].get_color()
+        ax.fill_between(self.erg_centers, _y - yerr, _y + yerr, alpha=alpha, **mpl_kwargs)
+
+        if self.eff_model is not None:
+            x_points = self.eff_scale*self.eff_model.userkws[self.eff_model.model.independent_vars[0]]
+            y_points = self.eff_scale*self.eff_model.data
+
+            if self.eff_model.weights is not None:
+                yerr = 1.0 / self.eff_model.weights
+            else:
+                yerr = np.zeros_like(x_points)
+            yerr = self.eff_scale*yerr
+
+            ax.errorbar(x_points, y_points, yerr, ls='None', marker='o', c=c)
+        ax.set_xlabel("Energy KeV]")
+        ax.set_ylabel("Efficiency")
+        if label is not None:
+            ax.legend()
+        return ax
+
+
+class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
+    """
+    Used for processing and saving ORTEC ASCII SPE files. Can also build from other data using SPEFile.build(...).
+
+    """
+    time_format = '%m/%d/%Y %H:%M:%S'
+
+    def __init__(self, path):
+        """
+        Analyse ORTEC .Spe ASCII spectra files.
+
+        Args:
+            path: Path to Spe file.
+        """
+        self.path = Path(path)
+        assert self.path.exists(), self.path
+        super(SPEFile, self).__init__()
+
+        self._energies = None  # if None, this signals to the energies property that energies must be calculated.
+        self._erg_bins = None  # same as above
+
+        data = _get_SPE_data(path)
+        self.description = data['description']
+        self.detector_id = data['detector_id']
+        self.device_serial_number = data['device_serial_number']
+        self.maestro_version = data['maestro_version']
+        self.system_start_time = data['system_start_time']
+        self.livetime = data['livetime']
+        self.realtime = data['realtime']
+        self.counts = data['counts']
+        self.counts.flags.writeable = False
+        self.channels = np.arange(len(self.counts))
+
+        # self._erg_calibration = data['_erg_calibration']
+        super(EfficiencyCalMixin, self).__init__(data['_erg_calibration'], load_erg_cal=False)
+        self.erg_units = data['erg_units']
+        self.shape_cal = data['shape_cal']
+
+    def set_useful_energy_range(self, erg_min=None, erg_max=None):
+        if erg_min is None:
+            i0 = 0
+        else:
+            i0 = self.__erg_index__(erg_min)
+
+        if erg_max is None:
+            i1 = len(self.energies)
+        else:
+            i1 = self.__erg_index__(erg_max) + 1
+        self.counts = self.counts[i0: i1]
+        self.counts.flags.writeable = False
+
+        self._energies = self.energies[i0: i1]
+        self.channels = self.channels[i0: i1]
+        self._erg_bins = None
+
+        if self._effs is not None:
+            self._effs = self.effs[i0: i1]
+
+    @property
+    def pretty_realtime(self):
+        return human_friendly_time(self.realtime)
+
+    @property
+    def pretty_livetime(self):
+        return human_friendly_time(self.livetime)
 
     @property
     def deadtime_corr(self):
@@ -119,49 +418,59 @@ class SPEFile:
         return self._erg_calibration
 
     @erg_calibration.setter
-    def erg_calibration(self, value):
-        self._erg_calibration = value
-        self.__energies__ = None
+    def erg_calibration(self, values):
+        self._erg_calibration = values
+        if self._energies is not None:
+            old_energies = self.energies
+        else:
+            old_energies = None
+        self._energies = None
+        self._erg_bins = None
+        self.recalc_effs(old_energies)
+
+    @property
+    def erg_centers(self):
+        return self.energies
 
     @property
     def energies(self):
-        if self.__energies__ is None:
-            self.__energies__ = self.channel_2_erg(self.channels)
-        return self.__energies__
+        if self._energies is None:
+            self._energies = self.channel_2_erg(self.channels)
+        return self._energies
 
-    def pickle(self, f_name: Union[str, Path] = None, directory: Path = None):
-        if directory is None:
-            directory = self.path.parent
-        else:
-            directory = Path(directory)
-            assert directory.exists(), f"Specified directory doesn't exist:\n{directory}t"
+    def pickle(self, f_path: Union[str, Path] = None):
 
-        if f_name is None:
-            f_name = self.path
-            f_path = (directory/f_name).with_suffix('.marshalSpe')  # add suffix
+        if f_path is None:
+            f_path = self.path
 
-        d_simple = {'counts': list(self.counts), 'shape_cal': self.shape_cal, 'erg_units': self.erg_units,
-                    'erg_calibration': self.erg_calibration, 'channels': self.channels, 'livetime': self.livetime,
+        f_path = Path(f_path).with_suffix('.marshalSPe')
+
+        d_simple = {'counts': list(map(float, unp.nominal_values(self.counts))), 'shape_cal': self.shape_cal,
+                    'erg_units': self.erg_units,
+                    '_erg_calibration': self._erg_calibration, 'channels': self.channels, 'livetime': self.livetime,
                     'realtime': self.realtime, 'system_start_time': self.system_start_time.strftime(SPEFile.time_format)
-                    , 'description': self.description, 'maestro_version': self.maestro_version,
+                    ,'description': self.description, 'maestro_version': self.maestro_version,
                     'device_serial_number': self.device_serial_number, 'detector_id': self.detector_id,
                     'path': str(self.path)}
-        # d_unp = {'counts': (unp.nominal_values(self.counts), unp.std_devs(self.counts))}
+
         np_dtypes = {'channels': 'int'}
+
         with open(f_path, 'wb') as f:
             marshal.dump(d_simple, f)
-            # marshal.dump(d_unp, f)
             marshal.dump(np_dtypes, f)
 
     @classmethod
-    def from_pickle(cls, f_path) -> SPEFile:
+    def from_pickle(cls, f_path, load_erg_cal: Union[Path, bool] = None) -> SPEFile:
         f_path = Path(f_path).with_suffix('.marshalSpe')
-        self = cls.__new__(cls)
+        self = SPEFile.__new__(cls)
+        super(SPEFile, self).__init__()  # run EfficiencyMixin init
+
         with open(f_path, 'rb') as f:
             d_simple = marshal.load(f)
-            # d_unp = marshal.load(f)
             np_dtypes = marshal.load(f)
         for k, v in d_simple.items():
+            if k == 'counts':
+                v = unp.uarray(v, np.sqrt(v))
             if isinstance(v, bytes):
                 if k in np_dtypes:
                     t = getattr(np, np_dtypes[k])
@@ -169,44 +478,101 @@ class SPEFile:
                     t = np.float
                 v = np.frombuffer(v, t)
             setattr(self, k, v)
-        # for k, v in d_unp.items():
-        #     v = unp.uarray(np.frombuffer(v[0], np.float), np.frombuffer(v[1], np.float))
-        #     setattr(self, k, v)
+
         self.path = Path(self.path)
         self.system_start_time = datetime.strptime(self.system_start_time, SPEFile.time_format)
         self.counts.flags.writeable = False
+        self._energies = None
+        self.unpickle_eff()
+        # if erg_cal_path is not None:
+        #     self.load_erg_cal(erg_cal_path)
+        super(EfficiencyCalMixin, self).__init__(self.erg_calibration, load_erg_cal)
+
+        return self
+
+    @classmethod
+    def build(cls, path, counts, erg_calibration: List[float], livetime, realtime, channels=None, erg_units='KeV',
+              shape_cal=None, description=None, system_start_time=None, eff_model=None, effs=None, eff_scale=1,
+              load_erg_cal: Union[Path, bool] = None, load_eff_cal=True) -> SPEFile:
+        """
+        Build Spe file from arguments.
+        Args:
+            path:
+            counts:
+            erg_calibration:
+            livetime:
+            realtime:
+            channels:
+            erg_units:
+            shape_cal:
+            description:
+            system_start_time:
+            eff_model:
+            effs:
+            eff_scale:
+            load_erg_cal:
+            load_eff_cal:
+
+        Returns:
+
+        """
+        self = SPEFile.__new__(cls)
+        super(SPEFile, self).__init__()  # run EfficiencyMixin init
+
+        self._energies = None
+        self._erg_bins = None
+
+        if isinstance(counts[0], UFloat):
+            self.counts = counts
+        else:
+            self.counts = unp.uarray(counts, np.sqrt(counts))
+        self.counts.flags.writeable = False
+
+        if channels is None:
+            self.channels = np.arange(len(self.counts))
+        else:
+            self.channels = channels
+
+        # self.erg_calibration = list(erg_calibration)
+        self.erg_units = erg_units
+
+        if shape_cal is None:
+            self.shape_cal = [0, 1, 0]
+        else:
+            self.shape_cal = shape_cal
+
+        self.path = path
+
+        self.livetime = livetime
+        self.realtime = realtime
+
+        if system_start_time is None:
+            system_start_time = datetime(year=1, month=1, day=1)
+        self.system_start_time = system_start_time
+
+        if description is None:
+            description = ''
+        self.description = description
+
+        self.device_serial_number = 0
+        self.detector_id = 0
+        self.maestro_version = None
+
+        self.effs = effs
+        self.eff_model = eff_model
+        self.eff_scale = eff_scale
+
+        super(EfficiencyCalMixin, self).__init__(erg_calibration, load_erg_cal)
+        if load_eff_cal:
+            self.unpickle_eff()
+
         return self
 
     @classmethod
     def from_lis(cls, path):
         from JSB_tools.list_reader import MaestroListFile
-        l = MaestroListFile(path)
-        return l.list2spe()
-
-    def set_energy_cal(self, *coeffs, update_file=False):
-        self.erg_calibration = np.array(coeffs)
-        # self.energies = self.channel_2_erg(self.channels)
-        if len(coeffs) == 2:
-            coeffs = list(coeffs) + [0.]
-
-        coeffs_string = f'{" ".join(map(lambda x: f"{x:.6E}", coeffs))} {self.erg_units}\n'
-
-        if update_file:
-            with open(self.path) as f:
-                lines = f.readlines()
-                try:
-                    i1 = lines.index('$ENER_FIT:\n') + 1
-                    i2 = lines[i1:].index('$MCA_CAL:\n') + i1 + 1
-                except IndexError as e:
-                    raise Exception('Invalid SPE file. ') from e
-
-                lines[i1] = ' '.join(map(str, coeffs[:2])) + '\n'
-                lines[i2] = f'3\n'
-                lines[i2+1] = coeffs_string
-            temp_file_path = self.path.with_suffix(f'{self.path.suffix}._tmp')
-            with open(temp_file_path, 'w') as f:
-                f.writelines(lines)
-            temp_file_path.rename(self.path)
+        l = MaestroListFile.from_pickle(path)
+        return l.SPE
 
     def channel_2_erg(self, chs) -> np.ndarray:
         return np.sum([coeff * chs ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
@@ -221,6 +587,10 @@ class SPEFile:
         Returns:
 
         """
+        if self.shape_cal is None:
+            raise AttributeError(f'Spefile, "{self.path.name}" does not have `shape_cal` instance set.'
+                                 'This is likely due to either there being no shape cal info in SPE ASCII file, '
+                                 'or that this SPEfile instance was not built from a SPE ASCII text file.')
         iter_flag = True
         if not hasattr(erg, '__iter__'):
             erg = [erg]
@@ -267,9 +637,18 @@ class SPEFile:
         Returns:
 
         """
-        # ch = np.arange(len(self.counts) + 1, dtype=float)
-        chs = np.concatenate([self.channels, [self.channels[-1]+1]])
-        return self.channel_2_erg(chs-0.5)
+        if self._erg_bins is not None:
+            return self._erg_bins
+        else:
+            chs = np.concatenate([self.channels, [self.channels[-1]+1]])
+            out = self.channel_2_erg(chs-0.5)
+            self._erg_bins = out
+            return out
+
+    @property
+    def eff_weights(self):
+        assert self.effs is not None
+        return 1.0/self.effs
 
     def erg_bins_cut(self, erg_min, erg_max):
         """
@@ -289,7 +668,7 @@ class SPEFile:
     def rates(self):
         return self.counts/self.livetime
 
-    def get_counts(self, erg_min: float = None, erg_max: float = None, make_rate=False, remove_baseline=False,
+    def get_counts(self, erg_min: float = None, erg_max: float = None, eff_corr=False, make_rate=False, remove_baseline=False,
                    make_density=False,
                    nominal_values=False,
                    deadtime_corr=False,
@@ -303,6 +682,7 @@ class SPEFile:
         Args:
             erg_min: Min energy cut
             erg_max: Max energy cut
+            eff_corr: If True, correct for efficiency.
             make_rate: If True, divide by livetime
             remove_baseline: Whether or not to remove baseline.
             make_density: If True, result is divided by bin width
@@ -336,7 +716,7 @@ class SPEFile:
                 assert False, f'Invalid `baseline_method` argument, "{baseline_method}"'
             counts = self.counts - bg
         else:
-            if any(([make_rate, make_density, deadtime_corr])):  # don't modify self.counts
+            if any(([make_rate, make_density, deadtime_corr, eff_corr])):  # don't modify self.counts
                 counts = self.counts.copy()
             else:
                 counts = self.counts
@@ -354,6 +734,8 @@ class SPEFile:
                 bg = bg[imin: imax]
             b_widths = self.erg_bin_widths[imin: imax]
         else:
+            imin = 0
+            imax = len(self.counts)
             bins = self.erg_bins
             b_widths = self.erg_bin_widths
 
@@ -362,12 +744,15 @@ class SPEFile:
         else:
             out = counts
 
+        if eff_corr:
+            assert self.effs is not None, f'No efficiency information set for\n{self.path}'
+            out /= self.effs[imin: imax]
         if make_rate:
-            counts /= self.livetime
+            out /= self.livetime
         if make_density:
-            counts /= b_widths
+            out /= b_widths
         if deadtime_corr:
-            counts *= self.deadtime_corr
+            out *= self.deadtime_corr
 
         if debug_plot is not False:
             debug_ax2 = None
@@ -397,7 +782,8 @@ class SPEFile:
                                 baseline_method=baseline_method,
                                 baseline_kwargs=baseline_kwargs,
                                 return_bin_edges=True,
-                                return_background=True)
+                                return_background=True,
+                                eff_corr=eff_corr)
             # debug_bins = self.erg_bins_cut(erg_min - extra_range, erg_max + extra_range)
             mpl_hist(debug_bins, debug_counts, ax=debug_ax1, label='Sig.')
             if debug_ax2 is not None:
@@ -405,7 +791,7 @@ class SPEFile:
                 mpl_hist(debug_bins, debug_bg + debug_counts, label='Bg. + Sig.', ax=debug_ax2)
                 debug_ax2.legend()
 
-            shade_plot(debug_ax1, [erg_min, erg_max], label='Counts range')
+            shade_plot(debug_ax1, [erg_min, erg_max], label='Counts range', alpha=0.2)
             debug_ax1.set_xlabel('[KeV]')
             debug_ax1.set_ylabel(f'[{_label}]')
             fig.suptitle(f'"({self.path.name}).get_counts(); integral= {sum(out)}" debug plot')
@@ -421,7 +807,7 @@ class SPEFile:
         else:
             return out
 
-    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None,
+    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None, eff_corr=False,
                           leg_label=None, make_rate=False, remove_baseline=False, make_density=False,
                           scale=1, **ax_kwargs):
         """
@@ -429,13 +815,13 @@ class SPEFile:
         Args:
             erg_min:
             erg_max:
+            ax:
+            eff_corr:
             leg_label:
-            ax_kwargs:
             make_rate: If True, divide by livetime
             remove_baseline: Is True, remove baseline
             make_density: y units will be counts/unit energy
             scale: Arbitrary scaling constant
-            ax:
 
         Returns:
 
@@ -444,7 +830,7 @@ class SPEFile:
             plt.figure()
             ax = plt.gca()
 
-        counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate,
+        counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate, eff_corr=eff_corr,
                                        remove_baseline=remove_baseline, make_density=make_density,
                                        return_bin_edges=True)
         if not isinstance(scale, (int, float)) or scale != 1:
@@ -566,11 +952,17 @@ class SPEFile:
 
         centers_idx = list(sorted(map(self.__erg_index__, centers)))
         _center = int((centers_idx[0] + centers_idx[-1])/2)
+        _bin_width = self.erg_bin_widths[_center]
 
         if fit_window is None:
-            fit_window = 1.5*max([max(centers)-min(centers)])
+            if len(centers) > 1:
+                fit_window = 1.5*max([max(centers)-min(centers)])
+                if fit_window*_bin_width < 10:
+                    fit_window = 10/_bin_width
+            else:
+                fit_window = 10/_bin_width
 
-        _slice = slice(max([0, _center - fit_window//2]), min([len(y)-1, _center+fit_window//2]))
+        _slice = slice(int(max([0, _center - fit_window//2])), int(min([len(y)-1, _center+fit_window//2])))
         y = y[_slice]
         x = self.energies[_slice]
         plt.figure()
@@ -625,90 +1017,40 @@ class SPEFile:
 
         return fit_result
 
-    @classmethod
-    def build(cls, path, counts, erg_calibration: List[float], live_time, realtime, channels=None, erg_units='KeV',
-              shape_cal=None, description=None, system_start_time=None) -> SPEFile:
-        """
-        Build Spe file from arguments.
-        Args:
-            path:
-            counts:
-            erg_calibration:
-            live_time:
-            realtime:
-            channels:
-            erg_units:
-            shape_cal:
-            description:
-            system_start_time:
+    def __len__(self):
+        return len(self.counts)
 
-        Returns:
 
-        """
-        self = SPEFile.__new__(cls)
-        self.__energies__ = None
-
-        if isinstance(counts[0], UFloat):
-            self.counts = counts
-        else:
-            self.counts = unp.uarray(counts, np.sqrt(counts))
-        self.counts.flags.writeable = False
-
-        if channels is None:
-            self.channels = np.arange(len(self.counts))
-        else:
-            self.channels = channels
-
-        self.erg_calibration = list(erg_calibration)
-        self.erg_units = erg_units
-
-        if shape_cal is None:
-            self.shape_cal = [0, 1, 0]
-        else:
-            self.shape_cal = shape_cal
-
-        self.path = path
-
-        self.livetime = live_time
-        self.realtime = realtime
-
-        if system_start_time is None:
-            system_start_time = datetime(year=1, month=1, day=1)
-        self.system_start_time = system_start_time
-
-        if description is None:
-            description = ''
-        self.description = description
-
-        self.device_serial_number = 0
-        self.detector_id = 0
-
-        return self
 
 
 if __name__ == '__main__':
     from scipy.stats.mstats import winsorize
-    pass
-    spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe')
+    # _set_SPE_data('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/Nickel/Nickel.Spe')
+    # pass
+    # spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe')
 
-    def win(a, w):
-        w = int(w/np.mean(spe.erg_bin_widths))
-        _hw = w//2
-        g = (a[i - _hw if _hw < i else 0: i + _hw if i + _hw < len(a) else len(a) - 1] for i in range(len(a)))
-
-        def _win(x):
-            return np.mean(winsorize(x, limits=(0.25, 0.5)))
-
-        out = np.fromiter(map(_win, g), dtype=float)
-        # slices = [slice(max([0, i-w//2]), min([len(a)-1, i+w//2])) for i in range(len(a))]  # works
-        # out = [np.mean(winsorize(a[s], limits=(0.25, 0.5))) for s in slices]  # works
-        return out
-    ar = spe.get_counts(nominal_values=True)
-    ax = spe.plot_erg_spectrum()
-    w = win(ar, 30)
-    mpl_hist(spe.erg_bins, w, ax=ax, poisson_errors=False)
-    mpl_hist(spe.erg_bins, calc_background(ar), ax=ax, label='convent.')
-    ax.legend()
-
-
+    spe.plot_erg_spectrum()
+    print(len(spe))
     plt.show()
+    #
+    # def win(a, w):
+    #     w = int(w/np.mean(spe.erg_bin_widths))
+    #     _hw = w//2
+    #     g = (a[i - _hw if _hw < i else 0: i + _hw if i + _hw < len(a) else len(a) - 1] for i in range(len(a)))
+    #
+    #     def _win(x):
+    #         return np.mean(winsorize(x, limits=(0.25, 0.5)))
+    #
+    #     out = np.fromiter(map(_win, g), dtype=float)
+    #     # slices = [slice(max([0, i-w//2]), min([len(a)-1, i+w//2])) for i in range(len(a))]  # works
+    #     # out = [np.mean(winsorize(a[s], limits=(0.25, 0.5))) for s in slices]  # works
+    #     return out
+    # ar = spe.get_counts(nominal_values=True)
+    # ax = spe.plot_erg_spectrum()
+    # w = win(ar, 30)
+    # mpl_hist(spe.erg_bins, w, ax=ax, poisson_errors=False)
+    # mpl_hist(spe.erg_bins, calc_background(ar), ax=ax, label='convent.')
+    # ax.legend()
+    #
+    #
+    # plt.show()
