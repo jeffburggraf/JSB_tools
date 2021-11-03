@@ -21,7 +21,7 @@ import sys
 from scipy.stats import norm
 import matplotlib as mpl
 import traceback
-from JSB_tools.nuke_data_tools import Nuclide, FissionYields
+from JSB_tools.nuke_data_tools import Nuclide, FissionYields, decay_nuclide
 import matplotlib.ticker as ticker
 from uncertainties import UFloat
 from scipy import ndimage
@@ -31,6 +31,7 @@ try:
 except ModuleNotFoundError:
     root_exists = False
 
+__all__ = ['decay_nuclide']
 
 cwd = Path(__file__).parent
 
@@ -688,12 +689,14 @@ class FileManager:
             raise FileNotFoundError(f"No file with the following matching keys/values:\n {lookup_attributes}\n"
                                     f"Currently linked files are:\n{available_files_string}")
 
-    def find_paths(self, **lookup_attributes) -> Dict[Path, dict]:
+    def find_paths(self, rtol=0.01, **lookup_attributes) -> Dict[Path, dict]:
         """
         Find of all file paths for which the set of `lookup_attributes` is a subset of the files attributes.
         Return a dictionary who's keys are file paths, and values are the corresponding
             lookup attributes (all of them for the given file, not just the ones the user searched for)
         Args:
+            rtol: If a config is found where a given attrib (a float) is close to within rtol, then consider values
+                equal.
             **lookup_attributes: key/values
 
         Examples:
@@ -709,11 +712,30 @@ class FileManager:
         Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
         Todo: Find a way to make debugging not found easier.
         """
-        lookup_kwargs = lookup_attributes.items()
+        lookup_kwargs = lookup_attributes  #.items()
         matches = {}
+        def test_match(d_search, d_exists):
+            for k in d_search.keys():
+                if k not in d_exists:
+                    return False
+                exists_value = d_exists[k]
+                search_value = d_search[k]
+                if isinstance(exists_value, (float, int)):
+                    if not np.isclose(exists_value, search_value, rtol=rtol):
+                        return False
+                elif isinstance(exists_value, dict) and isinstance(search_value, dict):
+                    if not test_match(exists_value, search_value):
+                        return False
+                else:
+                    if exists_value != search_value:
+                        return False
+            return True
+
         for path, attribs in self.__file_lookup_data.items():
-            all_attribs_list = list(attribs.items())
-            if all(a in all_attribs_list for a in lookup_kwargs):
+        #     all_attribs_list = list(attribs.items())
+        #
+        #     if all(a in all_attribs_list for a in lookup_kwargs):
+            if test_match(lookup_kwargs, attribs):
                 matches[path] = {k: v for k, v in attribs.items()}
         if len(matches) == 0:
             warnings.warn(f"No files fiund containing the following attribs: {lookup_attributes}")

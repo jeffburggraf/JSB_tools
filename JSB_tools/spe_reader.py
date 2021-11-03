@@ -911,7 +911,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             raise TypeError(f'Invalid method, "{method}". Valid methods are "ROOT" or "median"')
 
     def multi_peak_fit(self, centers: List[float], baseline_method='ROOT', baseline_kwargs=None,
-                       fit_window: float = None, deadtime_corr=True, debug_plot=False):
+                       fit_window: float = None, eff_corr=False, deadtime_corr=True, debug_plot=False):
         """
         Fit one or more peaks in a close vicinity.
         Args:
@@ -919,6 +919,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             baseline_method: either 'ROOT' or 'median'
             baseline_kwargs: Arguments send to calc_background() or rolling_median() (See JSB_tools.__init__)
             fit_window: A window that should at least encompass the peaks (single number in KeV).
+            eff_corr: If True, correct for efficiency
             deadtime_corr: If True, correct for deadtime.
             debug_plot: Produce an informative plot.
 
@@ -928,9 +929,12 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         model = None
         params = None
 
-        y = self.counts
+        y = self.counts.copy()
         if deadtime_corr:
             y = y * self.deadtime_corr
+
+        if eff_corr is True:
+            y /= self.effs
 
         if baseline_kwargs is None:
             baseline_kwargs = {}

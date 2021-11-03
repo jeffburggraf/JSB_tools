@@ -5,9 +5,14 @@ from  openmc.data.ace import get_libraries_from_xsdata
 from openmc.data.endf import get_evaluations
 from pathlib import Path
 from JSB_tools.nuke_data_tools import Nuclide
+import scipy
 
 
-n =Nuclide.from_symbol('Ar40')
 
-e = Evaluation('/Users/burggraf1/Downloads/iaea-pd2019/g_92-U-238_9237.endf')
-print(Reaction.from_endf(e, 18).xs)
+func = decay(Nuclide.from_symbol('Kr89'))
+x = np.linspace(0, 60*60*24, 10000)
+out = func(x)
+for label, values in out.items():
+    plt.plot(x, values, label=label)
+plt.legend()
+plt.show()

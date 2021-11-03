@@ -855,6 +855,12 @@ class FissionYields:
         ax.set_xlabel("Energy [MeV]")
         ax.set_ylabel("Weight")
 
+    def __getitem__(self, item):
+        try:
+            return self.yields[item]
+        except KeyError:
+            return ufloat(0, 0)
+
 
 class CrossSection1D:
     def __init__(self, ergs: List[float], xss: List[Union[UFloat, float]],
@@ -1074,6 +1080,86 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
                                 .format(invalid_name)) from e
 
     return makes_cut
+
+
+def decay_nuclide(nuclide: Nuclide, yield_thresh=1E-5):
+    """
+    This function solves the following problem:
+
+        Starting with 100% of a given unstable nuclide, what fractions of parent + progeny nuclides remain after time t?
+
+    The coupled system of linear diff. egs. is solved "exactly" by solving the relevant eigenvalue problem.
+
+    Args:
+        nuclide: JSB_tool.Nuclide instance corresponding to the parent nuclide.
+        yield_thresh:  TODO
+
+    Returns:
+        A function that takes a time (or array of times), and returns nuclide fractions at time(s) t.
+            Return values of this function are of form: Dict[nuclide_name: Str, fractions: Union[np.ndarray, float]]
+
+    """
+    column_labels = [nuclide.name]  # Nuclide names corresponding to lambda_matrix.
+    lambda_matrix = [[-nuclide.decay_rate.n]]  # Seek solutions to F'[t] == lambda_matrix.F[t]
+
+    def loop(parent_nuclide, decay_modes):
+        if not len(decay_modes):
+            # child_index = column_labels.index(mode.daughter_name)
+            return
+        # Loop through all decay channels
+        for _, modes in decay_modes.items():
+            # A given decay channels (e.g. beta -) can have multiple child nuclides, so loop through them all.
+            for mode in modes:
+                if mode.modes[-1] == 'sf':  # don't decay fission yields (for now?)
+                    continue
+
+                parent_index = column_labels.index(mode.parent_name)
+                child_nuclide = Nuclide.from_symbol(mode.daughter_name)
+                child_lambda = child_nuclide.decay_rate.n
+
+                try:
+                    child_index = column_labels.index(mode.daughter_name)
+                    child_row = lambda_matrix[child_index]
+                except ValueError:
+                    column_labels.append(mode.daughter_name)
+                    child_index = len(column_labels) - 1
+                    for l in lambda_matrix:
+                        l.append(0)
+                    child_row = [0]*len(lambda_matrix[-1])
+                    child_row[child_index] = -child_lambda
+                    lambda_matrix.append(child_row)
+
+                child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n
+                loop(child_nuclide, child_nuclide.decay_modes)  # recursively loop through daughters
+
+    loop(nuclide, nuclide.decay_modes)  # initialize recursion.
+
+    lambda_matrix = np.array(lambda_matrix)
+
+    eig_vals, eig_vecs = np.linalg.eig(lambda_matrix)
+
+    # sort eigen values.
+    # idx = eig_vals.argsort()
+    # eig_vals = eig_vals[idx]
+    # eig_vecs = eig_vecs[:, idx]
+
+    eig_vecs = eig_vecs.T
+    b = [1] + [0]*(len(eig_vals) - 1)
+
+    coeffs = np.linalg.solve(eig_vecs.T, b)
+
+    def func(ts):
+        if hasattr(ts, '__iter__'):
+            # t = np.array(t)
+            yields = [np.sum([c*vec*np.e**(val*t) for c, vec, val in zip(coeffs, eig_vecs, eig_vals)], axis=0) for t in ts]
+            yields = np.array(yields).T
+            return {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+        else:
+            yields = np.sum([c * vec * np.e ** (val * ts) for c, vec, val in zip(coeffs, eig_vecs, eig_vals)], axis=0)
+            return {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+
+    # func([1, 20])
+    return func
 
 
 class Nuclide:

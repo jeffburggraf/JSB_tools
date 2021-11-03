@@ -580,7 +580,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin):
                                                          dtype=int))
         else:
             bg_weights = 1
-            sig_weight = 1
+            sig_weight = ufloat(1, 0)
 
         bg_times_list = self.__energy_binned_times__[slice(*bg_window_left_is)]
         bg_times_list += self.__energy_binned_times__[slice(*bg_window_right_is)]
@@ -611,6 +611,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin):
         bg *= n_sig_erg_bins  # from per_bin to per width of signal window
 
         sig = np.histogram(sig_times, bins=time_bins)[0]
+        sig = sig.astype(float)
 
         if not nominal_values:
             sig = unp.uarray(sig, np.sqrt(sig))

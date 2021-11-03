@@ -251,7 +251,7 @@ class Material:
         # Then, write lines for PHITS dedx file.
         for proj, options in _srim_outputs.items():
             if len(options):
-                arg_min = np.argmin([o.density-self.density for o in options])
+                arg_min = np.argmin([abs(o.density-self.density) for o in options])
                 best_option: _SrimRun = options[arg_min]
                 srim_outputs[proj] = best_option
                 if not np.isclose(best_option.density, self.density, rtol=0.02):
