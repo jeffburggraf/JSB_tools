@@ -455,6 +455,62 @@ class RawFissionYieldData:
         return out
 
 
+class DecayedFissionYields:
+    def __init__(self, target: str, inducing_par: Union[None, str], energies: Union[Collection[float], None] = None,
+                 library: Union[str, None] = None, independent_bool: bool = True):
+        """
+        Calculates fission yields at a time after factoring in decays.
+
+        Args:
+            target: Fission target nucleus
+            inducing_par: None for SF. Or, e.g., 'proton', 'neutron', 'gamma'
+            energies: If None, use energies from the data file.
+            library: Fission yield library. See FissionYields.FISSION_YIELD_SUBDIRS for available yield libraries.
+            independent_bool:
+        """
+        self.indep_fission_yields = FissionYields(target=target, inducing_par=inducing_par, energies=energies,
+                                                  library=library, independent_bool=independent_bool)
+
+    def decay(self, times, yield_thresh=1E-4) -> Dict[str, np.ndarray]:
+        """
+        Returns dict of yields at each time t.
+        Args:
+            times: An array or float.
+            yield_thresh: If yield is below this, don't include it.
+
+        Returns: Dict[str, ]
+
+        """
+        out = {}
+
+        for n_name, yield_ in self.indep_fission_yields.yields.items():
+            if hasattr(yield_, '__iter__'):
+                assert len(yield_) == 1, 'Weight yields before applying the decay function! '
+                yield_ = yield_[0]
+
+            if yield_ < yield_thresh:
+                if n_name not in out:
+                    out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
+                continue
+
+            decay_func = decay_nuclide(n_name)
+            for n_name_decay, decay_yield in decay_func(times).items():
+                if all(d < yield_thresh for d in decay_yield):  # todo: wont work with non-iter `times`?
+                    if n_name not in out:
+                        out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
+                    continue
+                try:
+                    out[n_name_decay] += yield_*decay_yield
+                except KeyError:
+                    out[n_name_decay] = yield_ * decay_yield
+        if hasattr(times, '__iter__'):
+            out = {k: v for k, v in sorted(out.items(), key=lambda x: -x[1][-1])}
+        else:
+            out = {k: v for k, v in sorted(out.items(), key=lambda x: -x[1])}
+
+        return out
+
+
 class FissionYields:
     """
     Retrieve fission yield data, if available. In some cases, the code will convert neutron yield
@@ -565,9 +621,10 @@ class FissionYields:
     @classmethod
     def from_neutron(cls, target, inducing_par, ergs, independent_bool=True):
         assert ergs is not None, 'Must supply energies when converting neutron-fission data to another projectile'
-        new_target, new_ergs = FissionYields.particle_energy_convert(target, ergs, inducing_par, 'neutron')
+        new_ergs, new_target = FissionYields.particle_energy_convert(target, ergs, inducing_par, 'neutron')
 
-        yield_ = cls(new_target, 'neutron', ergs, None, independent_bool)
+        yield_ = cls(new_target, 'neutron', new_ergs, None, independent_bool)
+        return yield_
 
     @staticmethod
     def interp(xnew, x, y):
@@ -589,7 +646,7 @@ class FissionYields:
         return result
 
     def __init__(self, target: str, inducing_par: Union[None, str], energies: Union[Collection[float], None] = None,
-                 library: Union[str, None] = None, independent_bool: bool=True):
+                 library: Union[str, None] = None, independent_bool: bool = True):
         """
         Load fission yield data into class instance. If `library` is None, find the best option for `energies`.
 
@@ -602,8 +659,8 @@ class FissionYields:
         """
         if isinstance(energies, (float, int)):
             energies = [energies]
-        if len(energies) == 0:
-            warn('len of `energies` is zero! Falling back on default library energy points.')
+        if hasattr(energies, '__iter__') and len(energies) == 0:
+            warn('length of `energies` is zero! Falling back on default library energy points.')
             energies = None
         self.target = target
         yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
@@ -1082,16 +1139,27 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
     return makes_cut
 
 
-def decay_nuclide(nuclide: Nuclide, yield_thresh=1E-5):
+def decay_default_func(nuclide_name):
+    """"""
+    def func(ts):
+        if hasattr(ts, '__iter__'):
+            out = {nuclide_name: np.ones_like(ts)}
+        else:
+            out = {nuclide_name: 1}
+        return out
+
+    return func
+
+
+def decay_nuclide(nuclide_name: str, yield_thresh=1E-5):
     """
     This function solves the following problem:
-
         Starting with 100% of a given unstable nuclide, what fractions of parent + progeny nuclides remain after time t?
 
-    The coupled system of linear diff. egs. is solved "exactly" by solving the relevant eigenvalue problem.
+    The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem.
 
     Args:
-        nuclide: JSB_tool.Nuclide instance corresponding to the parent nuclide.
+        nuclide_name: Name of parent nuclide.
         yield_thresh:  TODO
 
     Returns:
@@ -1099,13 +1167,18 @@ def decay_nuclide(nuclide: Nuclide, yield_thresh=1E-5):
             Return values of this function are of form: Dict[nuclide_name: Str, fractions: Union[np.ndarray, float]]
 
     """
-    column_labels = [nuclide.name]  # Nuclide names corresponding to lambda_matrix.
+
+    nuclide = Nuclide.from_symbol(nuclide_name)
+    if (not nuclide.is_valid) or nuclide.is_stable:
+        return decay_default_func(nuclide_name)
+
+    column_labels = [nuclide_name]  # Nuclide names corresponding to lambda_matrix.
     lambda_matrix = [[-nuclide.decay_rate.n]]  # Seek solutions to F'[t] == lambda_matrix.F[t]
 
-    def loop(parent_nuclide, decay_modes):
-        if not len(decay_modes):
-            # child_index = column_labels.index(mode.daughter_name)
+    def loop(parent_nuclide: Nuclide, decay_modes):
+        if not len(decay_modes):  # stable nuclide. Terminate recursion.
             return
+
         # Loop through all decay channels
         for _, modes in decay_modes.items():
             # A given decay channels (e.g. beta -) can have multiple child nuclides, so loop through them all.
@@ -1113,20 +1186,27 @@ def decay_nuclide(nuclide: Nuclide, yield_thresh=1E-5):
                 if mode.modes[-1] == 'sf':  # don't decay fission yields (for now?)
                     continue
 
+                # index of row/column for parent nuclide in lambda matrix.
                 parent_index = column_labels.index(mode.parent_name)
+
                 child_nuclide = Nuclide.from_symbol(mode.daughter_name)
+                # index of row/column for child nuclide in lambda matrix.
                 child_lambda = child_nuclide.decay_rate.n
 
                 try:
                     child_index = column_labels.index(mode.daughter_name)
                     child_row = lambda_matrix[child_index]
-                except ValueError:
+
+                except ValueError:  # First time encountering this nuclide. Add new row/column to lambda-matrix.
                     column_labels.append(mode.daughter_name)
                     child_index = len(column_labels) - 1
-                    for l in lambda_matrix:
-                        l.append(0)
+
+                    for _list in lambda_matrix:
+                        _list.append(0)
+
                     child_row = [0]*len(lambda_matrix[-1])
-                    child_row[child_index] = -child_lambda
+                    child_row[child_index] = -child_lambda  # Set value for decay of child.
+
                     lambda_matrix.append(child_row)
 
                 child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n
@@ -2088,11 +2168,15 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
+    y = DecayedFissionYields("U238", 'gamma', energies=[10])
+    # y.indep_fission_yields.weight_by_erg()
+    y.decay([20, 300])
     # from GlobalValues import get_proton_erg_prob_1
     # x = np.arange(10)
     # # y = unp.uarray(x, x)
     # # np.interp(np.linspace(0,10,100), x, y)
     # import time
-    n = Nuclide.from_symbol('C12')
-    ax = n.get_incident_neutron_parents()['O16'].xs.plot()
-    Nuclide.from_symbol('O16').get_incident_neutron_daughters()['He4'].xs.plot(ax=ax)
+    # n = Nuclide.from_symbol('C12')
+    # ax = n.get_incident_neutron_parents()['O16'].xs.plot()
+    # Nuclide.from_symbol('O16').get_incident_neutron_daughters()['He4'].xs.plot(ax=ax)
+#
