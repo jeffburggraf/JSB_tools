@@ -684,5 +684,5 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
-    pickle_neutron_activation_data()
+    pickle_proton_fission_xs_data()
 

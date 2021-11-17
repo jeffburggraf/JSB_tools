@@ -22,6 +22,25 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
     all_surfs = MCNPNumberMapping('Surface', 1)
 
     @staticmethod
+    def global_zmin():
+        """
+        Return the largest .zmax attribute of all surfaces.
+        Returns:
+
+        """
+        _min = None
+        for c in Surface.all_surfs.values():
+            try:
+                if _min is None:
+                    _min = c.z0
+                else:
+                    if c.z0 < _min:
+                        _min = c.z0
+            except AttributeError:
+                continue
+        return _min
+
+    @staticmethod
     def global_zmax():
         """
         Return the largest .zmax attribute of all surfaces.
@@ -98,6 +117,9 @@ class TRCL:
         else:
             self.rotation_matrix = get_rotation_matrix(rotation_theta, *rotation_axis, _round=_round)
 
+    def eval(self, vec):
+        return self.offset_vector + np.matmul(self.rotation_matrix, vec)
+
     def cell_form(self):
         return f'({self})'
 
@@ -118,6 +140,16 @@ class Cell(GeomSpecMixin):
         like_but: Create a new cell using MCNP's LIKE BUT feature.
     """
     all_cells: Dict[int, Cell] = MCNPNumberMapping('Cell', 10)
+
+    @classmethod
+    def find_cell(cls, cell_name):
+        available_cells = []
+        for cell in Cell.all_cells.values():
+            if cell.cell_name == cell_name:
+                return cell
+            available_cells.append(cell.cell_name)
+        available_cells = '\n'.join(available_cells)
+        raise ValueError(f"Cell {cell_name} not found! Available cells:\n{available_cells}")
 
     @staticmethod
     def clear():
@@ -168,7 +200,7 @@ class Cell(GeomSpecMixin):
 
         self.cell = self
         self.__name__ = cell_name
-        self.cell_number = cell_number
+        self.cell_number: int = cell_number
         if importance is not None:
             assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
                                                                              "for example, ('np', 1)"

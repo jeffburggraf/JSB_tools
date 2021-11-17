@@ -1,5 +1,5 @@
+from __future__ import annotations
 import warnings
-
 import matplotlib.pyplot as plt
 from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
@@ -128,7 +128,7 @@ def get_most_abundant_isotope(symbol):
 
 
 class Material:
-    __all_materials = MCNPNumberMapping('Material', 1000, 1000)
+    all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
     @property
     def _get_elements_and_fractions(self) -> Tuple[List[str], List[float]]:
@@ -156,20 +156,29 @@ class Material:
 
     @staticmethod
     def clear():
-        Material.__all_materials = MCNPNumberMapping('Material', 1000, 1000)
+        Material.all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
     @staticmethod
     def get_all_material_cards():
         cards = []
-        for mat in Material.__all_materials.values():
+        for mat in Material.all_materials.values():
+            mat: Material
             cards.append(mat.mat_card)
         return '\n'.join(cards)
+
+    # @staticmethod
+    # def all_materials() -> List[Material]:
+    #     out = []
+    #     for mat in Material.__all_materials.values():
+    #         mat: Material
+    #         out.append(mat)
+    #     return out
 
     def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None,
                  is_mcnp=True):
         self.mat_number = mat_number
         self.__name__ = mat_name
-        Material.__all_materials[self.mat_number] = self
+        Material.all_materials[self.mat_number] = self
         self.density = density
         self._zaids = []
         self._zaid_proportions = []
@@ -341,7 +350,7 @@ class Material:
 
         Args:
             element_symbol: e.g. "Ar", "U", "W"
-            fraction:
+            fraction: negative for weight fraction, positive for atom fraction.
 
         Returns: None
         """
@@ -354,7 +363,8 @@ class Material:
             zaid = 1000 * z + a
             self.add_zaid(zaid, percent*fraction, False)
 
-    def add_zaid(self, zaid_or_nuclide: Union[Nuclide, int], fraction, is_weight_fraction=False):
+    def add_zaid(self, zaid_or_nuclide: Union[Nuclide, int], fraction, is_weight_fraction=False,
+                 elemental_zaid=False):
         if self.is_weight_fraction is None:
             self.is_weight_fraction = is_weight_fraction
         if isinstance(zaid_or_nuclide, int):
@@ -364,7 +374,8 @@ class Material:
         else:
             assert False, 'Incorrect type, "{}", passed in `zaid_or_nuclide` argument.\n' \
                           'Must be zaid (int) or Nuclide'.format(type(zaid_or_nuclide))
-
+        if elemental_zaid:
+            zaid_or_nuclide = 1000 * (zaid_or_nuclide//1000)
         self._zaids.append(zaid_or_nuclide)
         self._zaid_proportions.append(fraction)
 
@@ -429,13 +440,60 @@ class Nickel(Material):
 
 
 class StainlessSteel(Material):
-    def __init__(self, density=7.86, mat_number: int = None, mat_name: str = "Stainless steel",
-                 mat_kwargs: Dict[str, str] = None):
+    def __init__(self, density=None, mat_number: int = None, mat_name: str = "Stainless steel",
+                 mat_kwargs: Dict[str, str] = None, elemental_zaid=False, number=304):
+        """
+
+        Args:
+            density:
+            mat_number:
+            mat_name:
+            mat_kwargs:
+            elemental_zaid: If True, use, e.g., 6000 instead of 6012.
+            number: Steel type, e.g. 304 stainless steel (most common)
+        """
+        # zaids_fracs  {steel_num: (density, [zaid1, frac1, ...]])}
+        zaids_fracs = {304: (8.0,
+                             [(6000, 0.00183),
+                              (14000, 0.009781),
+                              (15031, 0.000408),
+                              (16000, 0.000257),
+                              (24000, 0.200762),
+                              (25055, 0.010001),
+                              (26000, 0.690375),
+                              (28000, 0.086587)]),
+                       302: (7.86,
+                             [(6000, 0.006356),
+                              (14000, 0.0018057),
+                              (15031, 0.000739),
+                              (16000, 0.000476),
+                              (24000, 0.188773),
+                              (25055, 0.018462),
+                              (26000, 0.683520),
+                              (28000, 0.083616)]),
+                       202: (7.86,
+                             [(6000, 0.003405),
+                              (7014, 0.004866),
+                              (14000, 0.009708),
+                              (15031, 0.000528),
+                              (16000, 0.000255),
+                              (24000, 0.188773),
+                              (25055, 0.086851),
+                              (26000, 0.659160),
+                              (28000, 0.046454)])
+                       }
+        if number not in zaids_fracs:
+            raise KeyError(f"No specification for steel {number}")
+        if density is None:
+            density = zaids_fracs[number][0]
         super(StainlessSteel, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
-        self.add_element_natural('Fe', 0.659)
-        self.add_element_natural('Cr', 0.18)
-        self.add_element_natural('Mn', 0.08)
-        self.add_element_natural('Ni', 0.04)
+
+        for zaid, frac in zaids_fracs[number][-1]:
+            self.add_zaid(zaid, frac, elemental_zaid=elemental_zaid)
+        # self.add_element_natural('Fe', 0.659)
+        # self.add_element_natural('Cr', 0.18)
+        # self.add_element_natural('Mn', 0.08)
+        # self.add_element_natural('Ni', 0.04)
 
 
 class Aluminum(Material):
@@ -506,9 +564,29 @@ class Air(Material):
             self.add_zaid(zaid, f)
 
 
+class ThoriumTetrafluoride(Material):
+    def __init__(self, density=6.3, mat_number: int = None, mat_name: str = "ThF4",
+                 mat_kwargs: Dict[str, str] = None, elemental_zaids=False):
+        super(ThoriumTetrafluoride, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        fractions = [4, 1]
+        zaids = [9019, 90232]
+
+        if elemental_zaids:
+            zaids = [1000*(z//1000) for z in zaids]
+        [self.add_zaid(z, atom_fraction) for z, atom_fraction in zip(zaids, fractions)]
+
+
+class Graphite(Material):
+    def __init__(self, density=1.7, mat_number: int = None, mat_name: str = "Graphite",
+                 mat_kwargs: Dict[str, str] = None):
+        super(Graphite, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_zaid(6000, 1)
+
+
 if __name__ == "__main__":
+    print(StainlessSteel())
     # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)
     # m.set_srim_dedx()
     # print(m)
     # print(DepletedUranium()._get_elements_and_fractions)
-    print(atomic_weight, ATOMIC_NUMBER, atomic_mass)
+    # print(atomic_weight, ATOMIC_NUMBER, atomic_mass)

@@ -13,7 +13,7 @@ import numpy as np
 from JSB_tools.MCNP_helper.materials import Material as mat
 from JSB_tools.MCNP_helper.materials import PHITSOuterVoid
 
-NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
+NDIGITS = 10  # Number of significant digits to round all numbers to when used in input decks.
 
 
 __all__ = ['clear_all', 'clear_all_but_materials', 'clear_cells', 'clear_surfaces']
@@ -51,6 +51,14 @@ class SphereSurface(Surface):
         self.x = x
         self.y = y
         self.z = z
+
+    @property
+    def z1(self):  # max z
+        return self.z + self.radius
+
+    @property
+    def z0(self):  # min z
+        return self.z0 - self.radius
 
     @property
     def volume(self):

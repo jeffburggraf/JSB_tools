@@ -14,8 +14,7 @@ from pathlib import Path
 import os
 import re
 import numpy as np
-from JSB_tools import TBrowser
-from JSB_tools import ProgressReport
+from JSB_tools import TBrowser, ProgressReport, mpl_hist
 import time
 from typing import Union
 from JSB_tools.nuke_data_tools import Nuclide
@@ -590,9 +589,11 @@ class Container:
             new_file_name = m.groups()[0]
         if __rename_index__ > 0:
             new_file_name = "{0}_{1}".format(new_file_name, __rename_index__)
-        new_file_name += ".root"
+        # new_file_name += ".root"
+        # new_file_name =
 
-        new_file_path = directory / new_file_name
+        new_file_path = Path(directory) / new_file_name
+        new_file_path = new_file_path.with_suffix('.root')
 
         if (not self.overwrite) and Path.exists(new_file_path):
             self.__make_ROOT_file_and_tree__(__rename_index__ + 1)
@@ -701,6 +702,7 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
     t_start = time.time()
     next_print_time = t_start + 1
     line_number = 0
+
     while max_histories is None or n_events < max_histories:
         if max_time is not None:
             t_now = time.time()

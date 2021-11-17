@@ -15,6 +15,7 @@ from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTO
     NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
 from functools import cached_property
 from scipy.interpolate import interp1d
+from uncertainties import nominal_value
 from datetime import datetime, timedelta
 
 
@@ -84,6 +85,12 @@ def human_readable_half_life(hl, include_errors):
             return fmt.format(e)
 
     hl_in_sec = hl
+
+    if hl_in_sec is None:
+        raise ValueError
+
+    if isinstance(hl_in_sec, float):
+        hl_in_sec = ufloat(hl_in_sec, 0)
 
     if hl_in_sec.n == np.inf or hl_in_sec.n == np.nan:
         return str(hl_in_sec.n)
@@ -495,7 +502,7 @@ class DecayedFissionYields:
 
             decay_func = decay_nuclide(n_name)
             for n_name_decay, decay_yield in decay_func(times).items():
-                if all(d < yield_thresh for d in decay_yield):  # todo: wont work with non-iter `times`?
+                if max(decay_yield) < yield_thresh:  # todo: wont work with non-iter `times`?
                     if n_name not in out:
                         out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
                     continue
@@ -1118,21 +1125,24 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
     makes_cut = True
 
     assert isinstance(is_stable_only, bool)
-    if is_stable_only and not np.isinf(hl):
-        return False
+    if is_stable_only:
+        if hl is None:
+            return False
+        elif not np.isinf(nominal_value(hl)):
+            return False
 
     if len(a_z_hl_cut) > 0:
         a_z_hl_cut = a_z_hl_cut.lower()
-        if 'time_in_seconds' in a_z_hl_cut and hl is None:
+        if 'hl' in a_z_hl_cut and hl is None:
             makes_cut = False
         else:
             try:
-                makes_cut = eval(a_z_hl_cut, {"time_in_seconds":hl, 'a': a, 'z': z})
+                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z})
                 assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
             except NameError as e:
                 invalid_name = str(e).split("'")[1]
 
-                raise Exception("\nInvalid name '{}' used in cut. Valid names are: 'z', 'a', and 'time_in_seconds',"
+                raise Exception("\nInvalid name '{}' used in cut. Valid names are: 'z', 'a', and 'hl',"
                                 " which stand for atomic-number, mass-number, and half-life, respectively."
                                 .format(invalid_name)) from e
 
@@ -1151,7 +1161,7 @@ def decay_default_func(nuclide_name):
     return func
 
 
-def decay_nuclide(nuclide_name: str, yield_thresh=1E-5):
+def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
     """
     This function solves the following problem:
         Starting with 100% of a given unstable nuclide, what fractions of parent + progeny nuclides remain after time t?
@@ -1160,6 +1170,7 @@ def decay_nuclide(nuclide_name: str, yield_thresh=1E-5):
 
     Args:
         nuclide_name: Name of parent nuclide.
+        decay_rate: If True, return decays per second instead of fraction remaining.
         yield_thresh:  TODO
 
     Returns:
@@ -1224,21 +1235,54 @@ def decay_nuclide(nuclide_name: str, yield_thresh=1E-5):
     # eig_vecs = eig_vecs[:, idx]
 
     eig_vecs = eig_vecs.T
-    b = [1] + [0]*(len(eig_vals) - 1)
+    if not decay_rate:
+        # initial condition: fraction of parent nuclide is 1. 0 for the rest
+        b = [1] + [0]*(len(eig_vals) - 1)
+    else:
+        # initial condition: parent nuclide is decaying at rate of 1 Hz, the rest 0 Hz
+        b = [-1/lambda_matrix[0][0]] + [0]*(len(eig_vals) - 1)
 
-    coeffs = np.linalg.solve(eig_vecs.T, b)
+    coeffs = np.linalg.solve(eig_vecs.T, b)  # solve for initial conditions
 
-    def func(ts):
+    def func(ts, plot=False):
         if hasattr(ts, '__iter__'):
-            # t = np.array(t)
-            yields = [np.sum([c*vec*np.e**(val*t) for c, vec, val in zip(coeffs, eig_vecs, eig_vals)], axis=0) for t in ts]
-            yields = np.array(yields).T
-            return {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+            iter_flag = True
         else:
-            yields = np.sum([c * vec * np.e ** (val * ts) for c, vec, val in zip(coeffs, eig_vecs, eig_vals)], axis=0)
-            return {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+            iter_flag = False
+            ts = [ts]
 
-    # func([1, 20])
+        yields = [np.sum([c * vec * np.e ** (val * t) for c, vec, val in
+                          zip(coeffs, eig_vecs, eig_vals)], axis=0) for t in ts]
+        yields = np.array(yields).T
+        if not decay_rate:
+            out = {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+        else:
+            out = {name: rel_yield*rate for name, rel_yield, rate in
+                    zip(column_labels, yields, np.abs(np.diagonal(lambda_matrix)))}
+
+        if not iter_flag:
+            for k, v in out.items():
+                out[k] = v[0]
+
+        if plot:
+            assert iter_flag, 'Cannot plot for only one time'
+            plt.figure()
+            for k, v in out.items():
+                plt.plot(ts, v, label=k)
+            if decay_rate:
+                plt.ylabel("Decays/s")
+            else:
+                plt.ylabel("Rel. abundance")
+            plt.xlabel('Time [s]')
+            plt.legend()
+
+        return out
+        # else:
+        #     yields = np.sum([c * vec * np.e ** (val * ts) for c, vec, val in
+        #                      zip(coeffs, eig_vecs, eig_vals)], axis=0)
+        #     return {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+
+    func([1, 20])
     return func
 
 
@@ -1923,15 +1967,16 @@ class Nuclide:
         """
         return self.half_life.n >= (365*24*60**2)*threshold_in_years
 
-    @ classmethod
-    def get_all_nuclides(cls, a_z_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
+    @staticmethod
+    def get_all_nuclides(a_z_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
         """
         Returns a list of all nuclide instances subject to a criteria specified by `a_z_hl_cut`.
         Args:
-            a_z_hl_cut: Criteria (python code) to be evaluated, where
+            a_z_hl_cut: Criteria (python code) to be evaluated, where the following variables may appear in the
+             expression:
                 z=atomic number
                 a=mass number,
-                time_in_seconds=half life in seconds.
+                hl=half life in seconds.
                 Defaults to all known nuclides.
             is_stable_only:  Only include stable nuclides.
 
@@ -1947,7 +1992,7 @@ class Nuclide:
             if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
                 nuclides.append(Nuclide.from_symbol(nuclide_name))
 
-        return nuclides
+        yield from nuclides
 
 
 class InducedDaughter(Nuclide):
@@ -2168,15 +2213,4 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    y = DecayedFissionYields("U238", 'gamma', energies=[10])
-    # y.indep_fission_yields.weight_by_erg()
-    y.decay([20, 300])
-    # from GlobalValues import get_proton_erg_prob_1
-    # x = np.arange(10)
-    # # y = unp.uarray(x, x)
-    # # np.interp(np.linspace(0,10,100), x, y)
-    # import time
-    # n = Nuclide.from_symbol('C12')
-    # ax = n.get_incident_neutron_parents()['O16'].xs.plot()
-    # Nuclide.from_symbol('O16').get_incident_neutron_daughters()['He4'].xs.plot(ax=ax)
-#
+    f = decay_nuclide('Xe139', True)
