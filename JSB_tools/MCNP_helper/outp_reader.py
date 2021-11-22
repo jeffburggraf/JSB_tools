@@ -54,7 +54,7 @@ class OutpCell:
     def __repr__(self):
         return "Cell {0}, mat:{1}, name: {2}".format(self.number, self.mat, self.name)
 
-    def get_tally(self):
+    def get_tally(self) -> F4Tally:
         assert len(self.tallys) <= 1, f'Multiple tallys for cell {self.number}. Use `get_tallys`.'
         assert len(self.tallys) > 0, f'No tally_n for cell {self.number}.'
         return self.tallys[0]
@@ -78,6 +78,9 @@ class OutpCell:
 
 class F4Tally(Tally):
     """
+    Todo: Merge this with inputdeck.py/F4Tally.
+     Also, rework things. THERE HAS TO BE A BETTER WAY TO COLLECT THE DATA FROM OUTP.
+
     Load tally data from Outp
 
     Attributes:
@@ -87,6 +90,24 @@ class F4Tally(Tally):
 
 
     """
+    tally_name_match = re.compile(
+        r' *f(?P<tally_num>[0-9]*[48]):(?P<particle>.) +(?P<cell>[0-9]+) *(?:\$.*name: *(?P<name>[\w -_]*\w) *)?')
+
+    @staticmethod
+    def __find_tally_cards__(cards):
+        outs = {}
+        for card in cards:
+            if m := F4Tally.tally_name_match.match(card):
+                num = m['tally_num']
+                result = {'name': m['name'], 'cell': m['cell'], 'particle': m['particle']}
+                outs[num] = result
+        return outs
+
+    # @classmethod
+    # def build(cls, tally_number, cell, tally_name=None):
+    #     out = cls.__new__(cls)
+    #     out.cell
+
     #  todo: Verify summing methods.
     def __init__(self, tally_number_or_name=None, outp=None, __copy__tally__=None):
         if __copy__tally__ is not None:
@@ -119,25 +140,42 @@ class F4Tally(Tally):
             # find tally_n number is not given
             found_tally = False
             names_found = []
+
             if self.tally_number is None:
-                tally_name_match = re.compile(
-                    r' *f(?P<tally_num>[0-9]*[48]):(?P<particle>.) +(?P<cell>[0-9]+) *\$.*name: *(?P<name>[\w ]*\w) *$')
-                for card in outp.input_deck:
-                    if _m := tally_name_match.match(card):
-                        name = _m.group('name')
-                        names_found.append(name)
-
-                        if name == self.tally_name:
-                            self.tally_number = _m.group('tally_num')
-                            found_tally = True
-
-                            break
+                for tally_num, tally_info in F4Tally.__find_tally_cards__(outp.input_deck).items():
+                    name = tally_info['name']
+                    names_found.append(name)
+                    if name == self.tally_name:
+                        self.tally_number = tally_num
+                        found_tally = True
+                        break
                 else:
-                    assert False, '\nCould not find tally_n with name "{0}"\nExample of using a name tag to access tally_n:' \
-                                  '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text ' \
-                                  'after the string "name:" is the name tag (names are case insensitive)\n' \
-                                  'Names found:\n{1}' \
+                    assert False, \
+                        '\nCould not find tally_n with name "{0}"\nExample of using a name tag to access tally_n:' \
+                        '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text ' \
+                        'after the string "name:" is the name tag (names are case insensitive)\n' \
+                        'Names found:\n{1}' \
                         .format(self.tally_name, names_found)
+
+            # if self.tally_number is None:
+            #     tally_name_match = re.compile(
+            #         r' *f(?P<tally_num>[0-9]*[48]):(?P<particle>.) +(?P<cell>[0-9]+) *\$.*name: *(?P<name>[\w -_]*\w) *$')
+            #     for card in outp.input_deck:
+            #         if _m := tally_name_match.match(card):
+            #             name = _m.group('name')
+            #             names_found.append(name)
+            #
+            #             if name == self.tally_name:
+            #                 self.tally_number = _m.group('tally_num')
+            #                 found_tally = True
+            #
+            #                 break
+            #     else:
+            #         assert False, '\nCould not find tally_n with name "{0}"\nExample of using a name tag to access tally_n:' \
+            #                       '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text ' \
+            #                       'after the string "name:" is the name tag (names are case insensitive)\n' \
+            #                       'Names found:\n{1}' \
+            #             .format(self.tally_name, names_found)
 
             # set name to tally_n number if name not specified
             if self.tally_name is None:
@@ -474,7 +512,7 @@ class OutP:
 
         self.inp_title = self.input_deck[0]
 
-        self.cells = {}
+        self.cells: Dict[int, OutpCell] = {}
 
         for index, line in enumerate(self.__outp_lines__):
             if re.match("^1cells", line):
