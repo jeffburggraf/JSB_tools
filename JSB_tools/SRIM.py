@@ -265,24 +265,28 @@ if __name__ == '__main__':
       # For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
 
-    g = _IdealGas(['Ar'])
-    g_ar_he = _IdealGas(['Ar', 'He'])
-     # = _IdealGas(['Ar'])
     for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
-        run_srim(['U'], [1], 19, n, 120)  # Uranium
-        for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.3, 1.35, 1.4, 1.5, 1.6]:
-            density = g.get_density_from_atom_fractions([1], pressure=press)
-            run_srim(['Ar'], [1], density, n, 120, True )  # Pure argon
+        run_srim(['C'], [1], 1.7, n, 120)
 
-            density_heR = g_ar_he.get_density_from_atom_fractions([1,1], pressure=press)
-            run_srim(['Ar', 'He'], [1, 1], density, n, 120, True)  # He Ar Mix
-
-        for frac in np.arange(0, 0.6, 0.1):
-            fracs = [0.5-frac, frac]
-            density = g_ar_he.get_density_from_atom_fractions(fracs, pressure=1)
-            run_srim(['Ar', 'He'], fracs, density, n, 120, True)
+    # g = _IdealGas(['Ar'])
+    # g_ar_he = _IdealGas(['Ar', 'He'])
+     # = _IdealGas(['Ar'])
+    # for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
+    #     run_srim(['U'], [1], 19, n, 120)  # Uranium
+    #     for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.3, 1.35, 1.4, 1.5, 1.6]:
+    #         density = g.get_density_from_atom_fractions([1], pressure=press)
+    #         run_srim(['Ar'], [1], density, n, 120, True )  # Pure argon
+    #
+    #         density_heR = g_ar_he.get_density_from_atom_fractions([1,1], pressure=press)
+    #         run_srim(['Ar', 'He'], [1, 1], density, n, 120, True)  # He Ar Mix
+    #
+    #
+    #     for frac in np.arange(0, 0.6, 0.1):
+    #         fracs = [0.5-frac, frac]
+    #         density = g_ar_he.get_density_from_atom_fractions(fracs, pressure=1)
+    #         run_srim(['Ar', 'He'], fracs, density, n, 120, True)
     # atoms = ['Ar40', 'He4']
-    # he_fracs = list(np.arange(0, 1.2, 0.2)) + [0.5]
+    # he_fracs = list(np.arange(0, 1.2, 0.2)) +   
     # # he_fracs = [0.5]
     # for he_frac in sorted(he_fracs):
     #     fractions = [he_frac, 1-he_frac]
