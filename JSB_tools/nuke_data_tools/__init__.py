@@ -1783,6 +1783,7 @@ class Nuclide:
                 else:
                     warn("Cannot find data for Nuclide `{0}`. Data for this nuclide is set to defaults: None, nan, ect."
                          .format(symbol))
+                    # raise ValueError
                     instance = Nuclide(symbol,  __internal__=True, half_life=ufloat(np.nan, np.nan))
                     instance.is_valid = False
             else:

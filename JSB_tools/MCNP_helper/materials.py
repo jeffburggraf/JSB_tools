@@ -141,7 +141,7 @@ class Material:
         elements_dict = {}
         for zaid, frac in zip(self._zaids, self._zaid_proportions):
             z = zaid//1000
-            a = zaid%1000
+            a = zaid % 1000
             s = Nuclide.from_Z_A_M(z, a).atomic_symbol
             try:
                 elements_dict[s] += frac
