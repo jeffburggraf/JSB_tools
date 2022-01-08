@@ -44,6 +44,7 @@ def clear_all():
     Surface.clear()
 
 
+
 class SphereSurface(Surface):
     def __init__(self, radius, x=0, y=0, z=0, surf_name=None, surf_num=None, comment=None):
         super(SphereSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
@@ -70,6 +71,21 @@ class SphereSurface(Surface):
         out = f'{self.surface_number} SPH {self.x:.{NDIGITS}g} {self.y:.{NDIGITS}g} {self.z:.{NDIGITS}g} {self.radius} ' \
               f'{comment}'
         return out
+
+
+class SphereCell(Cell, SphereSurface):
+    def __init__(self, radius, x=0, y=0, z=0,
+                 material: Union[int, mat, PHITSOuterVoid] = 0,
+                 importance: Union[None, Tuple[str, int]] = None,
+                 cell_name: str = None,
+                 cell_num: int = None, cell_comment: str = None,
+                 cell_kwargs=None, surf_name=None, surf_num=None, comment=None, **kwargs):
+
+        super(SphereCell, self).__init__(material=material, importance=importance, cell_number=cell_num,
+                                         cell_name=cell_name, cell_comment=cell_comment, cell_kwargs=cell_kwargs)
+
+        super(Cell, self).__init__(radius=radius, x=x, y=y, z=z, surf_name=surf_name, surf_num=surf_num,
+                                   comment=comment)
 
 
 class CuboidSurface(Surface):

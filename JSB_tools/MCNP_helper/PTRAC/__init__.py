@@ -104,7 +104,19 @@ class _Header:
 
         n_ids = list(map(int, line.split()[:11]))
         self.ids = []
-        ids = list(map(int, " ".join([file.readline() for i in range(3)]).split()))
+
+        ids = []
+        #  (bug fix) Replaced line below with regex that terminates header at correct position more generally
+        # ids = list(map(int, " ".join([file.readline() for i in range(3)]).split()))
+        while True:  # (Bug fix Jan/2022)
+            pos = file.tell()
+            line = file.readline()
+            if re.match('^( {0,7}[0-9]{1,2})+$', line):
+                ids.extend(map(int, line.split()))
+            else:
+                file.seek(pos)
+                break
+
         indicies = [0] + list(np.cumsum(n_ids))
         for i1, i2 in zip(indicies[:-1], indicies[1:]):
             self.ids.append(ids[i1: i2])
@@ -192,12 +204,16 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
     current_position = (lambda: file.tell()) if not max_events else (lambda: n_events)
     proj = ProgressReport(finish_point)  # for printing remaining time to stdout
 
+    linenum_debug = 1
+
     while max_events is None or n_events < max_events:
         # For each event type (SRC, BNK, stc) `pattern` is a mapping between variable positions
         #  (of the first (and second) event line(s)) in the PTRAC file, and their corresponding TTree Branch instances.
         pattern = patterns[1000 * (expected_event // 1000)]
 
         lines = [file.readline() for _ in range(len(pattern))]  # for all evt types  except 1000, read two lines.
+
+        linenum_debug += len(pattern)
 
         if lines[-1] == '':  # end of file
             break
