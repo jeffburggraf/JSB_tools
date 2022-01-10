@@ -284,6 +284,7 @@ class PeakFit(FitBase):
         guess_model.fit(x=self.x, data=bg_subtracted, params=params, weights=self.__weights__)
         params.add('bg', bg_guess)
         params['sigma'].min = x[len(x)//2] - x[len(x)//2-1]
+        params['sigma'].max = (x[-1] - x[0])*3
         params['sigma'].value = np.std(x)
 
         params['amp'] = params['amplitude']

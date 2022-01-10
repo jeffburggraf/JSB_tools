@@ -1,18 +1,23 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from openmc.data import FissionProductYields, Evaluation, Reaction, Tabulated1D, Product
-from  openmc.data.ace import get_libraries_from_xsdata
+from openmc.data.ace import get_libraries_from_xsdata
 from openmc.data.endf import get_evaluations
 from pathlib import Path
 from JSB_tools.nuke_data_tools import Nuclide
 import scipy
 
 
+n = Nuclide.from_symbol('Cu63')
 
-func = decay(Nuclide.from_symbol('Kr89'))
-x = np.linspace(0, 60*60*24, 10000)
-out = func(x)
-for label, values in out.items():
-    plt.plot(x, values, label=label)
-plt.legend()
+
+def find_activation_candidates(nuclide):
+    for k,v in nuclide.get_incident_proton_daughters().items():
+        if v.xs.threshold_erg() < 40 and 20*60 < v.half_life < 24*60*60:
+            print(k, v, f'thresh erg: {v.xs.threshold_erg():.1f}')
+            v.xs.plot()
+
+
+find_activation_candidates(n)
+find_activation_candidates(Nuclide.from_symbol('Cu65'))
 plt.show()
