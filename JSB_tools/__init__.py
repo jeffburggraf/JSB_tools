@@ -562,7 +562,7 @@ class FileManager:
 
 
         """
-
+        assert Path(path_to_root_dir).is_dir()
         self.root_directory = Path(path_to_root_dir)
         assert self.root_directory.parent.exists() and self.root_directory.parent.is_dir(),\
             f'Supplied root directory, "{self.root_directory}", is not a valid directory'

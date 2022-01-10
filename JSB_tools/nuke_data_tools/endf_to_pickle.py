@@ -38,6 +38,8 @@ cwd = Path(__file__).parent
 # Download Proton Activation Data File from: https://www-nds.iaea.org/padf/
 # proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 
+#  TODO: Make an option to choose sourfce of xs data for Nnuclide.get_daughters.. etc. Make ENDF default,
+#   but allow TENDL optionally
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
 # proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
 # gamma_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'

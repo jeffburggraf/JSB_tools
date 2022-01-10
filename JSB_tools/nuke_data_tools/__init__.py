@@ -17,6 +17,8 @@ from functools import cached_property
 from scipy.interpolate import interp1d
 from uncertainties import nominal_value
 from datetime import datetime, timedelta
+from JSB_tools.nuke_data_tools.talys import talys_dir, run, pickle_result
+import JSB_tools.nuke_data_tools.talys as talys
 
 
 def openmc_not_installed_warning():
@@ -157,6 +159,30 @@ def human_readable_half_life(hl, include_errors):
     if out is None:
         assert False, 'Issue in "human_friendly_half_life'
 
+    return out
+
+
+def talys_calculation(target, projectile, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+    fname = f'{target}-{projectile}'
+
+    path = talys_dir/fname/'data.pickle'
+    out = {}
+    if not path.exists():
+        talys.run(target=target, projectile=projectile)
+        talys.pickle_result(target=target, projectile=projectile)
+
+    with open(path, 'rb') as f:
+        data = pickle.load(f)
+        ergs = pickle.load(f)
+    parent_nuclide = Nuclide.from_symbol(target)
+
+    for k, v in data.items():
+        d = InducedDaughter(Nuclide.from_symbol(k), parent_nuclide, projectile)
+        if not __nuclide_cut__(a_z_hl_cut, d.A, d.Z, d.half_life, is_stable_only):
+            continue
+        out[k] = d
+        xs = CrossSection1D(ergs, v, incident_particle=projectile, fig_label=f"{target}({projectile}, X){d.name}")
+        out[k].xs = xs
     return out
 
 
@@ -344,7 +370,7 @@ class GammaLine(DecayModeHandlerMixin):
         else:
             mode = self.from_mode
 
-        return "Gamma line at {0:.2f} KeV; eff.py. intensity = {1:.2e}; decay: {2} "\
+        return "Gamma line at {0:.2f} KeV; intensity = {1:.2e}; decay: {2} "\
             .format(self.erg, self.intensity, mode)
 
 
@@ -990,6 +1016,8 @@ class CrossSection1D:
             assert False, "Invalid unit '{0}'. Valid options are: {1}".format(units, unit_convert.keys())
         if ax is None:
             fig, ax = plt.subplots(1, 1)
+        elif ax is plt:
+            ax = plt.gca()
         if ax.get_title() == '':
             if fig_title is not None:
                 ax.set_title(fig_title)
@@ -1446,7 +1474,10 @@ class Nuclide:
 
     @property
     def positron_intensity(self):
-        return sum(b.positron_intensity for b in self.decay_betaplus_lines)
+        out = sum(b.positron_intensity for b in self.decay_betaplus_lines)
+        if not isinstance(out, UFloat):
+            out = ufloat(out, 0)
+        return out
 
     def decay_chain_gamma_lines(self, __branching__ratio__=1) -> List[GammaLine]:
         raise NotImplementedError("Needs re-worked!")
@@ -1773,6 +1804,10 @@ class Nuclide:
         if discard_meta_state:
             symbol = symbol.split('_')[0]
         assert isinstance(symbol, str), '`symbol` argument must be a string.'
+
+        if symbol in NUCLIDE_INSTANCES:  # check first thing for speed.
+            return NUCLIDE_INSTANCES[symbol]
+
         if '-' in symbol:
             symbol = symbol.replace('-', '')
             if symbol.endswith('m'):
@@ -1787,26 +1822,37 @@ class Nuclide:
 
         pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
         _m = NUCLIDE_NAME_MATCH.match(symbol)
+
+        if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
+            symbol = _m.groups()[0] + _m.groups()[1]
+            _m = NUCLIDE_NAME_MATCH.match(symbol)
+
         assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
                    "e.g. Cl38_m1, n1, Ar40".format(symbol)
-        if _m not in NUCLIDE_INSTANCES:
+
+        if symbol not in NUCLIDE_INSTANCES:
             if not pickle_file.exists():
                 if symbol in additional_nuclide_data:
                     instance = Nuclide(symbol, __internal__=True, **additional_nuclide_data[symbol])
                     instance.is_valid = True
+
                 else:
                     warn("Cannot find data for Nuclide `{0}`. Data for this nuclide is set to defaults: None, nan, ect."
                          .format(symbol))
                     # raise ValueError
                     instance = Nuclide(symbol,  __internal__=True, half_life=ufloat(np.nan, np.nan))
                     instance.is_valid = False
+
             else:
                 with open(pickle_file, "rb") as pickle_file:
                     instance = CustomUnpickler(pickle_file).load()
                     instance.is_valid = True
+                NUCLIDE_INSTANCES[symbol] = instance
+
         else:
             instance = NUCLIDE_INSTANCES[symbol]
             instance.is_valid = True
+
         return instance
 
     def __repr__(self):
@@ -2228,4 +2274,5 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    f = decay_nuclide('Xe139', True)
+    talys_calculation('C13', 'n')
+    # f = decay_nuclide('Xe139', True)
