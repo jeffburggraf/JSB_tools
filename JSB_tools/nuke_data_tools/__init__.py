@@ -2099,8 +2099,8 @@ class ActivationReactionContainer:
         self.product_nuclide_names_xss: A dict mapping between target name and CrossSection1D objects for each of the
             targets activation reaction products.
 
-        self.parent_nuclide_names: A list of strings corresponding to all targets that can produce this nuclide
-            (self.name) via activation. This allows traveling both directions in an activation chain.
+        self.parent_nuclide_names: A list of names of all parent nuclides that can produce this residue nuclide
+            (e.g. self) via activation. This allows traveling both directions in an activation chain.
     """
     all_instances: Dict[str, Dict[str, ActivationReactionContainer]] = {'gamma': {}, 'proton': {}, 'neutron': {}}
     directories: Dict[str, Path] = \
@@ -2120,6 +2120,7 @@ class ActivationReactionContainer:
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
         ActivationReactionContainer.all_instances[projectile][nuclide_name] = self
+        self.data_source = None
 
     @classmethod
     def from_pickle(cls, nuclide_name, projectile):
@@ -2166,11 +2167,14 @@ class ActivationReactionContainer:
         return _2.name
 
     @classmethod
-    def from_endf(cls, endf_path, nuclide_name, projectile):
+    def from_endf(cls, endf_path, nuclide_name, projectile, data_source: str = 'None'):
         """
         Build the instance from ENDF file using openmc. Instance is saved to ActivationReactionContainer.all_instances
         Args:
             endf_path: Path to relevant target nuclide endf file
+            nuclide_name
+            projectile:
+            data_source: Source of data, e.g. 'EFDF', or 'TENDL'. Default 'None'.
 
         Returns: None
 
@@ -2178,13 +2182,18 @@ class ActivationReactionContainer:
         endf_path = Path(endf_path)
         assert endf_path.exists()
         print('Reading data from {} for {}'.format(nuclide_name, projectile + 's'))
+
         self = ActivationReactionContainer(nuclide_name, projectile)
+        self.data_source = data_source
+
         all_instances = ActivationReactionContainer.all_instances[projectile]
 
         e = Evaluation(endf_path)
         openmc_reaction = Reaction.from_endf(e, 5)
+
         for openmc_product in openmc_reaction.products:
             activation_product_name = openmc_product.particle
+
             if ActivationReactionContainer.__bug_test__(openmc_reaction, openmc_product, nuclide_name, projectile):
                 print(openmc_product.yield_.y)
 
@@ -2197,17 +2206,21 @@ class ActivationReactionContainer:
                 par_id = {'proton': 'p', 'neutron': 'n', 'gamma': 'G', 'electron': 'e'}[self.projectile]
             except KeyError:
                 assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
+
             _product_label = cls.__get_product_name__(nuclide_name, activation_product_name, projectile)
 
             xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){activation_product_name}"
-            # ['Pu240', 'Np237', 'U235', 'Am241', 'U238', 'Pu239']
+
             x_tot = openmc_reaction.xs['0K'].x / 1E6
             y_tot = openmc_reaction.xs['0K'].y
+
             try:
                 x = openmc_product.yield_.x / 1E6
             except AttributeError:
                 continue
+
             tot_xs = np.interp(x, x_tot, y_tot)
+
             try:
                 xs = CrossSection1D(x, openmc_product.yield_.y*tot_xs, xs_fig_label,
                                     self.projectile)
@@ -2215,10 +2228,12 @@ class ActivationReactionContainer:
                 continue
 
             self.product_nuclide_names_xss[activation_product_name] = xs
+
             try:
                 daughter_reaction = all_instances[activation_product_name]
             except KeyError:  # initialize fresh instance
                 daughter_reaction = ActivationReactionContainer(activation_product_name, self.projectile)
+
             daughter_reaction.parent_nuclide_names.append(self.nuclide_name)
 
         return self
