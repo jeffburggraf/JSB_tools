@@ -14,11 +14,8 @@ except (ModuleNotFoundError, AssertionError):
     pass
 import pickle
 from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping
-import sys
 import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
-from types import ModuleType
-from abc import abstractmethod, ABC
 
 NDIGITS = 5  # Number of significant digits to round all numbers to when used in input decks.
 

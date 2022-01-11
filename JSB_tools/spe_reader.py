@@ -21,6 +21,17 @@ from matplotlib.axes import Axes
 from scipy.signal import argrelextrema
 
 
+def _rebin(rebin, values, bins):
+    if rebin != 1:
+        l = len(values)
+        out = np.sum([values[rebin * i: rebin * (i + 1)] for i in range(l // rebin)], axis=1)
+        bins = np.array([bins[rebin * i] for i in range(l // rebin + 1)])
+    else:
+        out = values
+
+    return out, bins
+
+
 def _get_SPE_data(path):
     with open(path) as f:
         lines = f.readlines()
@@ -228,7 +239,7 @@ class EfficiencyCalMixin:
 
     def unpickle_eff(self):
         """
-        Unpickle from auto-determined path. If no file exists, set atribs to defaults.
+        Unpickle from auto-determined path. If no file exists, set attribs to defaults.
         Returns:
 
         """
@@ -297,10 +308,9 @@ class EfficiencyCalMixin:
             eff_err = self.eff_model.eval_uncertainty(x=self.erg_centers)
             self.effs = unp.uarray(eff, eff_err)
         else:
-            if not (old_energies is self.effs is None):
-                # eff = np.interp(self.erg_centers, old_energies, unp.nominal_values(self.effs))
-                # eff_errs = np.interp(self.erg_centers, old_energies, unp.std_devs(self.effs))
-                self.effs = self.interp_eff(self.erg_centers)
+            # if not (old_energies is self.effs is None):
+            #     self.effs = self.interp_eff(self.erg_centers)
+            warnings.warn("Todo")
 
     def print_eff(self):
         if self.eff_model is not None:
@@ -672,6 +682,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
                    make_density=False,
                    nominal_values=False,
                    deadtime_corr=False,
+                   rebin=1,
                    baseline_method='root',
                    baseline_kwargs=None,
                    return_bin_edges=False,
@@ -688,6 +699,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             make_density: If True, result is divided by bin width
             nominal_values: If false, return uncertain array, else don't
             deadtime_corr: If True, correct for deatime
+            rebin: Combine bins into n bins
             baseline_method: Either 'root' or 'median'. If 'median', use rolling median technique. Else use
                 ROOT.TSpectrum
             baseline_kwargs: kwargs passed to baseline remove function.
@@ -744,6 +756,12 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         else:
             out = counts
 
+        if rebin != 1:
+            if bg is not None:
+                bg, _ = _rebin(rebin, bg, bins)
+            out, bins = _rebin(rebin, out, bins)
+            b_widths = bins[1:] - bins[:-1]
+
         if eff_corr:
             assert self.effs is not None, f'No efficiency information set for\n{self.path}'
             out /= self.effs[imin: imax]
@@ -765,7 +783,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
                     debug_ax1, debug_ax2 = debug_axs
                 else:
                     fig, debug_axs = plt.subplots(1, 1)
-                    debug_ax1 = debug_axs[0]
+                    debug_ax1 = debug_axs
 
             extra_range = 20
             _label = 'counts'
@@ -779,6 +797,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
                                 make_rate=make_rate,
                                 remove_baseline=remove_baseline, make_density=make_density,
                                 nominal_values=nominal_values, deadtime_corr=deadtime_corr,
+                                rebin=rebin,
                                 baseline_method=baseline_method,
                                 baseline_kwargs=baseline_kwargs,
                                 return_bin_edges=True,
@@ -807,7 +826,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         else:
             return out
 
-    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None, eff_corr=False,
+    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None, rebin=1, eff_corr=False,
                           leg_label=None, make_rate=False, remove_baseline=False, make_density=False,
                           scale=1, **ax_kwargs):
         """
@@ -816,6 +835,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             erg_min:
             erg_max:
             ax:
+            rebin: Combine bins into groups of n for better stats.
             eff_corr:
             leg_label:
             make_rate: If True, divide by livetime
@@ -831,8 +851,9 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             ax = plt.gca()
 
         counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate, eff_corr=eff_corr,
-                                       remove_baseline=remove_baseline, make_density=make_density,
+                                       remove_baseline=remove_baseline, rebin=rebin, make_density=make_density,
                                        return_bin_edges=True)
+
         if not isinstance(scale, (int, float)) or scale != 1:
             counts *= scale
 

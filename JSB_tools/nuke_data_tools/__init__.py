@@ -695,6 +695,8 @@ class FissionYields:
         if hasattr(energies, '__iter__') and len(energies) == 0:
             warn('length of `energies` is zero! Falling back on default library energy points.')
             energies = None
+        assert isinstance(target, str), f'Bar `target` argument type, {type(target)}'
+
         self.target = target
         yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
         if inducing_par is None:
@@ -786,7 +788,11 @@ class FissionYields:
         a_dict = {k: a_dict[k] for k in mass_nums}
         return a_dict
 
-    def plot_A(self, weights=None, at_energy=None):
+    def plot_A(self, weights=None, at_energy=None, ax=None):
+        if ax is None:
+            _, ax = plt.subplots()
+        # else:
+        leg_label = self.target
         title = f'Fragment mass distribution of {self.inducing_par}-induced fission of {self.target}'
         if self.__is_weighted or weights is not None:
             title += ' (weighted)'
@@ -812,12 +818,15 @@ class FissionYields:
             y.append(_y.n)
             y_err.append(_y.std_dev)
 
-        plt.figure()
+        if leg_label is None:
+            ax.set_title(title)
 
-        plt.title(title)
-        plt.xlabel('A')
-        plt.ylabel('Yield per fission')
-        plt.errorbar(x, y, y_err)
+        ax.set_xlabel('A')
+        ax.set_ylabel('Yield per fission')
+        ax.errorbar(x, y, y_err, label=leg_label)
+        if leg_label is not None:
+            ax.legend()
+        return ax
 
     def plot(self, nuclide: Union[List[str], str, None] = None, first_n_nuclides=12, plot_data=False):
         assert self.inducing_par != "sf"
@@ -976,6 +985,11 @@ class CrossSection1D:
     @cached_property
     def ergs(self):
         return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
+
+    def threshold_erg(self, thresh_barn=50E-3):
+        if max(self.xss) < thresh_barn:
+            return np.inf
+        return self.ergs[np.argmax(self.xss > thresh_barn)]
 
     @classmethod
     def from_endf(cls, endf_path, product_name, mt=5):
