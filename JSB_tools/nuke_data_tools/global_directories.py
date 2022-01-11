@@ -4,7 +4,7 @@ pwd = Path(__file__).parent
 
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuclide data (half lives, ect)
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton/fissionXS activation data
-GAMMA_PICKLE_DIR = pwd / "data" / "incident_photon"  # rel. dir. of pickled photon/fissionXS activation data
+GAMMA_PICKLE_DIR = pwd / "data" / "incident_gamma"  # rel. dir. of pickled photon/fissionXS activation data
 NEUTRON_PICKLE_DIR = pwd / 'data' / 'incident_neutron'  # rel. dir. of pickled neutron activation/fissionXS data
 
 FISS_YIELDS_PATH = pwd/'data'/'fiss_yields'
@@ -35,6 +35,7 @@ tendl_2019_proton_dir = parent_data_dir/'TENDL2019-PROTONS'
 
 # download below at https://www-nds.iaea.org/photonuclear/  Replaced previous ENDF-B-VIII.0 Library.
 photonuclear_endf_dir = parent_data_dir / 'iaea-pd2019'
+photonuclear_tendl_dir = parent_data_dir / 'TENDL-g'
 
 #  Download SF yields (gefy model) from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
 sf_yield_data_dir = parent_data_dir / 'gefy81_s'

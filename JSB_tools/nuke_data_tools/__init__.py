@@ -954,7 +954,7 @@ class FissionYields:
 
 class CrossSection1D:
     def __init__(self, ergs: List[float], xss: List[Union[UFloat, float]],
-                 fig_label: str = None, incident_particle: str = 'particle'):
+                 fig_label: str = None, incident_particle: str = 'particle', data_source=None):
         """
         A container for energy dependent 1-D cross-section
         Args:
@@ -967,6 +967,7 @@ class CrossSection1D:
         self.__xss__ = np.array(xss)
         self.__fig_label__ = fig_label
         self.__incident_particle__ = incident_particle
+        self.data_source = data_source
 
     @cached_property
     def xss(self):
@@ -1961,7 +1962,8 @@ class Nuclide:
     def get_incident_neutron_parents(self, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         return self.__get_parents__('neutron', a_z_hl_cut, is_stable_only)
 
-    def __get_daughters__(self, projectile, a_z_hl_cut='', is_stable_only=False):
+    def __get_daughters__(self, projectile, a_z_hl_cut='', is_stable_only=False,
+                          data_source: Union[str, None] = None):
         """
         Get all product nuclides (and cross-sections, ect.) from a  reaction specified by the path to the nuclide's
         pickle file for the given reaction.
@@ -1969,14 +1971,15 @@ class Nuclide:
             projectile: eg 'proton', 'photon', 'neutron'
             a_z_hl_cut:
             is_stable_only:
+            data_source: None uses ONLY default library. 'all' uses all of them, where higher priority libraries take precedence.
 
         Returns:
 
         """
-        reaction = ActivationReactionContainer.from_pickle(self.name, projectile)
-
+        reaction = ActivationReactionContainer.load(self.name, projectile, data_source)
         assert isinstance(reaction, ActivationReactionContainer)
         out: Dict[str, InducedDaughter] = {}
+
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
             a, z, hl = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life
@@ -2102,38 +2105,118 @@ class ActivationReactionContainer:
         self.parent_nuclide_names: A list of names of all parent nuclides that can produce this residue nuclide
             (e.g. self) via activation. This allows traveling both directions in an activation chain.
     """
-    all_instances: Dict[str, Dict[str, ActivationReactionContainer]] = {'gamma': {}, 'proton': {}, 'neutron': {}}
+    # all_instances set in code below
+    all_instances: Dict[str, Dict[str, Dict[str, ActivationReactionContainer]]] = {}
     directories: Dict[str, Path] = \
         {'proton': PROTON_PICKLE_DIR,
          'gamma': GAMMA_PICKLE_DIR,
          'neutron': NEUTRON_PICKLE_DIR}
 
-    def __init__(self, nuclide_name: str, projectile: str):
+    # list of nuclear library sources for each incident particle. The order in which a given data source is
+    # first used (in endf_to_pickle.py) determines the order in which they appear in `libraries`,
+    # which in turn determines priority.
+    libraries = {'proton': ['endf', 'padf'],
+                 'gamma': ['endf', 'tendl'],
+                 'neutron': ['endf']}
+
+    for __proj, __list_of_libraries in libraries.items():
+        all_instances[__proj] = {k: {} for k in __list_of_libraries}
+
+    def __init__(self, nuclide_name: str, projectile: str, data_source: str):
         """
 
         Args:
             nuclide_name:
             projectile:
+            data_source:
         """
+        data_source = data_source.lower()
+        assert data_source in self.libraries[projectile], f'Data source "{data_source}" not included in ' \
+                                                          'ActivationReactionContainer.libraries. ' \
+                                                          'Add new source if needed.'
         self.projectile = projectile
         self.nuclide_name = nuclide_name
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
-        ActivationReactionContainer.all_instances[projectile][nuclide_name] = self
-        self.data_source = None
+
+        ActivationReactionContainer.all_instances[projectile][data_source][nuclide_name] = self
+
+        self.data_source = data_source
+
+    # reactions = []
+    # # todo: do this in ReactionContainoigjberai
+    # if library is None:
+    #     reaction = ActivationReactionContainer.from_pickle(self.name, projectile, data_source=library)
+    # elif library.lower() == 'all':
+    #     reactions = []
+    #     reaction = None
+    #     for library in ActivationReactionContainer.libraries[projectile]:
+    #         r = ActivationReactionContainer(self.name, projectile, library)
+    #         if reaction is None:
+    #             reaction = r
+    #         else:
+    #             reactions.append(r)
+    @classmethod
+    def load(cls, nuclide_name, projectile, data_source):
+        """
+        Like from_pickle, but combines multiple data_sources.
+        Args:
+            nuclide_name:
+            projectile:"proton", "neutron", "gamma"
+            data_source: "all" to combine all libraries, with priority data taking precedence,
+             None to use default library,
+             or a specific library name to use just that library.
+
+        Returns:
+
+        """
+        if isinstance(data_source, str):
+            data_source = data_source.lower()
+
+        reactions = []
+
+        if data_source is None:
+            reaction = ActivationReactionContainer.from_pickle(nuclide_name, projectile, data_source=data_source)
+
+        elif data_source == 'all':
+            reaction = None
+            for library in ActivationReactionContainer.libraries[projectile]:
+                r = ActivationReactionContainer.from_pickle(nuclide_name, projectile, library)
+                if reaction is None:
+                    reaction = r
+                else:
+                    reactions.append(r)
+
+        elif data_source in cls.libraries[projectile]:
+            reaction = ActivationReactionContainer.from_pickle(nuclide_name, projectile, data_source=data_source)
+
+        else:
+            assert False, f'`data_source, "{data_source}" not found for projectile "{projectile}"'
+
+        for _other_reaction in reactions:
+            for name, xs in _other_reaction.product_nuclide_names_xss.items():
+                if name not in reaction.product_nuclide_names_xss:
+                    reaction.product_nuclide_names_xss[name] = xs
+
+        return reaction
 
     @classmethod
-    def from_pickle(cls, nuclide_name, projectile):
-        try:
-            all_instances = ActivationReactionContainer.all_instances[projectile]
-        except KeyError:
-            assert False, f"No activation data for incident particle {projectile}"
+    def from_pickle(cls, nuclide_name, projectile, data_source):
+
+        assert projectile in cls.libraries, f'No activation data for incident particle "{projectile}"'
+
+        if data_source is None:  # default library is always the first element
+            data_source = cls.libraries[projectile][0]
+
+        assert data_source in cls.libraries[projectile], f'No data source "{data_source}" for projectile "{projectile}"'
+
+        all_instances = cls.all_instances[projectile][data_source]  # shouldn't have KeyError here
 
         try:  # check RAM for existing instance
             existing_instance = all_instances[nuclide_name]
         except KeyError:  # not in RAM
             try:  # load existing pickle file
-                pickle_path = ActivationReactionContainer.directories[projectile] / (nuclide_name + ".pickle")
+                pickle_path = cls.get_pickle_path(nuclide_name, projectile, data_source)
                 with open(str(pickle_path), "rb") as f:
                     existing_instance = CustomUnpickler(f).load()
             except FileNotFoundError:  # no existing pickle file. Raise erropr
@@ -2167,24 +2250,23 @@ class ActivationReactionContainer:
         return _2.name
 
     @classmethod
-    def from_endf(cls, endf_path, nuclide_name, projectile, data_source: str = 'None'):
+    def from_endf(cls, endf_path, nuclide_name, projectile, data_source: str):
         """
         Build the instance from ENDF file using openmc. Instance is saved to ActivationReactionContainer.all_instances
         Args:
             endf_path: Path to relevant target nuclide endf file
             nuclide_name
             projectile:
-            data_source: Source of data, e.g. 'EFDF', or 'TENDL'. Default 'None'.
+            data_source: Source of data, e.g. 'ENDF', or 'TENDL'. Default 'None'.
 
         Returns: None
 
         """
         endf_path = Path(endf_path)
         assert endf_path.exists()
-        print('Reading data from {} for {}'.format(nuclide_name, projectile + 's'))
+        print(f'Reading data from {data_source} for {projectile}s on {nuclide_name}')
 
-        self = ActivationReactionContainer(nuclide_name, projectile)
-        self.data_source = data_source
+        self = ActivationReactionContainer(nuclide_name, projectile, data_source)
 
         all_instances = ActivationReactionContainer.all_instances[projectile]
 
@@ -2223,8 +2305,8 @@ class ActivationReactionContainer:
 
             try:
                 xs = CrossSection1D(x, openmc_product.yield_.y*tot_xs, xs_fig_label,
-                                    self.projectile)
-            except AttributeError:
+                                    self.projectile,  self.data_source)
+            except AttributeError:  # no data. Move on
                 continue
 
             self.product_nuclide_names_xss[activation_product_name] = xs
@@ -2232,11 +2314,40 @@ class ActivationReactionContainer:
             try:
                 daughter_reaction = all_instances[activation_product_name]
             except KeyError:  # initialize fresh instance
-                daughter_reaction = ActivationReactionContainer(activation_product_name, self.projectile)
+                daughter_reaction = ActivationReactionContainer(activation_product_name, self.projectile,
+                                                                self.data_source)
 
             daughter_reaction.parent_nuclide_names.append(self.nuclide_name)
 
         return self
+
+    @staticmethod
+    def get_pickle_path(nuclide_name, projectile, data_source):
+        path = ActivationReactionContainer.directories[projectile] / data_source
+        path = path / nuclide_name
+        path = path.with_suffix('.pickle')
+        return path
+
+    @property
+    def pickle_path(self):
+        return self.get_pickle_path(self.nuclide_name, self.projectile, self.data_source)
+
+    def __pickle__(self):
+        print(f'Creating and writing {self.pickle_path.relative_to(self.pickle_path.parents[3])}')
+        path = self.pickle_path
+
+        if not path.parent.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
+    @staticmethod
+    def pickle_all(projectile, data_source=None):
+        for _data_source, _dict in ActivationReactionContainer.all_instances[projectile].items():
+            if data_source is None or data_source == _data_source:
+                for nuclide_name, reaction in _dict.items():
+                    reaction.__pickle__()
 
     @staticmethod
     def __bug_test__(openmc_reaction: Reaction, openmc_product: Product, nuclide_name, incident_particle):
@@ -2275,5 +2386,8 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    talys_calculation('C13', 'n')
+    n = Nuclide.from_symbol("C13")
+    n.get_incident_gamma_daughters()
+
+    # talys_calculation('C13', 'g')
     # f = decay_nuclide('Xe139', True)
