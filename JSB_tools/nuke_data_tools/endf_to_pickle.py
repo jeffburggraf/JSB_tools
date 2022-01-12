@@ -39,8 +39,6 @@ cwd = Path(__file__).parent
 # Download Proton Activation Data File from: https://www-nds.iaea.org/padf/
 # proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 
-#  TODO: Make an option to choose sourfce of xs data for Nnuclide.get_daughters.. etc. Make ENDF default,
-#   but allow TENDL optionally
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
 # proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
 # gamma_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_gammas'
@@ -412,7 +410,7 @@ def pickle_proton_fission_xs_data():
 def pickle_gamma_fission_xs_data():
     photo_fission_data = {}
     for file in photonuclear_endf_dir.iterdir():
-        _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file.name)
+        _m = re.match(r'g_([0-9]{1,3})-([A-Za-z]+)-([0-9]{0,3})_[0-9]+\.endf', file.name)
         if _m:
             a = _m.groups()[2]
             symbol = _m.groups()[1]
@@ -422,7 +420,7 @@ def pickle_gamma_fission_xs_data():
             if len(xs):
                 fission_xs = list(Reaction.from_endf(ev, 18).xs.values())[0]
                 xs_fig_label = '{0}{1}(G,F)'.format(nuclide_name, a)
-                xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, xs_fig_label, 'photon')
+                xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, xs_fig_label, 'gamma')
                 photo_fission_data[nuclide_name] = xs
             else:
                 continue
@@ -435,16 +433,34 @@ def pickle_gamma_fission_xs_data():
 
 def pickle_proton_activation_data():
     assert PROTON_PICKLE_DIR.exists()
-    files = ProtonENDFFile(padf_directory=proton_padf_data_dir, endf_b_directory=proton_enfd_b_data_dir)
+    for path in Path(proton_padf_data_dir).iterdir():
+        f_name = path.name
+        _m = re.match("([0-9]{4,6})(?:M([0-9]))?", f_name)
+        if _m:
+            zaid = int(_m.groups()[0])
+            iso = _m.groups()[1]
+            if iso is not None:
+                iso = f"_m{int(iso)}"
+            else:
+                iso = ''
 
-    for nuclide_name, f_path in files.nuclide_name_and_file_path.items():
-        ActivationReactionContainer.from_endf(f_path, nuclide_name, 'proton')
+            z = zaid // 1000
+            a = zaid % 1000
+            nuclide_name = f"{ATOMIC_SYMBOL[z]}{a}{iso}"
+            ActivationReactionContainer.from_endf(path, nuclide_name, 'proton', 'padf')
 
-    for nuclide_name, reaction in ActivationReactionContainer.all_instances['proton'].items():
-        pickle_file_name = PROTON_PICKLE_DIR/(nuclide_name + ".pickle")
-        with open(pickle_file_name, "bw") as f:
-            print('Creating and writing {}'.format(f.name))
-            pickle.dump(reaction, f)
+    ActivationReactionContainer.pickle_all('proton', 'padf')
+
+    for path in Path(proton_enfd_b_data_dir).iterdir():
+        f_name = path.name
+        _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
+        if _m:
+            s = _m.groups()[1]
+            a = int(_m.groups()[2])
+            nuclide_name = f"{s}{a}"
+            ActivationReactionContainer.from_endf(path, nuclide_name, 'proton', 'endf')
+
+    ActivationReactionContainer.pickle_all('proton', 'endf')
 
 
 def pickle_neutron_activation_data():
@@ -458,13 +474,6 @@ def pickle_neutron_activation_data():
             ActivationReactionContainer.from_endf(file_path, nuclide_name, 'neutron', 'endf')
 
     ActivationReactionContainer.pickle_all('neutron')
-    # for nuclide_name, reaction in ActivationReactionContainer.all_instances['neutron'].items():
-    #     pickle_file_name = NEUTRON_PICKLE_DIR / (nuclide_name + ".pickle")
-    #     if len(reaction) == 0:  # this is probably not needed
-    #         continue
-    #     with open(pickle_file_name, "bw") as f:
-    #         print('Creating and writing {}'.format(f.name))
-    #         pickle.dump(reaction, f)
 
 
 def pickle_gamma_activation_data():
@@ -486,24 +495,17 @@ def pickle_gamma_activation_data():
             a = int(m.groups()[1])
             s = m.groups()[0]
             iso = m.groups()[2]
+
             if len(iso):
                 iso = f"_m{'mnopqrstuvwxyz'.index(iso) + 1}"
 
             nuclide_name = f'{s}{a}{iso}'
+
             ActivationReactionContainer.from_endf(file_path, nuclide_name, 'gamma', 'tendl')
 
         i += 1
         p.log(i)
     ActivationReactionContainer.pickle_all('gamma')
-    # for data_source, _dict in ActivationReactionContainer.all_instances['gamma'].items():
-    #     for nuclide_name, reaction in _dict.items():
-    #         reaction.__pickle__()
-        # pickle_file_name = GAMMA_PICKLE_DIR / (nuclide_name + ".pickle")
-        # if len(reaction) == 0:  # this is probably not needed
-        #     continue
-        # with open(pickle_file_name, "bw") as f:
-        #     print('Creating and writing {}'.format(f.name))
-        #     pickle.dump(reaction, f)
 
 
 class Helper:
@@ -703,7 +705,10 @@ def debug_nuclide(n: str, library="ENDF"):
         # for
     # print(d.spectra)
 
+
 if __name__ == '__main__':
     pass
-    pickle_neutron_activation_data()
+    # pickle_proton_activation_data()
+    # pickle_gamma_fission_xs_data()
+    # pickle_neutron_activation_data()
 
