@@ -273,6 +273,10 @@ class Cell(GeomSpecMixin):
     def cell_name(self) -> str:
         return self.__name__
 
+    @cell_name.setter
+    def cell_name(self, value):
+        self.__name__ = value
+
     def offset(self, offset_vector: Sized[float]):
         """
         Offsets the current cell. Does not create another cell! Use CuboidCell.like_but for that.

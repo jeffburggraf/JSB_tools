@@ -50,13 +50,13 @@ class CylFMESH(TallyBase):
             theta_maxs:
             ref: REF keyword for mesh weight windows
         """
-        super(CylFMESH, self).__init__()
+        super(CylFMESH, self).__init__(4, tally_number=tally_number, tally_name=fmesh_name)
 
-        self.tally_number = tally_number
-        if self.tally_number is not None:
-            assert str(self.tally_number)[-1] == '4', 'F4 tally_n number must end in a "4"'
+        # self.tally_number = tally_number
+        # if self.tally_number is not None:
+        #     assert str(self.tally_number)[-1] == '4', 'F4 tally_n number must end in a "4"'
 
-        self.__name__ = fmesh_name
+        # self.__name__ = fmesh_name
 
         self.rmax = rmaxs if hasattr(rmaxs, '__iter__') else (rmaxs,)
         self.rbins = rbins if hasattr(rbins, '__iter__') else (rbins,)
@@ -72,7 +72,7 @@ class CylFMESH(TallyBase):
         self.axs_hat = axs_hat
         self.radius_hat = radius_hat
 
-        self.all_f4_tallies[self.tally_number] = self
+        # self.all_f4_tallies[self.tally_number] = self
 
         self.ref = ref
 

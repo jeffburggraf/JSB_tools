@@ -602,7 +602,9 @@ class OutP:
     @cached_property
     def __find_tally_indicies__(self):
         """
-        Finds the initial line indicies for the LAST time each tally in the problem is written to the output file.
+        Locates the location in the output file where every tally results are written.
+
+        Finds the line indicies for the final time each tally's data from the problem is written to the output file.
 
         Returns: Dict[tally_number, card_index]
             , where card_index can be used as in Outp.__outp_lines__[card_index] to get the text of the input card.

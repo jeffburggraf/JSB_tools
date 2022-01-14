@@ -966,7 +966,7 @@ class FissionYields:
 
 class CrossSection1D:
     def __init__(self, ergs: List[float], xss: List[Union[UFloat, float]],
-                 fig_label: str = None, incident_particle: str = 'particle', data_source=None):
+                 fig_label: str = None, incident_particle: str = 'particle', data_source=''):
         """
         A container for energy dependent 1-D cross-section
         Args:
@@ -1040,7 +1040,8 @@ class CrossSection1D:
 
         label = mpl_kwargs.pop('label', None)
         if label is None:
-            label = f"{self.__fig_label__} ({self.data_source.upper()})"
+            src = self.data_source.lower() if isinstance(self.data_source, str) else ""
+            label = f"{self.__fig_label__} ({src})"
 
         ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label)
 
@@ -1321,6 +1322,7 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
                 out[k] = v[0]
 
         if plot:
+            # if not (plot is True)
             assert iter_flag, 'Cannot plot for only one time'
             plt.figure()
             for k, v in out.items():
