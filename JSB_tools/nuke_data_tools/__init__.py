@@ -177,11 +177,14 @@ def talys_calculation(target, projectile, a_z_hl_cut='', is_stable_only=False) -
     parent_nuclide = Nuclide.from_symbol(target)
 
     for k, v in data.items():
+        out_name = ActivationReactionContainer.__get_product_name__(target, k, projectile)
         d = InducedDaughter(Nuclide.from_symbol(k), parent_nuclide, projectile)
         if not __nuclide_cut__(a_z_hl_cut, d.A, d.Z, d.half_life, is_stable_only):
             continue
         out[k] = d
-        xs = CrossSection1D(ergs, v, incident_particle=projectile, fig_label=f"{target}({projectile}, X){d.name}")
+        xs = CrossSection1D(ergs, v, incident_particle=projectile,
+                            fig_label=f"{target}({projectile}, {out_name}){d.name}",
+                            data_source='TALYS')
         out[k].xs = xs
     return out
 
@@ -1017,23 +1020,33 @@ class CrossSection1D:
             assert False, "Invalid unit '{0}'. Valid options are: {1}".format(units, unit_convert.keys())
         if ax is None:
             fig, ax = plt.subplots(1, 1)
+            ax.set_title(fig_title)
         elif ax is plt:
             ax = plt.gca()
-        if ax.get_title() == '':
-            if fig_title is not None:
-                ax.set_title(fig_title)
-            else:
-                if self.__fig_label__ is not None:
-                    ax.set_title(self.__fig_label__)
+            ax.set_title('')
+        else:
+            ax.set_title('')  # ya
+        # if ax.get_title() == '':
+        #     if fig_title is not None:
+        #         ax.set_title(fig_title)
+        #     else:
+        #         if self.__fig_label__ is not None:
+        #             ax.set_title(self.__fig_label__)
         if erg_max is None:
             erg_max = self.__ergs__[-1]
         if erg_min is None:
             erg_min = self.__ergs__[0]
         selector = np.where((self.__ergs__ <= erg_max) & (self.__ergs__ >= erg_min))
-        label = mpl_kwargs.pop('label', self.__fig_label__)
+
+        label = mpl_kwargs.pop('label', None)
+        if label is None:
+            label = f"{self.__fig_label__} ({self.data_source.upper()})"
+
         ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label)
+
         y_label = "Cross-section [{}]".format(units)
         x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
+
         if ax is plt:
             ax.ylabel(y_label)
             ax.xlabel(x_label)
@@ -1821,7 +1834,6 @@ class Nuclide:
         elif symbol.lower() == 'proton':
             symbol = 'H1'
 
-        pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
         _m = NUCLIDE_NAME_MATCH.match(symbol)
 
         if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
@@ -1830,6 +1842,8 @@ class Nuclide:
 
         assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
                    "e.g. Cl38_m1, n1, Ar40".format(symbol)
+
+        pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
 
         if symbol not in NUCLIDE_INSTANCES:
             if not pickle_file.exists():
@@ -2159,28 +2173,32 @@ class ActivationReactionContainer:
         self.data_source = data_source
 
     @classmethod
-    def fetch_xs(cls, parent_name, product_name, projectile) -> CrossSection1D:
+    def fetch_xs(cls, parent_name, residue_name, projectile, data_source=None) -> CrossSection1D:
         """
-        Find (best) saved CrossSection1D instance for specified reaction.
+        Find saved CrossSection1D instance for specified reaction.
         Args:
-            parent_name:
-            product_name:
-            projectile:
+            parent_name: Tame of target nuclide, e.g. C11
+            residue_name: Name of residue nuclide, e.g. Be11
+            projectile: "proton", "neutron", "gamma".
+            data_source: If None, find best using library priority. Else, look for specific library.
 
         Returns:
 
         """
-        for data_source in cls.libraries[projectile]:
+        assert projectile in cls.libraries, f'Invalid projectile, {projectile}.'
+        assert data_source in cls.libraries[projectile], f"No library named {data_source} for projectile {projectile}."
+
+        for data_source in (cls.libraries[projectile] if data_source is None else [data_source]):
             try:
                 r = cls.from_pickle(parent_name, projectile, data_source)
-                if product_name in r.product_nuclide_names_xss:
-                    return r.product_nuclide_names_xss[product_name]
+                if residue_name in r.product_nuclide_names_xss:
+                    return r.product_nuclide_names_xss[residue_name]
                 else:
                     raise FileNotFoundError
             except FileNotFoundError:
                 continue
-
-        raise FileNotFoundError("Cannot find. ")
+        msg = "" if data_source is None else f" in library {data_source}"
+        raise FileNotFoundError(f"Cannot find any xs data for {parent_name}({projectile}, X){residue_name}{msg}.")
 
     @classmethod
     def load(cls, nuclide_name, projectile, data_source) -> ActivationReactionContainer:
@@ -2218,9 +2236,9 @@ class ActivationReactionContainer:
             return cls.from_pickle(nuclide_name, projectile, data_source=data_source)
 
         else:
-            assert projectile in cls.libraries, f'Invalid/no data (for) projectile "{projectile}"'
+            assert projectile in cls.libraries, f'Invalid/no data for projectile, "{projectile}"'
             assert False, f'`data_source, "{data_source}" not found for projectile "{projectile}". ' \
-                          f'Available data libraries are:\n\t{cls.libraries[projectile]}'
+                          f'Available data libraries are:\n\t{cls.libraries[projectile]}\n, or, you can specify "all"'
 
         for _other_reaction in reactions:
             for name, xs in _other_reaction.product_nuclide_names_xss.items():

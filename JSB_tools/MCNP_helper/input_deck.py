@@ -161,39 +161,68 @@ class MCNPSICard:
 
 
 class TallyBase:
-    all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+    # all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+    all_tallies = {}
+
+    def __init__(self, tally_base_number, cell_or_number=None, tally_number=None, tally_name=None, tally_comment=None):
+        self.__tally_base_number__ = tally_base_number
+        if tally_number is not None:
+            assert isinstance(tally_number, (int, str))
+            assert str(tally_number)[-1] == str(tally_base_number), f"F{tally_base_number} tally number must end in " \
+                                                                    f"{tally_base_number}, not like '{tally_number}'"
+            tally_number = str(tally_number)
+            assert len(tally_number)>1, "Only use tally numbers with more than one digit."
+            tally_number = int(tally_number[:-1])
+
+        if tally_base_number not in TallyBase.all_tallies:
+            TallyBase.all_tallies[tally_base_number] = MCNPNumberMapping(f"F{tally_base_number}Tally", 1)
+
+        self._tally_number = tally_number
+
+        if isinstance(cell_or_number, Cell):
+            self.cell = cell_or_number
+            self.cell_number = self.cell.cell_number
+        else:
+            self.cell = None
+            self.cell_number = cell_or_number
+
+        self.__name__ = tally_name
+        self.tally_comment = tally_comment
+
+        TallyBase.all_tallies[tally_base_number][tally_number] = self
+
+    @property
+    def tally_number(self):
+        return int(f"{self._tally_number}{self.__tally_base_number__}")
 
     @staticmethod
     def clear():
-        TallyBase.all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+        TallyBase.all_tallies = {}
 
     @staticmethod
     def get_all_tally_cards():
         outs = []
-        for tally in TallyBase.all_f4_tallies.values():
-            outs.append(tally.tally_card)
+        for _, mapping in TallyBase.all_tallies.items():
+            for tally in mapping.values():
+                outs.append(tally.tally_card)
         return '\n'.join(outs)
 
 
 class F4Tally(TallyBase):
-    def __init__(self, cell: Cell, particle: str, tally_number=None, tally_name=None, tally_comment=None):
+    def __init__(self, cell_or_number: Union[Cell, int, str], particle: str, tally_number=None,
+                 tally_name=None, tally_comment=None):
         """
         Args:
-            cell: Cell instance for which the tally_n will be applied
+            cell_or_number: Cell instance for which the tally_n will be applied (or cell number)
             particle: MCNP particle designator
             tally_number: Must end in a 4. Or, just leave as None and let the code pick for you
             tally_name:  Used in JSB_tools.outp_reader to fetch tallies by name.
             tally_comment:
         """
-        self.cell = cell
+
+        super().__init__(4, cell_or_number, tally_number, tally_name, tally_comment)
         assert isinstance(particle, str), 'Particle argument must be a string, e.g. "n", or, "p", or, "h"'
         self.erg_bins_array = None
-        self.tally_number = tally_number
-        if self.tally_number is not None:
-            assert str(self.tally_number)[-1] == '4', 'F4 tally_n number must end in a "4"'
-        self.__name__ = tally_name
-        self.tally_comment = tally_comment
-        TallyBase.all_f4_tallies[self.tally_number] = self
         self.__modifiers__ = []
 
         assert isinstance(particle, str), '`particle` argument must be a string.'
@@ -219,12 +248,12 @@ class F4Tally(TallyBase):
         Returns: None
 
         """
-        mod = 'FM{} -1 {mat} -2'.format(self.mcnp_tally_number, mat=mat)
+        mod = 'FM{} -1 {mat} -2'.format(self.tally_number, mat=mat)
         self.__modifiers__.append(mod)
 
-    @property
-    def mcnp_tally_number(self):
-        return int(str(self.tally_number) + '4')
+    # @property
+    # def mcnp_tally_number(self):
+    #     return int(str(self.tally_number) + '4')
 
     def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
         if erg_bins_array is not None:
@@ -243,12 +272,12 @@ class F4Tally(TallyBase):
     @property
     def tally_card(self):
         comment = get_comment(self.tally_comment, self.__name__)
-        out = 'F{num}:{par} {cell} {comment}'.format(num=self.mcnp_tally_number, par=self.particle,
-                                                     cell=self.cell.cell_number, comment=comment)
+        out = 'F{num}:{par} {cell} {comment}'.format(num=self.tally_number, par=self.particle,
+                                                     cell=self.cell_number, comment=comment)
         if self.erg_bins_array is not None:
-            out += '\nE{num} {bins}'.format(num=self.mcnp_tally_number, bins=' '.join(map(str, self.erg_bins_array)))
-
-        out += '\n'.join(self.__modifiers__)
+            out += '\nE{num} {bins}'.format(num=self.tally_number, bins=' '.join(map(str, self.erg_bins_array)))
+        if len(self.__modifiers__):
+            out += '\n' + '\n'.join(self.__modifiers__)
         return out
 
 

@@ -38,6 +38,66 @@ class Tally:
         self.tally_modifiers: Set[str]
 
 
+class F6Tally:
+    card_match = re.compile('[+*]?F(?P<number>[0-9]*6)(?:: *[a-z, ]+)? +(?P<cell>[0-9]+)', re.IGNORECASE)
+    mev2j = 1.602E-13
+
+    def __init__(self, tally_number_or_name, outp):
+        assert isinstance(outp, OutP)
+
+        if isinstance(tally_number_or_name, str):
+            tally_number_or_name = tally_number_or_name.lower()
+            try:
+                card = outp.__named_cards__[tally_number_or_name]['card']
+            except KeyError:
+                raise KeyError(f'could not find F6 tally with name {tally_number_or_name}')
+            m = F6Tally.card_match.match(card)
+            assert m, f"Invalid F6 tally match from card: {card}"
+            self.tally_number = m.groupdict()['number']
+            self.cell_number = int(m.groupdict()['cell'])
+        else:
+            assert isinstance(tally_number_or_name, (int, str))
+            tally_number_or_name = str(tally_number_or_name)
+            for card in outp.input_deck:
+                if m := F6Tally.card_match.match(card):
+                    self.tally_number = m.groupdict()['number']
+                    self.cell_number = int(m.groupdict()['cell'])
+                    if self.tally_number == tally_number_or_name:
+                        break
+            else:
+                raise KeyError(f'could not find F6 tally with number {tally_number_or_name}')
+
+        self.cell = outp.cells[self.cell_number]
+
+        index = outp.__find_tally_indicies__[self.tally_number]
+        self.heating = None
+        self.units = ''
+        self.mass = None
+
+        while index < len(outp.__outp_lines__):
+            line = outp.__outp_lines__[index]
+            if m := re.match(' +tally type 6.+units +(.+)', line):
+                self.units = m.groups()[0].rstrip().lstrip()
+
+            elif re.match(' +masses', line):
+                index += 2
+                self.mass = float(outp.__outp_lines__[index])
+
+            elif re.match(fr' +cell +{self.cell.number}', line):
+                index += 1
+                value, err = tuple(map(float, outp.__outp_lines__[index].split()))
+
+                self.heating = ufloat(value, err)
+                break
+            elif re.match(" =+ ", line):
+                assert False, f'Failed to find tally {tally_number_or_name}'
+            index += 1
+
+        self.heating_joules = None
+        if 'mev' in self.units:
+            self.heating_joules = self.mev2j*self.heating
+
+
 class OutpCell:
     def __init__(self, data, outp=None):
         self.number = int(data[1])
@@ -54,13 +114,13 @@ class OutpCell:
     def __repr__(self):
         return "Cell {0}, mat:{1}, name: {2}".format(self.number, self.mat, self.name)
 
-    def get_tally(self) -> F4Tally:
-        assert len(self.tallys) <= 1, f'Multiple tallys for cell {self.number}. Use `get_tallys`.'
-        assert len(self.tallys) > 0, f'No tally_n for cell {self.number}.'
-        return self.tallys[0]
+    def get_f4_tally(self) -> F4Tally:
+        assert len(self.f4_tallys) <= 1, f'Multiple tallys for cell {self.number}. Use `get_tallys`.'
+        assert len(self.f4_tallys) > 0, f'No tally_n for cell {self.number}.'
+        return self.f4_tallys[0]
 
     @cached_property
-    def tallys(self) -> List[F4Tally]:
+    def f4_tallys(self) -> List[F4Tally]:
         tallies = []
         for line in self.outp.input_deck:
             _m = re.match(' *f([0-9]*([0-9])): *. +([0-9]+)', line)
@@ -72,7 +132,7 @@ class OutpCell:
                     warn('Tally other than 4 not implemented yet (from Cell.get_tallys)')
                 else:
                     if cell_num == self.number:
-                        tallies.append(self.outp.get_tally(tally_num))
+                        tallies.append(self.outp.get_f4_tally(tally_num))
         return tallies
 
 
@@ -488,6 +548,7 @@ def load_globals(pickle_path):
 
 
 class OutP:
+
     def __init__(self, file_path):
         self.__f_path__ = Path(file_path)
         with open(file_path) as f:
@@ -538,6 +599,37 @@ class OutP:
                 cell_num = int(m.groups()[0])
                 self.cells[cell_num].name = m.groups()[1]
 
+    @cached_property
+    def __find_tally_indicies__(self):
+        """
+        Finds the initial line indicies for the LAST time each tally in the problem is written to the output file.
+
+        Returns: Dict[tally_number, card_index]
+            , where card_index can be used as in Outp.__outp_lines__[card_index] to get the text of the input card.
+        """
+        out = {}
+        matcher = re.compile('1tally +([0-9]*[1245678]) ?')
+        for index, line in enumerate(self.__outp_lines__):
+            if m := matcher.match(line):
+                out[m.groups()[0]] = index
+        return out
+
+    @cached_property
+    def __named_cards__(self) -> Dict[str, dict]:
+        """
+        Find named cards.
+        Returns: Dict[name, {'card': `card_text`, 'index': card_index}]
+            , where card_index can be used as in Outp.__outp_lines__[card_index] to get the text of the input card.
+
+        """
+        matcher = re.compile('.+name: (.+)')
+        out = {}
+        for index, line in enumerate(self.input_deck):
+            if m := matcher.match(line):
+                name = m.groups()[0].rstrip().lstrip()
+                out[name] = {'card': line, 'index': index}
+        return out
+
     def get_cell_by_name(self, name: str):
         match = name.rstrip().lstrip().lower()
         for _, cell in self.cells.items():
@@ -548,8 +640,11 @@ class OutP:
             assert False, f"No cell named {name} found! {[c.name for c in self.cells.values()]}"
         return out
 
-    def get_tally(self, tally_number_or_name):
+    def get_f4_tally(self, tally_number_or_name):
         return F4Tally(tally_number_or_name, self)
+
+    def get_f6_tally(self, tally_number_or_name):
+        return F6Tally(tally_number_or_name, self)
 
     def get_globals(self):
         pickle_path = Path(self.input_file_path).with_suffix('.pickle')
@@ -961,7 +1056,9 @@ class StoppingPowerData:
 
 
 if __name__ == "__main__":
-    o = OutP('/Users/burggraf1/PycharmProjects/PHELIX/IAC/2021Sim/0_inp/outp')
+    o = OutP('/Users/burggraf1/PycharmProjects/ISU/darkMatter/mcnp/0_inp/outp')
+    print(o.get_f6_tally('Al heat').heating_joules*6.24E14)
+    print(o.get_f6_tally('C13 heat').heating_joules*6.24E14)
     # test_outp = (Path(__file__).parent.parent / "FFandProtonSims" / "Protons" / "outp_saved")
     # o = OutP(test_outp)
     # d = o.read_stopping_powers("proton", 2000)

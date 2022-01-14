@@ -1,17 +1,19 @@
+import re
 import warnings
-
+from typing import Union
 import numpy as np
 
 """
 Define functions used thought MCNP related code.
 """
 
+
 class MCNPNumberMapping(dict):
     """Used for automatically assigning numbers to MCNP cells, surfaces, tallies, etc. """
 
     def __init__(self, class_name, starting_number: int, step=1):
         self.step = step
-        self.class_name: type = class_name
+        self.class_name: str = class_name
         self.starting_number: int = starting_number
         super(MCNPNumberMapping, self).__init__()  # initialize empty dict
         self.auto_picked_numbers = []  # numbers that have been chosen automatically.
@@ -21,8 +23,8 @@ class MCNPNumberMapping(dict):
             return getattr(item, 'cell_number')
         elif self.class_name == 'Surface':
             return getattr(item, 'surface_number')
-        elif self.class_name == 'F4Tally':
-            return getattr(item, 'tally_number')
+        elif re.match("F[0-9]Tally", self.class_name):
+            return getattr(item, '_tally_number')
         elif self.class_name == 'Material':
             return getattr(item, 'mat_number')
         elif self.class_name == 'CylFMESH':
@@ -35,8 +37,8 @@ class MCNPNumberMapping(dict):
             return setattr(item, 'cell_number', num)
         elif self.class_name == 'Surface':
             return setattr(item, 'surface_number', num)
-        elif self.class_name == 'F4Tally':
-            return setattr(item, 'tally_number', num)
+        elif re.match("F[0-9]Tally", self.class_name):
+            return setattr(item, '_tally_number', num)
         elif self.class_name == 'Material':
             return setattr(item, 'mat_number', num)
         elif self.class_name == 'CylFMESH':
@@ -100,19 +102,26 @@ class MCNPNumberMapping(dict):
         self.number_setter(item, number)  # set the cell or surf instance's number attribute to the correct value
 
 
-def get_comment(comment, name: str):
-    if name is not None:
-        assert isinstance(name, str)
-        name = name.rstrip().lstrip()
-        return_comment = " name: {}".format(name)
-    else:
-        return_comment = ''
-    if comment is not None:
-        return_comment = '{} {}'.format(comment, return_comment)
+def get_comment(comment, name: Union[None, str]):
+    assert isinstance(name, (type(None), str))
 
-    if len(return_comment):
-        return_comment = " $ " + return_comment
-    return return_comment
+    name = "" if name is None else f"name: {name.rstrip().lstrip()}"
+
+    if comment is not None:
+        assert isinstance(comment, str)
+        comment = comment.rstrip().lstrip()
+    else:
+        comment = ""
+
+    if len(comment):
+        out = f"{comment} {name}"
+    else:
+        out = name
+
+    if len(out):
+        out = f" $ {out}"
+
+    return out
 
 
 def get_rotation_matrix(theta, vx=0, vy=0, vz=1, _round=3):
