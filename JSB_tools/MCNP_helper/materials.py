@@ -60,6 +60,7 @@ class _IdealGas:
         Args:
             list_of_chemicals: e.g., ['O2', 'He'] for O2 and helium. ["O", "H2"] for free O and He.
         """
+        self.list_of_chemicals = list_of_chemicals
         list_of_chemical_formulas = [ChemicalFormula(s) for s in list_of_chemicals]
         self.total_grams_per_mole_list = np.array([a.total_grams_peer_mole for a in list_of_chemical_formulas])
 
