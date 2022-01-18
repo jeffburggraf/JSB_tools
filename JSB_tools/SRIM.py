@@ -1,5 +1,5 @@
 """
-Run a SRIM simulation and save the results to a pickle file.
+Runs a SRIM simulation and saves the results to a pickle file.
 Pickle file has two dumps:
     1. list of energies
     2. a list of dicts of data for each entry
@@ -70,7 +70,7 @@ def _save_output(target_atoms, fractions, density, projectile, gas):
         (save_dir/all_file_attribs[file_attribs]).unlink()
     except (KeyError, FileNotFoundError):
         pass
-    files_so_far = [f.name for f in save_dir.iterdir() if re.match('.+\.pickle', f.name)]
+    files_so_far = [f.name for f in save_dir.iterdir() if re.match('out_[0-9]+\.pickle', f.name)]
     i = 0
     while (fname := f"out_{i}.pickle") in files_so_far:
         i += 1

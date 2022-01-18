@@ -760,6 +760,7 @@ class FissionYields:
 
         self.yields = {k: __yields_unsorted__[k] for k in _keys_in_order[::-1]}
         self.__unweighted_yields = None
+        self.__weighted_by_xs = False
         self.weights = np.ones_like(self.energies)
 
     def get_yield(self, nuclide_name):
@@ -831,7 +832,8 @@ class FissionYields:
             ax.legend()
         return ax
 
-    def plot(self, nuclide: Union[List[str], str, None] = None, first_n_nuclides=12, plot_data=False):
+    def plot(self, nuclide: Union[List[str], str, None] = None, first_n_nuclides=12, plot_data=False, c=1):
+
         assert self.inducing_par != "sf"
         if nuclide is not None:
             if not isinstance(nuclide, str):
@@ -839,10 +841,11 @@ class FissionYields:
                 plot_keys = nuclide
             else:
                 assert isinstance(nuclide, str)
-                y = self.yields[nuclide]
+                y = c*self.yields[nuclide]
                 y_data = self.__data.data[nuclide]
                 plt.errorbar(self.energies, unp.nominal_values(y), unp.std_devs(y), label=f'{nuclide}: interp')
-                plt.errorbar(self.__data.ergs, y_data[0], y_data[1], label=f'{nuclide}: data')
+                if plot_data and not self.__is_weighted and c == 1:
+                    plt.errorbar(self.__data.ergs, y_data[0], y_data[1], label=f'{nuclide}: data')
                 plt.legend()
                 return
 
@@ -850,9 +853,9 @@ class FissionYields:
             assert isinstance(first_n_nuclides, int)
             plot_keys = list(self.yields.keys())[:first_n_nuclides]
         for index, k in enumerate(plot_keys):
-            axs_i = index%4
+            axs_i = index % 4
             if axs_i == 0:
-                fig, axs = plt.subplots(2, 2, figsize=(8,8), sharex=True)
+                fig, axs = plt.subplots(2, 2, figsize=(8, 8), sharex=True)
                 axs = axs.flatten()
             ax = axs[axs_i]
             y_interp = unp.nominal_values(self.yields[k])
@@ -864,7 +867,8 @@ class FissionYields:
             interp_label = f'{k}: interp' if plot_data else k
             ax.plot(self.energies, y_interp, label=interp_label, ls='--', c='red',
                     marker='p' if not len(self.energies) else None)
-            if plot_data:
+
+            if plot_data and not self.__is_weighted and c == 1:
                 ax.errorbar(self.__data.ergs, y_data, y_err_data, label=f'{k}: data', ls='None', c='black',
                             marker='o')
             if axs_i > 1:
@@ -888,6 +892,7 @@ class FissionYields:
             warn("No weights to undo!")
         self.weights = np.ones_like(self.energies)
         self.__unweighted_yields = None
+        self.__weighted_by_xs = False
 
     def weight_by_fission_xs(self):
         """
@@ -908,6 +913,7 @@ class FissionYields:
             assert False, f"Cannot weight by fission cross-section for inducing particle '{self.inducing_par}'"
         xs_values = xs.interp(self.energies)
         self.weight_by_erg(xs_values)
+        self.__weighted_by_xs = True
         return xs_values
 
     def weight_by_erg(self, weights):
@@ -1292,12 +1298,12 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
     # eig_vecs = eig_vecs[:, idx]
 
     eig_vecs = eig_vecs.T
-    if not decay_rate:
+    # if not decay_rate:
         # initial condition: fraction of parent nuclide is 1. 0 for the rest
-        b = [1] + [0]*(len(eig_vals) - 1)
-    else:
+    b = [1] + [0]*(len(eig_vals) - 1)
+    # else:
         # initial condition: parent nuclide is decaying at rate of 1 Hz, the rest 0 Hz
-        b = [-1/lambda_matrix[0][0]] + [0]*(len(eig_vals) - 1)
+        # b = [-1/lambda_matrix[0][0]] + [0]*(len(eig_vals) - 1)
 
     coeffs = np.linalg.solve(eig_vecs.T, b)  # solve for initial conditions
 

@@ -294,12 +294,12 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 10, m
     return np.convolve(a, kernel, mode=mode)
 
 
-def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
+def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
              return_line_color=False, **mpl_kwargs):
     """
 
     Args:
-        bin_Edges: Left edges of bins (must be of length len(y) + 1)
+        bin_edges: Left edges of bins (must be of length len(y) + 1)
         y:
         yerr:
         ax:
@@ -313,8 +313,8 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     Returns:
 
     """
-    if not len(bin_Edges) == len(y) + 1:
-        raise ValueError(f'`bin_edges` must be of length: len(y) + 1, not {len(bin_Edges)} and {len(y)} ')
+    if not len(bin_edges) == len(y) + 1:
+        raise ValueError(f'`bin_edges` must be of length: len(y) + 1, not {len(bin_edges)} and {len(y)} ')
     if fig_kwargs is None:
         fig_kwargs = {}
     if ax is None:
@@ -332,11 +332,11 @@ def mpl_hist(bin_Edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     if title is not None:
         ax.set_title(title)
 
-    bin_centers = [(bin_Edges[i+1]+bin_Edges[i])/2 for i in range(len(bin_Edges)-1)]
+    bin_centers = [(bin_edges[i + 1] + bin_edges[i]) / 2 for i in range(len(bin_edges) - 1)]
     yp = np.concatenate([y, [y[-1]]])
     invalid_plt_kwargs = ['elinewidth', 'capsize', 'barsabove', 'lolims', 'uplims', 'errorevery', 'capthick']
     plt_kwargs = {k: v for k, v in mpl_kwargs.items() if k not in invalid_plt_kwargs}
-    lines = ax.plot(bin_Edges, yp, label=label, ds='steps-post', marker='None', **plt_kwargs)
+    lines = ax.plot(bin_edges, yp, label=label, ds='steps-post', marker='None', **plt_kwargs)
 
     c = lines[0].get_color()
     mpl_kwargs['c'] = c

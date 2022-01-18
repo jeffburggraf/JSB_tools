@@ -30,6 +30,7 @@ proton_padf_data_dir = parent_data_dir / 'PADF_2007'
 proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
 neutron_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_neutrons'
 neutron_fission_yield_data_dir_endf = parent_data_dir / 'ENDF-B-VIII.0_nfy'
+neutron_fission_yield_data_dir_ukfy = parent_data_dir / 'UKFY42data'/'ukfy4_2n'
 tendl_2019_proton_dir = parent_data_dir/'TENDL2019-PROTONS'
 
 

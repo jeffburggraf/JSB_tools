@@ -218,8 +218,8 @@ class Material:
                 self.args = atoms, fractions, self.density, projectile, is_gas
 
             def __repr__(self):
-                out = f'elements: {self.atoms}, %s: {100*np.array(list(map(int, self.fractions)))}, ' \
-                      f'density: {self.density}, gas = {self.is_gas}'
+                out = f'elements: {self.atoms}, {100*np.array(list(map(int, self.fractions)))}, ' \
+                      f'density: {self.density:.3e}, gas = {self.is_gas}'
                 return out
 
         options = [_SrimRun(*args) for args in existing_outputs()]

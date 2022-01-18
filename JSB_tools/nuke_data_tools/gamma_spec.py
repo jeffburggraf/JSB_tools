@@ -1,37 +1,19 @@
 # from JSB_tools.nuke_data_tools.gamma_spec import exp_decay_maximum_likely_hood
 from __future__ import annotations
 import numpy as np
-from JSB_tools.TH1 import TH1F, rolling_median
-from matplotlib import pyplot as plt
-from JSB_tools.nuke_data_tools import Nuclide
 from JSB_tools.nuke_data_tools.__init__ import DECAY_PICKLE_DIR
 import marshal
-import pickle
-from JSB_tools import closest, interp1d_errors
-import ROOT
 from sortedcontainers import SortedDict
-# from PHELIXDataTTree import get_global_energy_bins, get_time_bins
 from numbers import Number
-# from GlobalValues import shot_groups
-from typing import Collection, Union, Tuple
+from typing import Union
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Optional
+from typing import List, Callable
 import warnings
-import uncertainties.unumpy as unp
-from uncertainties import ufloat, UFloat
-# from JSB_tools import PolyFit, LogPolyFit, ROOTFitBase
-from JSB_tools.regression import PeakFit, LogPolyFit, PolyFit, PolyFitODR
-import re
-from scipy.signal import find_peaks, peak_widths
 from JSB_tools import human_friendly_time
 data_dir = DECAY_PICKLE_DIR/'__fast__gamma_dict__.marshal'
 
 cwd = Path(__file__).parent
 DATA = None
-
-data_save_path = cwd/'spectroscopy_saves'
-if not data_save_path.exists():
-    Path.mkdir(data_save_path)
 
 
 class _CommonDecayNuclides:
@@ -87,6 +69,7 @@ def gamma_search(erg_center: float,
     Search for nuclides that produce gamma decays in the neighborhood of `erg_center` (+/- sigma_erg). The nuclides are
      sorted from most to least number of decay events that would occur over the course of data acquisition as specified
      by start_time and end_time.
+
     Args:
         erg_center: Center of energy window
         e_sigma: half width of energy window
@@ -99,8 +82,8 @@ def gamma_search(erg_center: float,
         half_life_min: Min cut off for half life
         half_life_max:  Max cut off for half life
 
-        nuclide_weighting_function: Must be a weighting function that accepts a nuclide name (str) and returns a number
-            used to weight the sorter. e.g., weight by fission yield when searching for fission fragments.
+        nuclide_weighting_function: Must be a function that accepts a nuclide name (str) and returns a number which is
+          then used to weight the sorter. e.g., weight by fission yield when searching for fission fragment gammas.
 
         rank_threshold: Threshold for including in results. e.g. 0.001 means anything smaller than 1/1000th of the most
             prominent is not included.

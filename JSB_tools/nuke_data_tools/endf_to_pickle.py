@@ -20,7 +20,8 @@ from numbers import Number
 import numpy as np
 from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
     photonuclear_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
-    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, photonuclear_tendl_dir
+    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, photonuclear_tendl_dir,\
+    neutron_fission_yield_data_dir_ukfy
 
 from JSB_tools import ProgressReport
 cwd = Path(__file__).parent
@@ -515,8 +516,10 @@ class Helper:
         Args:
             raw_data_dir: dir of downloaded data
             new_data_dir: Dir to save data
-            matcher: a re.compiled object that has 2-3 capturing groups that are, in order, Z, A, <m>, where m is
-             optional.
+            file_name_converter: Two options:
+                1. A str representing a regex that has 2-3 capturing groups that are, in order, Z, A, <m>, where m is
+                    optional.
+                2. A callable that takes filename and return nuclide symbol.
         """
         self.raw_data_dir = Path(raw_data_dir)
         self.new_data_dir = Path(new_data_dir)
@@ -535,7 +538,7 @@ class Helper:
                                 m = 0
                         except IndexError:
                             m = 0
-                        symbol = ATOMIC_SYMBOL[z] + str(a) + ("m{}".format(m) if m else '')
+                        symbol = ATOMIC_SYMBOL[z] + str(a) + ("_m{}".format(m) if m else '')
                         return symbol
 
             self.file_name_converter = file_name_converter
@@ -548,9 +551,17 @@ class Helper:
         """Generator that loops through source directory and returns dict of nuclide name and data path"""
         for f_path in self.raw_data_dir.iterdir():
             f_name = f_path.name
-            if symbol := self.file_name_converter(f_name):
-                if symbol is not None:
-                    yield {'parent_symbol': symbol, 'f_path': f_path}
+            symbol = self.file_name_converter(f_name)
+            if symbol is not None:
+                yield {'parent_symbol': symbol, 'f_path': f_path}
+
+
+def ukfy_file2symbol(f_name):
+    if m := re.match('([A-Z][a-z]{0,2}[0-9]{1,3})([mnop]?)', f_name):
+        s = m.groups()[0]
+        if m.groups()[1]:
+            s += f"_m{'mnop'.index(m.groups()[1])+1}"
+        return s
 
 
 def pickle_fission_product_yields():
@@ -592,42 +603,45 @@ def pickle_fission_product_yields():
     # Add here for fiss yield
     neutron_yield_marshal_path_endf = FISS_YIELDS_PATH/'neutron'/'endf'
     neutron_yield_marshal_path_gef = FISS_YIELDS_PATH/'neutron'/'gef'
+    neutron_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'neutron'/'ukfy'
     sf_yield_marshal_path_gef = FISS_YIELDS_PATH/'SF'/'gef'
     proton_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'proton'/'ukfy'
     gamma_yield_marshal_path_ukfy = FISS_YIELDS_PATH/'gamma'/'ukfy'
 
-    for _dir in [neutron_yield_marshal_path_endf, neutron_yield_marshal_path_gef, sf_yield_marshal_path_gef,
-                 proton_yield_marshal_path_ukfy]:
-        if not _dir.parent.exists():
-            Path.mkdir(_dir.parent)
-        if not _dir.exists():
-            Path.mkdir(_dir)
+    for _dir in [neutron_yield_marshal_path_endf, neutron_yield_marshal_path_gef, neutron_yield_marshal_path_ukfy,
+                 sf_yield_marshal_path_gef, proton_yield_marshal_path_ukfy, gamma_yield_marshal_path_ukfy]:
+        Path.mkdir(_dir.parent, parents=True, exist_ok=True)
 
     # Add here for fiss yield
     # helpers = [Helper(neutron_fission_yield_data_dir_endf,
     #                   neutron_yield_marshal_path_endf,
     #                   'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*')]
-    helpers = [Helper(neutron_fission_yield_data_dir_gef,
-                      neutron_yield_marshal_path_gef,
-                      'GEFY_([0-9]+)_([0-9]+)_n.dat'),
-               Helper(neutron_fission_yield_data_dir_endf,
-                      neutron_yield_marshal_path_endf,
-                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
-               Helper(sf_yield_data_dir,
-                      sf_yield_marshal_path_gef,
-                      'GEFY_([0-9]+)_([0-9]+)_s.dat'),
-               Helper(proton_fiss_yield_data_dir_ukfy,
-                      proton_yield_marshal_path_ukfy,
-                      lambda x: x),
-               Helper(gamma_fiss_yield_data_dir_ukfy,
-                      gamma_yield_marshal_path_ukfy,
-                      lambda x: x)
+    helpers = [
+                Helper(neutron_fission_yield_data_dir_gef,
+                       neutron_yield_marshal_path_gef,
+                       'GEFY_([0-9]+)_([0-9]+)_n.dat'),
+               # Helper(neutron_fission_yield_data_dir_endf,
+               #        neutron_yield_marshal_path_endf,
+               #        'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
+               # Helper(neutron_fission_yield_data_dir_ukfy,
+               #        neutron_yield_marshal_path_ukfy,
+               #        ukfy_file2symbol),
+               # Helper(sf_yield_data_dir,
+               #        sf_yield_marshal_path_gef,
+               #        'GEFY_([0-9]+)_([0-9]+)_s.dat'),
+               # Helper(proton_fiss_yield_data_dir_ukfy,
+               #        proton_yield_marshal_path_ukfy,
+               #        ukfy_file2symbol),
+               # Helper(gamma_fiss_yield_data_dir_ukfy,
+               #        gamma_yield_marshal_path_ukfy,
+               #        ukfy_file2symbol)
                ]
     #
     for helper in helpers:
         for x in helper.get_valid():
             f_path = x['f_path']
             parent_symbol = x['parent_symbol']
+
             try:
                 openmc_yield = FissionProductYields(f_path)
             except KeyError:
@@ -643,6 +657,7 @@ def pickle_fission_product_yields():
                 with open(f_path, 'wb') as f:
                     marshal.dump(ergs, f)
                     marshal.dump(data, f)
+
                 print('Written Fission yields for {}'
                       .format(Path(f_path.parents[2].name)/f_path.parents[1].name/f_path.parent.name/f_path.name))
 
@@ -708,6 +723,7 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
+    pickle_fission_product_yields()
     # pickle_proton_activation_data()
     # pickle_gamma_fission_xs_data()
     # pickle_neutron_activation_data()
