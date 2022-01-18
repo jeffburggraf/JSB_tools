@@ -265,7 +265,7 @@ if __name__ == '__main__':
       # For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
 
-    for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
+    for n in ['Cs140', 'Xe139', 'Sb132', 'Kr90', 'Sr94', 'Zr100']:
         run_srim(['C'], [1], 1.7, n, 120)
 
     # g = _IdealGas(['Ar'])
