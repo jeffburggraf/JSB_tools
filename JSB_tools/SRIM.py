@@ -28,30 +28,51 @@ if not save_dir.exists():
 def _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas):
     density = f"{density:.4E}"
     arg_sort = np.argsort(target_atoms)
+    target_atoms = list(map(lambda x: x[0].upper() + x[1:].lower(), target_atoms))
     target_atoms = np.array(target_atoms)[arg_sort]
     fractions = np.array(fractions)[arg_sort]
     fractions = fractions / sum(fractions)
     fractions = tuple(map(float, [f"{n:.3f}" for n in fractions]))
     target_atoms = tuple(target_atoms)
+    projectile = projectile[0].upper() + projectile[1:].lower()
     file_attribs = (target_atoms, fractions, density, projectile, gas)
 
     return file_attribs
 
 
 def existing_outputs():
+    """
+    Find all stored SRIM simulations. Delete/remove invalid entries in outputs.txt
+    Returns:
+
+    """
     try:
         with open(save_dir/"outputs.txt") as f:
             lines = f.readlines()
     except FileNotFoundError:
         lines = []
     out = {}
+    name_params = {}
+    new_lines = []
+    re_write_file = False
 
     for line in lines:
         _ = line.split('__--__')
         f_name = _[-1].lstrip().rstrip()
         params = eval(_[0])
+        name_params[f_name] = params
+
         if (save_dir/f_name).exists():
             out[params] = f_name
+            new_lines.append(line)
+        else:
+            re_write_file = True
+
+    if re_write_file:
+        with open(save_dir / "outputs.txt", 'w') as f:
+            for line in new_lines:
+                f.write(line + '\n')
+
     return out
 
 
@@ -70,9 +91,14 @@ def _save_output(target_atoms, fractions, density, projectile, gas):
         (save_dir/all_file_attribs[file_attribs]).unlink()
     except (KeyError, FileNotFoundError):
         pass
-    files_so_far = [f.name for f in save_dir.iterdir() if re.match('out_[0-9]+\.pickle', f.name)]
+
+    files_so_far = [f.name for f in save_dir.iterdir() if re.match(r'out_[0-9]+\.pickle', f.name)]
     i = 0
+
     while (fname := f"out_{i}.pickle") in files_so_far:
+        if fname not in all_file_attribs.values():
+            (save_dir/fname).unlink()  # pickle file not in outputs.txt. delete and use this filename
+            break
         i += 1
 
     all_file_attribs[file_attribs] = fname
