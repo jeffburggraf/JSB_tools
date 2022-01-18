@@ -265,17 +265,20 @@ if __name__ == '__main__':
       # For IAC models
     from JSB_tools.MCNP_helper.materials import _IdealGas
 
-    for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
-        run_srim(['C'], [1], 1.7, n, 120)
-
-    # g = _IdealGas(['Ar'])
-    # g_ar_he = _IdealGas(['Ar', 'He'])
-     # = _IdealGas(['Ar'])
     # for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
-    #     run_srim(['U'], [1], 19, n, 120)  # Uranium
-    #     for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.3, 1.35, 1.4, 1.5, 1.6]:
-    #         density = g.get_density_from_atom_fractions([1], pressure=press)
-    #         run_srim(['Ar'], [1], density, n, 120, True )  # Pure argon
+    #     run_srim(['C'], [1], 1.7, n, 120)
+
+    g = _IdealGas(['Ar'])
+    g_ar_he = _IdealGas(['Ar', 'He'])
+    g_he = _IdealGas(['He'])
+
+    for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
+        # run_srim(['U'], [1], 19, n, 120)  # Uranium
+        for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.6]:
+            for gas in [g_he]:
+                density = g.get_density_from_atom_fractions([1], pressure=press)
+                run_srim(gas.list_of_chemicals, [1]*len(gas.list_of_chemicals), density, n, 120, True )
+
     #
     #         density_heR = g_ar_he.get_density_from_atom_fractions([1,1], pressure=press)
     #         run_srim(['Ar', 'He'], [1, 1], density, n, 120, True)  # He Ar Mix
