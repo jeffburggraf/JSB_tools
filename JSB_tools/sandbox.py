@@ -1,9 +1,4 @@
-import matplotlib.pyplot as plt
+from JSB_tools import Nuclide
 
-from JSB_tools import calc_background, mpl_hist
-import numpy as np
-from lmfit.models import GaussianModel
-from lmfit.model import CompositeModel
-from scipy.signal import find_peaks
-
-
+n = Nuclide.from_symbol('Xe139')
+print(1/n.decay_rate)

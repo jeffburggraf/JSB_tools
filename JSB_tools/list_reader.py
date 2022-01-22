@@ -228,7 +228,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         self.realtimes = np.array(self.realtimes)
         self.livetimes = np.array(self.livetimes)
 
-        self.times.flags.writeable = False
+        # self.times.flags.writeable = False
         self.realtimes.flags.writeable = False
         self.livetimes.flags.writeable = False
 
@@ -305,7 +305,12 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         Returns: None
 
         """
+        # self.times.flags.writeable = True
         self.times = self.times + t
+        # self.times.flags.writeable = False
+
+        self._energy_binned_times = None
+        self._energy_spec = None
 
     @staticmethod
     def _calc_fraction_live(livetimes, realtimes, dead_time_corr_window=10):
@@ -628,6 +633,8 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         else:
             assert hasattr(bins, '__iter__')
             time_bins = bins
+
+        assert len(time_bins) != 1, "Only one bin specified. This is not allowed. "
 
         def _median(_x):
             # _x = convolve_gauss(_x, min([len(_x)//2, 5]))
@@ -1037,7 +1044,12 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         if eff_corr:
             assert self.effs is not None, 'Cannot perform efficiency correction. No efficiency data. '
-            out /= self.effs[erg_index0: erg_index1]
+            effs = self.effs[erg_index0: erg_index1]
+            if nominal_values:
+                effs = unp.nominal_values(effs)
+                if not out.dtype == 'float64':
+                    out = out.astype('float64')
+            out /= effs
 
         if rebin != 1:
             out, bins = _rebin(rebin, out, bins)
@@ -1195,13 +1207,14 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         return np.where(mask)
 
-    def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', time_bin_width=15,
-               time_step: int = 5, time_max=None, percent_of_max=False, remove_baseline=False):
+    def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', eff_corr=True, time_bin_width=15,
+               time_step: int = 5, time_max=None, percent_of_max=False, remove_baseline=False, title=None):
         """
         Args:
             erg_min:
             erg_max:
             erg_bins:
+            eff_corr:
             time_bin_width: Width of time range for each slider step.
             time_step: delta t between each slider step
             time_max: Max time for plot.
@@ -1215,6 +1228,8 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             erg_min = self.erg_bins[0]
         if erg_max is None:
             erg_max = self.erg_bins[-1]
+        if title is None:
+            title = self.file_name if self.file_name is not None else "untitled"
 
         tmin = self.times[0]
         if time_max is None:
@@ -1232,7 +1247,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         ys = []
 
         for b_width, (b0, b1) in zip(time_bin_widths, time_groups):
-            _y = self.get_erg_spectrum(erg_min, erg_max, b0, b1, nominal_values=True) / b_width
+            _y = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr, nominal_values=True) / b_width
             if remove_baseline:
                 _y -= rolling_median(45, _y)
             ys.append(_y)
@@ -1243,7 +1258,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         fig = go.Figure()
 
         y_tot = self.get_erg_spectrum(erg_min, erg_max, time_max=time_max, nominal_values=True,
-                                      remove_baseline=remove_baseline)/(tmax-tmin)
+                                      remove_baseline=remove_baseline, eff_corr=eff_corr)/(tmax-tmin)
 
         fig.add_trace(
             go.Bar(
@@ -1258,12 +1273,13 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         steps = [dict(
                 method="update",
                 args=[{"visible": [True] + [False] * 2*len(time_centers)},
-                      {"title": f"All time"}],  # layout attribute
+                      {"title": f"{title} All time"}],  # layout attribute
             )]
 
         _max_y = 0
         if percent_of_max:
             ys /= np.array([np.max(convolve_gauss(_y, 3)) for _y in ys])[:, np.newaxis]
+
         for index, (y, (t0, t1)) in enumerate(zip(ys, time_groups)):
             b_width = t1 - t0
             b_center = (t1+t0)/2
@@ -1290,7 +1306,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             step = dict(
                 method="update",
                 args=[{"visible": [False] * (2*len(time_centers) + 1)},
-                      {"title": label}],  # layout attribute
+                      {"title": f"{title} {label}"}],  # layout attribute
             )
             step["args"][0]["visible"][2*index+1] = True  # Toggle trace to "visible"
             step["args"][0]["visible"][2*index+2] = True  # Toggle trace to "visible"
@@ -1493,6 +1509,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         self.path = Path(self.path)
         self.start_time = datetime.datetime.strptime(self.start_time, MaestroListFile.datetime_format)
         super(EfficiencyCalMixin, self).__init__(self.erg_calibration, load_erg_cal=load_erg_cal)
+        # self.times.flags.writeable = False
 
         self.unpickle_eff()
 
