@@ -1246,12 +1246,16 @@ def decay_default_func(nuclide_name):
 def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_term=0., yield_thresh=1E-5):
     """
     This function solves the following problem:
-        Starting with some (see init_term) of a given unstable nuclide, what fractions of parent and its
+        Starting with some amount (see init_term) of a given unstable nuclide, what amount of the parent and its
          progeny nuclides remain after time t?
 
     Use driving_term arg for the case of nuclei being generated at a constant rate (in Hz), e.g. via a beam.
     A negative driving_term can be used, however, if/when the number of parent nuclei goes negative,
      the solution becomes unphysical.
+
+    Spontaneous fission products are not (yet) included in decay progeny.
+
+    Solution is exact in the sense that the only errors are from machine precision.
 
     The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem
         (or inhomogeneous system of lin. diff. eq. in the case of a nonzero driving_term).
@@ -1334,7 +1338,7 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_ter
 
     coeffs = np.linalg.solve(eig_vecs.T, b - particular_coeffs)  # solve for initial conditions
 
-    def func(ts, plot=False):
+    def func(ts, plot=False) -> Dict[str, np.ndarray]:
         if hasattr(ts, '__iter__'):
             iter_flag = True
         else:

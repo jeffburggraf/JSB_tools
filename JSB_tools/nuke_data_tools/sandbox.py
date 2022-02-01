@@ -11,8 +11,10 @@ import scipy
 
 driving_term = 1
 init_term = 0
-
-lambda_matrix = np.array([[-1, 0], [1, -2]])
+"""
+{-\[Lambda]1, 0, 0}, {\[Lambda]1, -\[Lambda]2, 
+  0}, {0, \[Lambda]2 Subscript[b, 23], -\[Lambda]3}}"""
+lambda_matrix = np.array()
 decay_rate = False
 column_labels = ['1', '2']
 

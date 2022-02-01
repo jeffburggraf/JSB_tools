@@ -87,7 +87,7 @@ class F6Tally:
                 index += 1
                 value, err = tuple(map(float, outp.__outp_lines__[index].split()))
 
-                self.heating = ufloat(value, err)
+                self.heating = ufloat(value, value*err)
                 break
             elif re.match(" =+ ", line):
                 assert False, f'Failed to find tally {tally_number_or_name}'

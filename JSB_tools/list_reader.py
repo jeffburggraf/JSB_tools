@@ -4,9 +4,7 @@ Todo:
     Implement a method for efficiency calibration
 """
 from __future__ import annotations
-
 import warnings
-
 import plotly.graph_objects as go
 import marshal
 import struct
@@ -25,7 +23,7 @@ import time
 from uncertainties.core import UFloat, ufloat
 from uncertainties import unumpy as unp
 from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, discrete_interpolated_median, shade_plot, \
-    rolling_median
+    rolling_median, InteractivePlot
 from JSB_tools.spe_reader import SPEFile, EfficiencyCalMixin, EnergyCalMixin, _rebin
 
 # HERE = pytz.timezone('US/Mountain')
@@ -794,7 +792,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
                         label=label + "(signal)" if plot_background else "", **mpl_kwargs)
 
         if plot_background:
-
             mpl_kwargs['ls'] = '--'
             mpl_kwargs.pop('c', None)
             mpl_kwargs.pop('color', None)
@@ -817,8 +814,10 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
     @property
     def file_name(self):
-        if self.path is not None:
+        if isinstance(self.path, Path):
             return self.path.name
+        elif self.path is not None:
+            return self.path
         else:
             return 'None'
 
@@ -1006,21 +1005,24 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         b = (time_min is not None, time_max is not None)
 
-        def get_n_events():
-            if b == (0, 0):
-                return len
-            elif b == (1, 0):
-                return lambda x: len(x) - np.searchsorted(x, time_min, side='left')
-            elif b == (0, 1):
-                return lambda x: np.searchsorted(x, time_max, side='right')
-            else:
-                return lambda x: np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min, side='left')
+        if b == (0, 0):
+            get_n_events = len
+        elif b == (1, 0):
+            def get_n_events(x):
+                return len(x) - np.searchsorted(x, time_min, side='left')
+        elif b == (0, 1):
+            def get_n_events(x):
+                return np.searchsorted(x, time_max, side='right')
+        else:
+            def get_n_events(x):
+                return np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min,
+                                                                                    side='left')
 
         erg_index0 = self.__erg_index__(erg_min)
         erg_index1 = self.__erg_index__(erg_max)
 
         time_arrays = self.__energy_binned_times__[erg_index0: erg_index1]
-        func = get_n_events()
+        func = get_n_events
         out = np.fromiter(map(func, time_arrays), dtype=int)
 
         bins = self.erg_bins_cut(erg_min, erg_max)
@@ -1038,6 +1040,8 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             if baseline_method == 'root':
                 out = out - calc_background(out, **baseline_kwargs)
             elif baseline_method == 'median':
+                if 'window' not in baseline_kwargs:
+                    baseline_kwargs['window_width'] = 75  # size of rolling window in keV
                 out = out - rolling_median(values=out, **baseline_kwargs)
             else:
                 raise TypeError(f"Invalid `baseline_method`, '{baseline_method}'")
@@ -1053,9 +1057,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         if rebin != 1:
             out, bins = _rebin(rebin, out, bins)
-            # l = len(out)
-            # out = np.sum([out[rebin * i: rebin * (i + 1)] for i in range(l // rebin)], axis=1)
-            # bins = np.array([bins[rebin * i] for i in range(l // rebin + 1)])
 
         if return_bin_edges:
             return out, bins
@@ -1085,10 +1086,9 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         rnds = np.random.random(len(energies)) - 0.5
         idxs = self.__erg_index__(energies)
 
-        self._energies = energies + rnds * self.bin_widths[idxs]
-        self.adc_values = None
+        # self._energies = energies + rnds * self.bin_widths[idxs]
+        self.adc_values = energies + rnds * self.bin_widths[idxs]
         self.erg_bins = new_bins
-        self.erg_centers
         self.erg_calibration = [0, 1]
         try:
             del self.erg_centers
@@ -1207,123 +1207,274 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         return np.where(mask)
 
-    def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', eff_corr=True, time_bin_width=15,
-               time_step: int = 5, time_max=None, percent_of_max=False, remove_baseline=False, title=None):
+    @staticmethod
+    def multi_plotly(list_objs: List[MaestroListFile], scales=None, leg_labels=None, erg_min=40, erg_max=None, eff_corr=True,
+                     time_bins=None, time_bin_width=15,
+                     time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
+                     nominal_values=True):
         """
+        Plots energy spectra at different time intervals according to an interactive slider.
         Args:
+            list_objs: series of MaestroListFile objects
+            scales: List of normalizations of each list_obj
+            leg_labels: None,
             erg_min:
             erg_max:
-            erg_bins:
             eff_corr:
-            time_bin_width: Width of time range for each slider step.
-            time_step: delta t between each slider step
-            time_max: Max time for plot.
-            percent_of_max: It True, each bin is fraction of max.
+            time_bins:
+            time_bin_width:
+            time_step:
+            time_min:
+            time_max:
             remove_baseline:
+            nominal_values:
 
         Returns:
 
         """
-        if erg_min is None:
-            erg_min = self.erg_bins[0]
-        if erg_max is None:
-            erg_max = self.erg_bins[-1]
-        if title is None:
-            title = self.file_name if self.file_name is not None else "untitled"
+        _plt: InteractivePlot = None
+        if scales is None:
+            scales = np.ones(len(list_objs))
 
-        tmin = self.times[0]
-        if time_max is None:
-            tmax = self.times[-1]
+        if leg_labels is None:
+            leg_labels = [None]*len(list_objs)
+
+        assert len(leg_labels) == len(list_objs)
+        attribs = None
+
+        for l, label, s in zip(list_objs, leg_labels, scales):
+            if attribs is None:
+                attribs = l.plotly(erg_min=erg_min, erg_max=erg_max, eff_corr=eff_corr, time_bins=time_bins,
+                                   time_bin_width=time_bin_width, time_step=time_step, time_min=time_min,
+                                   time_max=time_max, remove_baseline=remove_baseline, nominal_values=nominal_values,
+                                   leg_label=label, dont_plot=True
+                                   )
+            else:
+                l.plotly(**attribs, eff_corr=eff_corr, time_bin_width=time_bin_width, leg_label=label, scale=s,
+                         dont_plot=True)
+
+        attribs['interactive_plot'].plot()
+
+    def plotly(self, erg_min=40, erg_max=None, eff_corr=True, time_bins=None, time_bin_width=15,
+               time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
+               interactive_plot: InteractivePlot = None, nominal_values=True, leg_label=None, scale=1,
+               dont_plot=False):
+        """
+
+        Args:
+            erg_min:
+            erg_max:
+            eff_corr:
+            time_bins:
+            time_bin_width:
+            time_step:
+            time_min:
+            time_max:
+            remove_baseline:
+            interactive_plot:
+            nominal_values:
+            leg_label:
+            scale: Multiply y axis by this number.
+            dont_plot:
+
+        Returns:
+            dictionary as follows
+                {"interactive_plot": interactive_plot: JSB_tools.InteractivePlot,
+                #  The rest of the key/values are arguments provided to plotly (they may be different if None wsa used).
+                "remove_baseline": `remove_baseline`,
+                "time_bins": time_bins,
+                "erg_max": erg_max, "erg_min": erg_min,
+                "nominal_values": nominal_values}
+
+        """
+        if time_bins is not None:
+            time_bins = np.array(time_bins, copy=False)
+            assert time_bins.ndim == 2 and time_bins.shape[1] == 2
+            # assert None is time_bin_width is time_step is time_min is time_max,
         else:
-            tmax = time_max
-        time_centers = np.linspace(tmin, tmax, int((tmax-tmin) // time_step + 1))
-        time_groups = [(max([tmin, b - time_bin_width / 2]), min([tmax, b + time_bin_width / 2])) for b in time_centers]
-        time_bin_widths = [b1-b0 for b0, b1 in time_groups]
+            if time_max is None:
+                time_max = self.times[-1]
+            if time_min is None:
+                time_min = -time_bin_width/2
 
-        energy_bins = self.erg_bins_cut(erg_min, erg_max)
-        energy_bin_centers = (energy_bins[1:] + energy_bins[:-1])/2
-        labels4bins = []
+            assert None not in [time_min, time_bin_width, time_step]
+            time_max = time_min + time_step * ((time_max - time_min) // time_step)
+            time_centers = np.arange(time_min, time_max + time_step, time_step)
+            lbins = time_centers - time_bin_width / 2
+            rbins = time_centers + time_bin_width / 2
+            time_bins = list(zip(np.where(lbins >= time_min, lbins, time_min), np.where(rbins <= time_max, rbins, time_max)))
+
+        time_bins = np.array(time_bins, copy=False)
 
         ys = []
+        labels4frames = []
+        assert len(time_bins) > 0
 
-        for b_width, (b0, b1) in zip(time_bin_widths, time_groups):
-            _y = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr, nominal_values=True) / b_width
+        for (b0, b1) in time_bins:
+            _y, bin_edges = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr,
+                                                  nominal_values=nominal_values,
+                                                  return_bin_edges=True)
+            _y /= (b1 - b0)
+            _y *= scale
+
             if remove_baseline:
                 _y -= rolling_median(45, _y)
             ys.append(_y)
-            labels4bins.append((b0, b1))
+            labels4frames.append(f"{b0} <= t < {b1} ({0.5*(b0 + b1)})")
 
-        ys = np.array(ys)
+        if interactive_plot is None:
+            interactive_plot = InteractivePlot(labels4frames, "time ")
 
-        fig = go.Figure()
+        x = (bin_edges[1:] + bin_edges[:-1]) / 2
 
-        y_tot = self.get_erg_spectrum(erg_min, erg_max, time_max=time_max, nominal_values=True,
-                                      remove_baseline=remove_baseline, eff_corr=eff_corr)/(tmax-tmin)
+        if leg_label is None:
+            leg_label = self.file_name
 
-        fig.add_trace(
-            go.Bar(
-                visible=True,
-                name=f"All time",
-                x=energy_bin_centers,
-                y=y_tot,
-                marker_color='red',
-            )
-        )
+        color = interactive_plot.add_ys(x, ys, leg_label=leg_label, line_type='hist', return_color=True)
 
-        steps = [dict(
-                method="update",
-                args=[{"visible": [True] + [False] * 2*len(time_centers)},
-                      {"title": f"{title} All time"}],  # layout attribute
-            )]
+        tot_time = (time_bins[-1][-1] - time_bins[0][0])
 
-        _max_y = 0
-        if percent_of_max:
-            ys /= np.array([np.max(convolve_gauss(_y, 3)) for _y in ys])[:, np.newaxis]
+        if nominal_values:
+            tot_y = np.mean(ys, axis=0)
+            error_y = None
+        else:
+            tot = np.mean(ys, axis=0)
+            tot_y = unp.nominal_values(tot)
+            error_y = unp.std_devs(tot)
+        # tot_y = self.get_erg_spectrum(erg_min=erg_min, erg_max=erg_max, time_min=time_min, time_max=time_max,
+        #                               remove_baseline=remove_baseline, nomin)
 
-        for index, (y, (t0, t1)) in enumerate(zip(ys, time_groups)):
-            b_width = t1 - t0
-            b_center = (t1+t0)/2
-            if max(y)>_max_y:
-                _max_y = max(y)
+        interactive_plot.add_persistent(x, tot_y, yerr=error_y, leg_label='All time', opacity=0.5, line_type='hist')
 
-            label = f"t ~= {b_center:.1f} [s] ({t0:.1f} < t < {t1:.1f})"
-            assert len(energy_bin_centers) == len(y), [len(energy_bin_centers), len(y)]
-            fig.add_trace(
-                go.Scatter(
-                    visible=False,
-                    x=energy_bin_centers,
-                    y=y,
-                    marker_color='blue',
-                    line={'shape': 'hvh'}
-                ),
-            )
-            fig.add_trace(
-                go.Scatter(
-                    visible=False,
-                    x=energy_bin_centers,
-                    y=convolve_gauss(y, 3),
-                    ))
-            step = dict(
-                method="update",
-                args=[{"visible": [False] * (2*len(time_centers) + 1)},
-                      {"title": f"{title} {label}"}],  # layout attribute
-            )
-            step["args"][0]["visible"][2*index+1] = True  # Toggle trace to "visible"
-            step["args"][0]["visible"][2*index+2] = True  # Toggle trace to "visible"
-            steps.append(step)
-        fig.update_yaxes(range=[0, _max_y*1.1])
-        sliders = [dict(
-            active=0,
-            currentvalue={"prefix": "time "},
-            pad={"t": 50},
-            steps=steps
-        )]
+        interactive_plot.fig.update_layout(
+            scene=dict(
+                yaxis=dict(range=[0, interactive_plot.max_y])))
 
-        fig.update_layout(
-            sliders=sliders, bargap=0, bargroupgap=0.0
-        )
-        fig.show()
-        return fig
+        if not dont_plot:
+            interactive_plot.plot()
+
+        return {"interactive_plot": interactive_plot, "remove_baseline": remove_baseline, "time_bins": time_bins,
+                "erg_max": erg_max, "erg_min": erg_min,
+                "nominal_values": nominal_values}
+
+    # def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', eff_corr=True, time_bin_width=15,
+    #            time_step: int = 5, time_min=0, time_max=None, percent_of_max=False, remove_baseline=False, title=None):
+    #     """
+    #     Args:
+    #         erg_min:
+    #         erg_max:
+    #         erg_bins:
+    #         eff_corr:
+    #         time_bin_width: Width of time range for each slider step.
+    #         time_step: delta t between each slider step
+    #         time_min: Min time
+    #         time_max: Max time for plot.
+    #         percent_of_max: It True, each bin is fraction of max.
+    #         remove_baseline:
+    #
+    #     Returns:
+    #
+    #     """
+    #     if erg_min is None:
+    #         erg_min = self.erg_bins[0]
+    #     if erg_max is None:
+    #         erg_max = self.erg_bins[-1]
+    #     if title is None:
+    #         title = self.file_name if self.file_name is not None else "untitled"
+    #
+    #     if time_max is None:
+    #         time_max = self.times[-1]
+    #
+    #     # time_centers = np.linspace(time_min, time_max, int((time_max-time_min) // time_step + 1))
+    #     time_max = time_min + time_step*((time_max - time_min)//time_step)
+    #     time_centers = np.arange(time_min, time_max, time_step)
+    #     time_groups = [(max([time_min, b - time_bin_width / 2]), min([time_max, b + time_bin_width / 2])) for b in time_centers]
+    #     time_bin_widths = [b1-b0 for b0, b1 in time_groups]
+    #
+    #     energy_bins = self.erg_bins_cut(erg_min, erg_max)
+    #     energy_bin_centers = (energy_bins[1:] + energy_bins[:-1])/2
+    #     labels4bins = []
+    #
+    #     ys = []
+    #
+    #     for b_width, (b0, b1) in zip(time_bin_widths, time_groups):
+    #         _y = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr, nominal_values=True) / b_width
+    #         if remove_baseline:
+    #             _y -= rolling_median(45, _y)
+    #         ys.append(_y)
+    #         labels4bins.append((b0, b1))
+    #
+    #     ys = np.array(ys)
+    #
+    #     fig = go.Figure()
+    #
+    #     y_tot = self.get_erg_spectrum(erg_min, erg_max, time_max=time_max, nominal_values=True,
+    #                                   remove_baseline=remove_baseline, eff_corr=eff_corr)/(time_max-time_min)
+    #
+    #     fig.add_trace(
+    #         go.Bar(
+    #             visible=True,
+    #             name=f"All time",
+    #             x=energy_bin_centers,
+    #             y=y_tot,
+    #             marker_color='red',
+    #         )
+    #     )
+    #
+    #     steps = [dict(
+    #             method="update",
+    #             args=[{"visible": [True] + [False] * 2*len(time_centers)},
+    #                   {"title": f"{title} All time"}],  # layout attribute
+    #         )]
+    #
+    #     _max_y = 0
+    #     if percent_of_max:
+    #         ys /= np.array([np.max(convolve_gauss(_y, 3)) for _y in ys])[:, np.newaxis]
+    #
+    #     for index, (y, (t0, t1)) in enumerate(zip(ys, time_groups)):
+    #         b_width = t1 - t0
+    #         b_center = (t1+t0)/2
+    #         if max(y)>_max_y:
+    #             _max_y = max(y)
+    #
+    #         label = f"t ~= {b_center:.1f} [s] ({t0:.1f} < t < {t1:.1f})"
+    #         assert len(energy_bin_centers) == len(y), [len(energy_bin_centers), len(y)]
+    #         fig.add_trace(
+    #             go.Scatter(
+    #                 visible=False,
+    #                 x=energy_bin_centers,
+    #                 y=y,
+    #                 marker_color='blue',
+    #                 line={'shape': 'hvh'}
+    #             ),
+    #         )
+    #         fig.add_trace(
+    #             go.Scatter(
+    #                 visible=False,
+    #                 x=energy_bin_centers,
+    #                 y=convolve_gauss(y, 3),
+    #                 ))
+    #         step = dict(
+    #             method="update",
+    #             args=[{"visible": [False] * (2*len(time_centers) + 1)},
+    #                   {"title": f"{title} {label}"}],  # layout attribute
+    #         )
+    #         step["args"][0]["visible"][2*index+1] = True  # Toggle trace to "visible"
+    #         step["args"][0]["visible"][2*index+2] = True  # Toggle trace to "visible"
+    #         steps.append(step)
+    #     fig.update_yaxes(range=[0, _max_y*1.1])
+    #     sliders = [dict(
+    #         active=0,
+    #         currentvalue={"prefix": "time "},
+    #         pad={"t": 50},
+    #         steps=steps
+    #     )]
+    #
+    #     fig.update_layout(
+    #         sliders=sliders, bargap=0, bargroupgap=0.0
+    #     )
+    #     fig.show()
+    #     return fig
 
     def time_slice(self, time_min, time_max):
         """
@@ -1562,25 +1713,43 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
     def __len__(self):
         return len(self.times)
 
-    def __iadd__(self, other: MaestroListFile):
+    def __iadd__(self, other: MaestroListFile, truncate=True):
         """
         Merge the events of another List file into this one.
-        Note: Have not verified if the calculations for deadtime correcrion are correct.
+        Note: Have not verified if the calculations for deadtime correction are correct.
         Args:
-            other:
+            other: A other list file.
+            truncate: If True, truncate all events in the list file with the largest recorded time that occur at a
+                time after the final recorded time in the other list file. I.e., if one list file was acquiring for
+                longer than the other, it is usually beneficial to truncate the longer one so that they are the
+                 same length.
 
         Returns:
 
         """
         assert isinstance(other, MaestroListFile)
-        # if other.times[-1] > self.times[-1]:
-        # i_t_greater = np.searchsorted(other.times, self.times[-1])
+
+        if not all(other.erg_bins == self.erg_bins):
+            other.rebin(self.erg_bins)
+
+        if truncate:
+            tr = [self, other]
+            larger_index = None
+            if self.times[-1] > other.times[-1]:
+                larger_index = 0
+            elif self.times[-1] < other.times[-1]:
+                larger_index = 1
+            if larger_index is not None:
+                larger_list = tr.pop(larger_index)
+                smaller = tr[0]
+                max_time = smaller.times[-1]
+                max_i = np.searchsorted(larger_list.times, max_time)
+                setattr(larger_list, 'times', larger_list.times[:max_i])
+                setattr(larger_list, '_energies', larger_list.energies[:max_i])
 
         idxs = np.searchsorted(self.times, other.times)
         self._energies = np.insert(self.energies, idxs, other.energies)
         self.times = np.insert(self.times, idxs, other.times)
-        # self._energies = np.concatenate([self._energies, other.energies])
-        # self.times = np.concatenate([self.times, other.times])
 
         if not (self.count_rate_meter is other.count_rate_meter is None):
             pass  # this is hard.
@@ -1638,11 +1807,14 @@ def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
 
 
 if __name__ == '__main__':
-    l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/PHELIX/2021/data/shot40[2].marshal')
-    ax = l.plot_erg_spectrum(make_density=True)
-    l.rebin(np.linspace(l.erg_bins[0], l.erg_bins[-1], 3000))
-    l.plot_erg_spectrum(make_density=True, ax=ax)
-    plt.show()
+    bins = [0, 1, 2, 3, 4, 5,]
+    other_bins = [0.5, 2, 3,4,5]
+
+    # l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/PHELIX/2021/data/shot40[2].marshal')
+    # ax = l.plot_erg_spectrum(make_density=True)
+    # l.rebin(np.linspace(l.erg_bins[0], l.erg_bins[-1], 3000))
+    # l.plot_erg_spectrum(make_density=True, ax=ax)
+    # plt.show()
     # l.rebin()
     # l.rebin_energy()
 
