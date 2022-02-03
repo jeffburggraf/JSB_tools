@@ -106,18 +106,23 @@ def _save_output(target_atoms, fractions, density, projectile, gas):
 
     data = []
     ergs = []
-
+    stopping_units = None
     with open(srim_dir/'SR Module'/'SR_OUTPUT.txt') as f:
         line = f.readline()
         while not re.match('(-+ +){2,10}', line):
             line = f.readline()
+            if m := re.match(' Stopping Units = +(.+)', line):
+                stopping_units = m.groups()[0].rstrip().lstrip()
+
+        assert stopping_units == 'MeV/(mg/cm2)', "Code doesn't accommodate other stopping units. " \
+                                                 "If this happens, fix this. "
 
         def get_value(s):
             try:
                 return float(s)
             except ValueError:
                 return s
-        dist_units = {'A':1E-8, 'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1*100*1000}
+        dist_units = {'A': 1E-8, 'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1*100*1000}
         erg_units = {"eV": 1E-6, "keV": 1E-3, "MeV": 1, "GeV": 1E3}
         while not re.match("-+", line := f.readline()):
             erg, erg_unit, elec, nuclear, range_,  range_unit, lon_strag, lon_strag_unit, lat_strag, lat_strag_unit \
@@ -133,7 +138,7 @@ def _save_output(target_atoms, fractions, density, projectile, gas):
                 erg = erg_units[erg_unit]*erg
             except KeyError:
                 assert False, f"Encountered an unknown energy unit {erg_unit} "
-            elec *= 1000
+            elec *= 1000  # MeV/(mg/cm2) -> MeV/(g/cm2)
             nuclear *= 1000
             entry = {"nuclear": nuclear, "electric": elec, 'range': range_, 'lon_strag': lon_strag,
                      'lat_strag': lat_strag}

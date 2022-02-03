@@ -202,12 +202,15 @@ class Cell(GeomSpecMixin):
         self.__name__ = cell_name
         self.cell_number: int = cell_number
         if importance is not None:
-            assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
-                                                                             "for example, ('np', 1)"
-            self.importance = [importance[0], importance[1]]
-            self.importance[0] = self.importance[0].replace(' ', '')
+            if not isinstance(importance, str):
+                assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
+                                                                                 "for example, ('np', 1)"
+                self.importance = [importance[0], importance[1]]
+                self.importance[0] = self.importance[0].replace(' ', '')
 
-            self.importance[0] = self.importance[0].replace(',', '')  # remove commas added by the user.
+                self.importance[0] = self.importance[0].replace(',', '')  # remove commas added by the user.
+            else:
+                self.importance = importance
         else:
             self.importance = importance
 
@@ -375,10 +378,13 @@ class Cell(GeomSpecMixin):
     def __get_imp_str__(imp=None):
         if imp is None:
             return ''
-        assert hasattr(imp, '__iter__') and len(imp) == 2 and isinstance(imp[0], str), \
-            'Importance, "{}", not specified properly. Correct example: ("np", 1)'.format(imp)
+        if not isinstance(imp, str):
+            assert hasattr(imp, '__iter__') and len(imp) == 2 and isinstance(imp[0], str), \
+                'Importance, "{}", not specified properly. Correct example: ("np", 1)'.format(imp)
 
-        return 'imp:{}={}'.format(','.join(imp[0]), int(imp[1]))
+            return 'imp:{}={}'.format(','.join(imp[0]), int(imp[1]))
+        else:
+            return imp
 
     @property
     def geometry(self):

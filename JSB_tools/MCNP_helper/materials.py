@@ -269,8 +269,8 @@ class Material:
                                   f"\nSRIM run for projectile {best_option.projectile} in material,\n"
                                   f"elements:  {best_option.atoms}\n"
                                   f"fractions: {best_option.fractions},'\n"
-                                  f"has a density of {best_option.density}\n"
-                                  f"instead of       {self.density}  (the intended density)")
+                                  f"has a density of {best_option.density:.4E}\n"
+                                  f"instead of       {self.density:.4E}  (the intended density)")
                 srim_table = SRIMTable(*best_option.args)
 
                 lines.append(f"kf = {Nuclide.from_symbol(best_option.projectile).phits_kfcode()}")

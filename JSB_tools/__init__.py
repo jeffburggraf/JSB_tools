@@ -3,6 +3,8 @@ Core functions like ROOT_Loop, as well as functions that I didn't know where els
 """
 from __future__ import annotations
 import warnings
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from typing import List, Dict
 import numpy as np
 from itertools import islice
@@ -38,29 +40,190 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 
-class Marshal:
-    def __init__(self, path, data_dict, overwrite=True):
-        """
-        Todo: Impliment this! Test msgpack.
-        Helper class for Marshaling objects for speed, but uses pickle when marshaling is not possible.
-        Args:
-            path: Path for Marshal/Pickle files. If an extention is given, the extension will be appended
-                to .marshal/.pickle.
-            data_dict: Dictionary of strings and value to be saved.
-            overwrite:
+class InteractivePlot:
+    color_cycle = ['blue', 'red', 'green', 'black', 'gray']
 
-        Returns:
+    def __init__(self, frame_labels=None, slider_prefix='', n_subplots=2):
+        assert n_subplots in [1, 2]  # todo
 
-        """
-        for k, value in data_dict.items():
-            print(k, value, type(value))
+        self.ys = []
+        self.yerrs = []
 
+        self.persistent = []
 
+        self.xs = []
 
-# p = Path(__file__).parent/'delete.fuck'
-# fast_pickle(p, {'np.int':np.int(0),
-#                 'uarray': unp.uarray(np.linspace(0,100, 10), np.arange(10)),
-#                 'py_float': 0.1})
+        self.step_titles = []
+        self.frame_labels = frame_labels
+        self.leg_labels = []
+
+        self.fig = make_subplots(n_subplots, 1)
+        self.init_slider = None
+
+        self.colors = []
+        self.line_types = []
+
+        self.slider_prefix = slider_prefix
+
+    def add_persistent(self, x, y, yerr=None, n_frames=None, leg_label=None, color=None, line_type=None, **plot_kwargs):
+        y = np.array(y, copy=False)
+        assert y.ndim == 1
+
+        if isinstance(y[0], UFloat):
+            yerr = list(map(unp.std_devs, y))
+            y = list(map(unp.nominal_values, y))
+
+        if n_frames is None:
+            n_frames = self.n_frames
+
+        out = {'y': y, 'x': x,
+               'leg_label': leg_label,
+               'n_frames': n_frames,
+               "yerr": yerr,
+               'plot_kwargs': plot_kwargs}
+
+        if color is None:
+            l = (len(self.persistent))
+            m = len(InteractivePlot.color_cycle)
+            color = InteractivePlot.color_cycle[l % m]
+
+        out['color'] = color
+        out['line_type'] = line_type
+        self.persistent.append(out)
+
+    def add_ys(self, x, ys, yerr=None, leg_label=None, color=None, line_type=None, return_color=False):
+
+        if isinstance(line_type, str):
+            line_type = line_type.lower()
+
+        self.line_types.append(line_type)
+
+        if isinstance(ys[0][0], UFloat):
+            yerr = list(map(unp.std_devs, ys))
+            ys = list(map(unp.nominal_values, ys))
+
+        self.yerrs.append(yerr)
+        self.ys.append(ys)
+
+        self.xs.append(x)
+        self.leg_labels.append(leg_label)
+        if color is None:
+            l = (len(self.ys) - 1)
+            m = len(InteractivePlot.color_cycle)
+            color = InteractivePlot.color_cycle[l % m]
+        self.colors.append(color)
+        if return_color:
+            return color
+
+    @property
+    def n_frames(self):
+        return max(map(len, self.ys))
+
+    def __minmax(self, s):
+        assert s in ['min', 'max']
+
+        f = max if s == 'max' else min
+        ys = [getattr(np, s)(self.ys)]
+        ys.extend([f(p['y']) for p in self.persistent])
+        return f(ys)
+
+    @property
+    def max_y(self):
+        return self.__minmax('max')
+
+    @property
+    def min_y(self):
+        return self.__minmax('min')
+
+    @property
+    def steps(self):
+        n_frames = len(self.ys[0])
+        steps_visibility = []
+        for frame in range(self.n_frames):
+            vis = []
+            for n in map(len, self.ys):
+                vis.extend([True if i == frame else False for i in range(n)])
+            for _ in self.persistent:
+                vis.append(True)
+            steps_visibility.append(vis)
+
+        out = []
+        if self.frame_labels is None:
+            self.frame_labels = [str(i) for i in range(1, n_frames + 1)]
+
+        for frame_label, visible in zip(self.frame_labels, steps_visibility):
+            frame_label = str(frame_label)
+            step = dict(
+                method="update",
+                args=[{"visible": visible},
+                      {"title": frame_label}],  # layout attribute
+            )
+            out.append(step)
+
+        for step in steps_visibility:
+            print(len(step))
+
+        return out
+        # for l in self.ys:
+
+    def plot(self):
+        n_traces = 0
+        def get_line_type(arg):
+            return {None: None, 'hist': {'shape': 'hvh'}}[arg]
+        for index_step, (ys, yerrs, x, color, leg_label, lt) in \
+                enumerate(zip(self.ys, self.yerrs, self.xs, self.colors, self.leg_labels, self.line_types)):
+
+            line = get_line_type(lt)
+
+            if yerrs is None:
+                yerrs = [None]*len(ys)
+
+            for index_plot, (y, yerr) in enumerate(zip(ys, yerrs)):
+                n_traces += 1
+                self.fig.add_trace(
+                    go.Scatter(
+                        visible=index_plot == 0,
+                        x=x,
+                        y=y,
+                        error_y=dict(type='data', array=yerr),
+                        marker_color=color,
+                        line=line,
+                        name=leg_label
+                    ),
+                    row=1, col=1
+                )
+
+        for persistent in self.persistent:
+            n_traces += 1
+            line = get_line_type(persistent['line_type'])
+            self.fig.add_trace(
+                go.Scatter(
+                    visible=1,
+                    x=persistent["x"],
+                    y=persistent['y'],
+                    error_y=dict(type='data', array=persistent['yerr']),
+                    marker_color=persistent['color'],
+                    line=line,
+                    name=persistent['leg_label'],
+                    **persistent['plot_kwargs']
+                ),
+                row=2, col=1
+            )
+
+        sliders = [dict(
+            active=0,
+            currentvalue={"prefix": self.slider_prefix},
+            pad={"t": 50},
+            steps=self.steps
+        )]
+
+        self.fig.update_layout(
+            sliders=sliders, bargap=0, bargroupgap=0.0,
+            yaxis={'title': 'Rate [Hz]', 'rangemode': 'tozero', 'autorange': True},
+            xaxis={'title': 'Energy [keV]'}
+        )
+        # self.fig.update_yaxes(fixedrange=True)
+        self.fig.show()
 
 
 def human_friendly_time(time_in_seconds, unit_precision=2):

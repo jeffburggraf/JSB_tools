@@ -763,6 +763,23 @@ class FissionYields:
         self.__weighted_by_xs = False
         self.weights = np.ones_like(self.energies)
 
+    def threshold(self, frac_of_max=0.02):
+        """
+        Remove all yields that are lewss than frac_of_max*y_m, where y_m is the nucleus with maximum yield.
+        Args:
+            frac_of_max:
+
+        Returns:
+
+        """
+        cut_off = sum(self.yields[list(self.yields.keys())[0]])*frac_of_max
+        flag = False
+        for k in list(self.yields.keys()):
+            if sum(unp.nominal_values(self.yields[k])) < cut_off:
+                flag = True
+            if flag:
+                del self.yields[k]
+
     def get_yield(self, nuclide_name):
         """
         Simply return yield of nuclide.
@@ -775,7 +792,7 @@ class FissionYields:
             return ufloat(0, 0)
 
     @property
-    def __is_weighted(self):
+    def _is_weighted(self):
         return not (self.__unweighted_yields is None)
 
     @cached_property
@@ -798,7 +815,7 @@ class FissionYields:
         # else:
         leg_label = self.target
         title = f'Fragment mass distribution of {self.inducing_par}-induced fission of {self.target}'
-        if self.__is_weighted or weights is not None:
+        if self._is_weighted or weights is not None:
             title += ' (weighted)'
         if weights is None:
             if at_energy is not None:
@@ -844,7 +861,7 @@ class FissionYields:
                 y = c*self.yields[nuclide]
                 y_data = self.__data.data[nuclide]
                 plt.errorbar(self.energies, unp.nominal_values(y), unp.std_devs(y), label=f'{nuclide}: interp')
-                if plot_data and not self.__is_weighted and c == 1:
+                if plot_data and not self._is_weighted and c == 1:
                     plt.errorbar(self.__data.ergs, y_data[0], y_data[1], label=f'{nuclide}: data')
                 plt.legend()
                 return
@@ -868,7 +885,7 @@ class FissionYields:
             ax.plot(self.energies, y_interp, label=interp_label, ls='--', c='red',
                     marker='p' if not len(self.energies) else None)
 
-            if plot_data and not self.__is_weighted and c == 1:
+            if plot_data and not self._is_weighted and c == 1:
                 ax.errorbar(self.__data.ergs, y_data, y_err_data, label=f'{k}: data', ls='None', c='black',
                             marker='o')
             if axs_i > 1:
@@ -918,9 +935,9 @@ class FissionYields:
 
     def weight_by_erg(self, weights):
         """
-        Weight all yields (modifies the instance) by a value for each energy. e.g., a projectile energy distribution..
+        Weight all yields (this change is persistent) by a value for each energy. e.g., a projectile energy distribution..
         Args:
-            weights:
+            weights: Array with same length of self.energies
 
         Returns:
 
@@ -941,17 +958,19 @@ class FissionYields:
         __keys = []
         for k, v in self.yields.items():
             new_values = v*weights
-            n = np.sum(new_values)
+            n = np.sum(unp.nominal_values(new_values))
             i = np.searchsorted(__sorter, n)
             __sorter.insert(i, n)
             __keys.insert(i, k)
             self.yields[k] = new_values
+
         self.yields = {k: self.yields[k] for k in __keys[::-1]}
         self.weights = self.weights*weights
+
         return self.yields
 
     def plot_weights(self, ax=None):
-        if not self.__is_weighted:
+        if not self._is_weighted:
             warn("No weights. No plot")
             return
         if ax is None:
@@ -1224,17 +1243,31 @@ def decay_default_func(nuclide_name):
     return func
 
 
-def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
+def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_term=0., yield_thresh=1E-5):
     """
     This function solves the following problem:
-        Starting with 100% of a given unstable nuclide, what fractions of parent + progeny nuclides remain after time t?
+        Starting with some amount (see init_term) of a given unstable nuclide, what amount of the parent and its
+         progeny nuclides remain after time t?
 
-    The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem.
+    Use driving_term arg for the case of nuclei being generated at a constant rate (in Hz), e.g. via a beam.
+    A negative driving_term can be used, however, if/when the number of parent nuclei goes negative,
+     the solution becomes unphysical.
+
+    Spontaneous fission products are not (yet) included in decay progeny.
+
+    Solution is exact in the sense that the only errors are from machine precision.
+
+    The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem
+        (or inhomogeneous system of lin. diff. eq. in the case of a nonzero driving_term).
+
+    Todo: Verify solutions in great detail, especially the new diving_term feature.
 
     Args:
         nuclide_name: Name of parent nuclide.
         decay_rate: If True, return decays per second instead of fraction remaining.
-        yield_thresh:  TODO
+        init_term: The scale for the amount of parent nucleus at t=0 - i.e. the initial condition.
+        driving_term: Set to non-zero if parent nucleus is being produced at a constant rate (in Hz).
+        yield_thresh: Threshold used to discard nuclei with minuscule yields. TODO: Figure out how to define and impliment this
 
     Returns:
         A function that takes a time (or array of times), and returns nuclide fractions at time(s) t.
@@ -1276,12 +1309,13 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
                     child_index = len(column_labels) - 1
 
                     for _list in lambda_matrix:
-                        _list.append(0)
+                        _list.append(0)  # add another column to maintain an nxn matrix
 
-                    child_row = [0]*len(lambda_matrix[-1])
-                    child_row[child_index] = -child_lambda  # Set value for decay of child.
+                    child_row = [0]*len(lambda_matrix[-1])  # create gain/loss vector for current daughter nucleus
 
-                    lambda_matrix.append(child_row)
+                    child_row[child_index] = -child_lambda  # Set entry for decay of child (diagonal term).
+
+                    lambda_matrix.append(child_row)  # finally add new row to matrix.
 
                 child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n
                 loop(child_nuclide, child_nuclide.decay_modes)  # recursively loop through daughters
@@ -1292,22 +1326,19 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
 
     eig_vals, eig_vecs = np.linalg.eig(lambda_matrix)
 
-    # sort eigen values.
-    # idx = eig_vals.argsort()
-    # eig_vals = eig_vals[idx]
-    # eig_vecs = eig_vecs[:, idx]
-
     eig_vecs = eig_vecs.T
-    # if not decay_rate:
-        # initial condition: fraction of parent nuclide is 1. 0 for the rest
-    b = [1] + [0]*(len(eig_vals) - 1)
-    # else:
-        # initial condition: parent nuclide is decaying at rate of 1 Hz, the rest 0 Hz
-        # b = [-1/lambda_matrix[0][0]] + [0]*(len(eig_vals) - 1)
 
-    coeffs = np.linalg.solve(eig_vecs.T, b)  # solve for initial conditions
+    b = [init_term] + [0.]*(len(eig_vals) - 1)
 
-    def func(ts, plot=False):
+    if driving_term != 0:
+        # coefficients of the particular solution (which will be added to homo. sol.)
+        particular_coeffs = np.linalg.solve(-lambda_matrix, [driving_term] + [0.] * (len(eig_vals) - 1))
+    else:
+        particular_coeffs = np.zeros_like(eig_vals)  # No driving term. Will have no effect in this case.
+
+    coeffs = np.linalg.solve(eig_vecs.T, b - particular_coeffs)  # solve for initial conditions
+
+    def func(ts, plot=False) -> Dict[str, np.ndarray]:
         if hasattr(ts, '__iter__'):
             iter_flag = True
         else:
@@ -1316,7 +1347,12 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
 
         yields = [np.sum([c * vec * np.e ** (val * t) for c, vec, val in
                           zip(coeffs, eig_vecs, eig_vals)], axis=0) for t in ts]
+
+        if driving_term != 0:
+            yields += particular_coeffs
+
         yields = np.array(yields).T
+
         if not decay_rate:
             out = {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
         else:
@@ -1341,12 +1377,7 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, yield_thresh=1E-5):
             plt.legend()
 
         return out
-        # else:
-        #     yields = np.sum([c * vec * np.e ** (val * ts) for c, vec, val in
-        #                      zip(coeffs, eig_vecs, eig_vals)], axis=0)
-        #     return {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
 
-    func([1, 20])
     return func
 
 
@@ -1844,12 +1875,12 @@ class Nuclide:
 
         _m = NUCLIDE_NAME_MATCH.match(symbol)
 
+        assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
+                   "e.g. Cl38_m1, n1, Ar40".format(symbol)
+
         if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
             symbol = _m.groups()[0] + _m.groups()[1]
             _m = NUCLIDE_NAME_MATCH.match(symbol)
-
-        assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
-                   "e.g. Cl38_m1, n1, Ar40".format(symbol)
 
         pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
 
