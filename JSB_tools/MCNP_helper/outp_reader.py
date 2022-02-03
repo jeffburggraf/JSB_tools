@@ -773,17 +773,31 @@ class StoppingPowerData:
             density = self.cell_density
         return np.interp(erg, self.energies, self.ranges/density)
 
-    def plot_dedx(self, ax=None, label=None, title=None, material_name_4_title=None, density=None):
+    def plot_dedx(self, ax=None, label=None, title=None, material_name_4_title=None, density=None, per_g_cm3=False):
+        """
+
+        Args:
+            ax: matplotlib axes object.
+            label: Legend label.
+            title: Specify title completely manually.
+            material_name_4_title: Will include this in figure title.
+            density: Provide a density. Overrides using sekf.density.
+            per_g_cm3: If True, do not multiply by density. Units will be (MeV)(cm)^2(g)^-1
+
+        Returns:
+
+        """
         if ax is None:
             fig, ax = plt.subplots()
 
         y = self.dedxs
-        if density is not None:
-            y = self.dedxs*density
-        else:
-            if self.cell_density is not None:
-                density = self.cell_density
-                y = self.dedxs * density
+        if not per_g_cm3:
+            if density is not None:
+                y = self.dedxs*density
+            else:
+                if self.cell_density is not None:
+                    density = self.cell_density
+                    y = self.dedxs * density
 
         ax.plot(self.energies, y, label=label)
 
@@ -791,7 +805,7 @@ class StoppingPowerData:
             ax.legend()
 
         ax.set_xlabel("Energy [MeV]")
-        if density is None:
+        if density is None or per_g_cm3:
             ax.set_ylabel("dEdx [MeV cm2/g]")
         else:
             ax.set_ylabel("dEdx [MeV/cm]")

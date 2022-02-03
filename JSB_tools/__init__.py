@@ -41,6 +41,9 @@ style_path = cwd/'mpl_style.txt'
 
 
 class InteractivePlot:
+    """
+    Todo: make the add_plot internals function like add_persistant. (i.e. remove a lot of self.xxx: [List]
+    """
     color_cycle = ['blue', 'red', 'green', 'black', 'gray']
 
     def __init__(self, frame_labels=None, slider_prefix='', n_subplots=2):
@@ -48,6 +51,7 @@ class InteractivePlot:
 
         self.ys = []
         self.yerrs = []
+        self.ys_kwargs = []
 
         self.persistent = []
 
@@ -57,7 +61,7 @@ class InteractivePlot:
         self.frame_labels = frame_labels
         self.leg_labels = []
 
-        self.fig = make_subplots(n_subplots, 1)
+        self.fig = make_subplots(n_subplots, 1,  shared_xaxes=True)
         self.init_slider = None
 
         self.colors = []
@@ -91,7 +95,7 @@ class InteractivePlot:
         out['line_type'] = line_type
         self.persistent.append(out)
 
-    def add_ys(self, x, ys, yerr=None, leg_label=None, color=None, line_type=None, return_color=False):
+    def add_ys(self, x, ys, yerr=None, leg_label=None, color=None, line_type=None, return_color=False, **plot_kwargs):
 
         if isinstance(line_type, str):
             line_type = line_type.lower()
@@ -104,6 +108,7 @@ class InteractivePlot:
 
         self.yerrs.append(yerr)
         self.ys.append(ys)
+        self.ys_kwargs.append(plot_kwargs)
 
         self.xs.append(x)
         self.leg_labels.append(leg_label)
@@ -123,7 +128,7 @@ class InteractivePlot:
         assert s in ['min', 'max']
 
         f = max if s == 'max' else min
-        ys = [getattr(np, s)(self.ys)]
+        ys = [getattr(np, s)(self.ys)]  # bug here causeing the truth value of an array with more than one element is ambiguous.
         ys.extend([f(p['y']) for p in self.persistent])
         return f(ys)
 
@@ -160,18 +165,18 @@ class InteractivePlot:
             )
             out.append(step)
 
-        for step in steps_visibility:
-            print(len(step))
-
         return out
         # for l in self.ys:
 
     def plot(self):
         n_traces = 0
+
         def get_line_type(arg):
             return {None: None, 'hist': {'shape': 'hvh'}}[arg]
-        for index_step, (ys, yerrs, x, color, leg_label, lt) in \
-                enumerate(zip(self.ys, self.yerrs, self.xs, self.colors, self.leg_labels, self.line_types)):
+
+        for index_step, (ys, yerrs, plot_kwargs, x, color, leg_label, lt) in \
+                enumerate(zip(self.ys, self.yerrs, self.ys_kwargs, self.xs, self.colors, self.leg_labels,
+                              self.line_types)):
 
             line = get_line_type(lt)
 
@@ -188,7 +193,8 @@ class InteractivePlot:
                         error_y=dict(type='data', array=yerr),
                         marker_color=color,
                         line=line,
-                        name=leg_label
+                        name=leg_label,
+                        **plot_kwargs
                     ),
                     row=1, col=1
                 )

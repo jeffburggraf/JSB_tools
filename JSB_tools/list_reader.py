@@ -1236,29 +1236,37 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         if scales is None:
             scales = np.ones(len(list_objs))
 
+        assert all(isinstance(x, MaestroListFile) for x in list_objs), "`list_objs` must all be MaestroListFile instances"
+
         if leg_labels is None:
             leg_labels = [None]*len(list_objs)
 
         assert len(leg_labels) == len(list_objs)
-        attribs = None
+        args = None
 
         for l, label, s in zip(list_objs, leg_labels, scales):
-            if attribs is None:
-                attribs = l.plotly(erg_min=erg_min, erg_max=erg_max, eff_corr=eff_corr, time_bins=time_bins,
-                                   time_bin_width=time_bin_width, time_step=time_step, time_min=time_min,
-                                   time_max=time_max, remove_baseline=remove_baseline, nominal_values=nominal_values,
-                                   leg_label=label, dont_plot=True
-                                   )
+            if args is None:
+                args = l.plotly(erg_min=erg_min, erg_max=erg_max, eff_corr=eff_corr, time_bins=time_bins,
+                                time_bin_width=time_bin_width, time_step=time_step, time_min=time_min,
+                                time_max=time_max, remove_baseline=remove_baseline, nominal_values=nominal_values,
+                                leg_label=label, dont_plot=True,
+                                scale=s)
+                args['eff_corr'] = eff_corr
+                args['time_bin_width'] = time_bin_width
+                args['leg_label'] = label
+                args['scale'] = s
+                args['dont_plot'] = True
             else:
-                l.plotly(**attribs, eff_corr=eff_corr, time_bin_width=time_bin_width, leg_label=label, scale=s,
+                l.plotly(**args, eff_corr=eff_corr, time_bin_width=time_bin_width, leg_label=label, scale=s,
                          dont_plot=True)
 
-        attribs['interactive_plot'].plot()
+        args['interactive_plot'].plot()
 
     def plotly(self, erg_min=40, erg_max=None, eff_corr=True, time_bins=None, time_bin_width=15,
                time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
                interactive_plot: InteractivePlot = None, nominal_values=True, leg_label=None, scale=1,
-               dont_plot=False):
+               dont_plot=False, convolve_overlay_sigma=None,
+               time_scale_func: Callable=None ):
         """
 
         Args:
@@ -1276,6 +1284,10 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             leg_label:
             scale: Multiply y axis by this number.
             dont_plot:
+            convolve_overlay_sigma: If a not None, but instead a number, then overlay a plot that is a gauss conv
+                with sigma equal to `convolve_overlay_sigma'
+            time_scale_func: function which takes two args, left_time_bin and right_time_bin, and returns a float.
+                The returned float will be used to scale the result accordingly.
 
         Returns:
             dictionary as follows
@@ -1307,19 +1319,43 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         time_bins = np.array(time_bins, copy=False)
 
         ys = []
+
+        if convolve_overlay_sigma is not None:
+            ys_convolved = []
+            assert isinstance(convolve_overlay_sigma, (int, float))
+            convolve_sigma = int(convolve_overlay_sigma / np.mean(self.bin_widths))
+
+        else:
+            ys_convolved = None
+            convolve_sigma = None
+
+        def convolve(__y__):
+            if not nominal_values:
+                __y__ = unp.nominal_values(__y__)
+            return convolve_gauss(__y__, convolve_sigma)
+
         labels4frames = []
         assert len(time_bins) > 0
+        bin_edges = None
+
+        assert len(time_bins), "No time bins! Mistakes were made (probably by you just now)."
 
         for (b0, b1) in time_bins:
             _y, bin_edges = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr,
                                                   nominal_values=nominal_values,
                                                   return_bin_edges=True)
+
             _y /= (b1 - b0)
             _y *= scale
+
+            if time_scale_func is not None:
+                _y *= time_scale_func(b0, b1)
 
             if remove_baseline:
                 _y -= rolling_median(45, _y)
             ys.append(_y)
+            if ys_convolved is not None:
+                ys_convolved.append(convolve(_y))
             labels4frames.append(f"{b0} <= t < {b1} ({0.5*(b0 + b1)})")
 
         if interactive_plot is None:
@@ -1331,6 +1367,8 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             leg_label = self.file_name
 
         color = interactive_plot.add_ys(x, ys, leg_label=leg_label, line_type='hist', return_color=True)
+        if ys_convolved is not None:
+            interactive_plot.add_ys(x, ys_convolved, line_type=None, opacity=0.65, leg_label=f'{leg_label}*{convolve_sigma}')
 
         tot_time = (time_bins[-1][-1] - time_bins[0][0])
 
@@ -1346,16 +1384,18 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         interactive_plot.add_persistent(x, tot_y, yerr=error_y, leg_label='All time', opacity=0.5, line_type='hist')
 
-        interactive_plot.fig.update_layout(
-            scene=dict(
-                yaxis=dict(range=[0, interactive_plot.max_y])))
+        # interactive_plot.fig.update_layout(
+        #     scene=dict(
+        #         yaxis=dict(range=[0, interactive_plot.max_y])))
 
         if not dont_plot:
             interactive_plot.plot()
 
         return {"interactive_plot": interactive_plot, "remove_baseline": remove_baseline, "time_bins": time_bins,
                 "erg_max": erg_max, "erg_min": erg_min,
-                "nominal_values": nominal_values}
+                "nominal_values": nominal_values,
+                'convolve_overlay_sigma': convolve_overlay_sigma,
+                'time_scale_func': time_scale_func}
 
     # def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', eff_corr=True, time_bin_width=15,
     #            time_step: int = 5, time_min=0, time_max=None, percent_of_max=False, remove_baseline=False, title=None):
