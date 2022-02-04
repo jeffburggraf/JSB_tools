@@ -84,7 +84,7 @@ def _save_file_attribs(attribs_dict):
         f.writelines(lines)
 
 
-def _save_output(target_atoms, fractions, density, projectile, gas):
+def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTPUT=False):
     file_attribs = _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas)
     all_file_attribs = existing_outputs()
     try:
@@ -107,7 +107,18 @@ def _save_output(target_atoms, fractions, density, projectile, gas):
     data = []
     ergs = []
     stopping_units = None
-    with open(srim_dir/'SR Module'/'SR_OUTPUT.txt') as f:
+    srim_output_path = srim_dir/'SR Module'/'SR_OUTPUT.txt'
+
+    if save_SR_OUTPUT:
+        import shutil
+
+        i = 0
+        _names = map(lambda x: x.name, (srim_dir/'SR Module').iterdir())
+        while (_name := f'SR_OUTPUT{i}.txt') in _names:
+            i += 1
+        shutil.copy(srim_output_path, srim_output_path.parent/_name)
+
+    with open(srim_output_path) as f:
         line = f.readline()
         while not re.match('(-+ +){2,10}', line):
             line = f.readline()
@@ -254,7 +265,7 @@ def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False
     return target_atoms, fractions, density, (proj_symbol, a), max_erg, gas
 
 
-def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
+def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, save_SR_OUTPUT=False):
     """
     Run SRIM with the provided configuration and save them to be accessed later via the SRIMTable class.
 
@@ -265,6 +276,7 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
         projectile: Full symbol of projectile, e.g. "Xe139"
         max_erg: Energy in MeV
         gas: True if gas, else False
+        save_SR_OUTPUT: If True, preserve the SRIM output text file. Used for debugging.
     """
     from srim import SR, Ion, Layer
     from plasmapy import particles
@@ -287,7 +299,7 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False):
     ion = Ion(proj_symbol, max_erg, proj_mass)
     sr = SR(layer, ion, output_type=5)
     sr.run(srim_directory=srim_dir)
-    _save_output(target_atoms, fractions, density, projectile, gas)
+    _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTPUT=save_SR_OUTPUT)
 
     return SRIMTable(target_atoms, fractions, density, projectile, gas)
 
@@ -298,17 +310,25 @@ if __name__ == '__main__':
 
     # for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
     #     run_srim(['C'], [1], 1.7, n, 120)
-
-    g = _IdealGas(['Ar'])
+    g_ar = _IdealGas(['Ar'])
     g_ar_he = _IdealGas(['Ar', 'He'])
     g_he = _IdealGas(['He'])
+    for n in ['Xe139', 'Sr94', 'La144', 'Cs140', 'I136', 'Nb99', 'Sb132', 'Sr94', 'Xe140', 'Mo104']:
+        run_srim(['C', 'H', 'O'], [10, 8, 4], 1.38, n, 120, save_SR_OUTPUT=True)
+        # for gas in [g_he, g_ar_he, g_ar]:
+        #     density = gas.get_density_from_atom_fractions([1]*len(gas.list_of_chemicals), pressure=1.1)
+        #     run_srim(gas.list_of_chemicals, [1]*len(gas.list_of_chemicals), density, n, 120, True)
 
-    for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
-        # run_srim(['U'], [1], 19, n, 120)  # Uranium
-        for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.6]:
-            for gas in [g_he]:
-                density = gas.get_density_from_atom_fractions([1], pressure=press)
-                run_srim(gas.list_of_chemicals, [1]*len(gas.list_of_chemicals), density, n, 120, True )
+    # g = _IdealGas(['Ar'])
+    # g_ar_he = _IdealGas(['Ar', 'He'])
+    # g_he = _IdealGas(['He'])
+    #
+    # for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
+    #     # run_srim(['U'], [1], 19, n, 120)  # Uranium
+    #     for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.6]:
+    #         for gas in [g_he]:
+    #             density = gas.get_density_from_atom_fractions([1], pressure=press)
+    #             run_srim(gas.list_of_chemicals, [1]*len(gas.list_of_chemicals), density, n, 120, True )
 
     #
     #         density_heR = g_ar_he.get_density_from_atom_fractions([1,1], pressure=press)
