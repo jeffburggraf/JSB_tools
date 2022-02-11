@@ -40,6 +40,15 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 
+def _float(x):
+    if x is None:
+        return None
+    elif isinstance(x, UFloat):
+        return float(x.nominal_value)
+    else:
+        return float(x)
+
+
 class InteractivePlot:
     """
     Todo: make the add_plot internals function like add_persistant. (i.e. remove a lot of self.xxx: [List]

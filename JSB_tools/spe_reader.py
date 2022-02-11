@@ -32,6 +32,24 @@ def _rebin(rebin, values, bins):
     return out, bins
 
 
+def save_spe(spe: SPEFile, path):
+    lines = ['$SPEC_ID:', spe.description,
+             '$DATE_MEA:', datetime.strftime(spe.system_start_time, spe.time_format),
+             '$MEAS_TIM:', f'{int(spe.livetime)} {int(spe.realtime)}', '$DATA', f'0 {len(spe.energies)}',
+             '\n'.join(map(lambda x:f"       {int(x)}", unp.nominal_values(spe.counts))),
+             '$ENER_FIT:', ' '.join(map(lambda x: f"{x:.7E}", spe.erg_calibration[:2])),
+             '$MCA_CAL:',
+             len(spe.erg_calibration), ' '.join(map(lambda x: f"{x:.7E}", spe.erg_calibration)) + ' keV']
+    if spe.shape_cal is not None:
+        lines.extend(['$SHAPE_CAL:',
+                      len(spe.shape_cal),
+                      ' '.join(map(lambda x: f"{x:.7E}", spe.shape_cal))])
+    out = '\n'.join(map(str, lines))
+    path = Path(path).with_suffix('.Spe')
+    with open(path, 'w') as f:
+        f.write(out)
+
+
 def _get_SPE_data(path):
     with open(path) as f:
         lines = f.readlines()
@@ -139,6 +157,8 @@ class EnergyCalMixin:
     """
     Mixin for MaestroListFile and SPEFile that allows to override energy calibration by loading pickled values.
     For this to work, you must first do self.save_erg_cal
+
+    This is useful to make sure that enhanced calibration coeffs don't get over-ridden from self.pickle
     """
     def __init__(self, erg_calibration, load_erg_cal=None):
         """
@@ -150,6 +170,7 @@ class EnergyCalMixin:
             erg_calibration:
             load_erg_cal:
         """
+
         self._erg_calibration = erg_calibration
         if load_erg_cal is not False:
             if isinstance(load_erg_cal, (str, Path)):
@@ -157,33 +178,38 @@ class EnergyCalMixin:
             else:
                 load_erg_cal = None
             self.load_erg_cal(load_erg_cal)
+
         self._load_erg_cal = load_erg_cal
 
     def __erg_cal_path__(self, other_path=None) -> Path:
+        """
+        Returns energy calibration path
+        Args:
+            other_path:
+
+        Returns:
+
+        """
         if other_path is not None:
             path = other_path
         else:
-            path = self.path
+            path = getattr(self, 'path', None)
             if path is None:
                 raise FileNotFoundError
 
         eff_dir = path.parent / 'cal_files'
-        if not eff_dir.exists():
-            eff_dir.mkdir(exist_ok=True)
+        eff_dir.mkdir(exist_ok=True)
         return eff_dir / path.with_suffix('.erg').name
 
     def load_erg_cal(self, path=None):
         try:
-            path = self.__erg_cal_path__(path)
-            with open(path, 'rb') as f:
+            with open(self.__erg_cal_path__(path), 'rb') as f:
                 self._erg_calibration = pickle.load(f)
         except FileNotFoundError:
             return
 
     def save_erg_cal(self, path=None):
-        path = self.__erg_cal_path__(path)
-        path.parent.mkdir(exist_ok=True)
-        with open(path, 'wb') as f:
+        with open(self.__erg_cal_path__(path), 'wb') as f:
             pickle.dump(self._erg_calibration, f)
 
 
@@ -262,7 +288,7 @@ class EfficiencyCalMixin:
         if self.effs is self.eff_model is None:  # no efficiency data. Delete old if it exists.
             path.unlink(missing_ok=True)
         else:
-            d = {'effs': self.effs, 'eff_model':self.eff_model, 'eff_scale': self.eff_scale}
+            d = {'effs': self.effs, 'eff_model': self.eff_model, 'eff_scale': self.eff_scale}
             with open(path, 'wb') as f:
                 pickle.dump(d, f)
 
@@ -288,12 +314,13 @@ class EfficiencyCalMixin:
         if isinstance(value, lmfit.model.ModelResult):
             self.recalc_effs()
 
-    def recalc_effs(self, old_energies=None):
+    def recalc_effs(self, old_erg_centers=None, new_erg_centers=None):
         """
         Recalculate for new energies of parent class, *or* if old_energies and new_energies are specified, recalculate
           efficiency points (and delete the model if it exists).
         Args:
-            old_energies:
+            old_erg_centers:
+            new_erg_centers:
 
         Returns:
 
@@ -308,9 +335,13 @@ class EfficiencyCalMixin:
             eff_err = self.eff_model.eval_uncertainty(x=self.erg_centers)
             self.effs = unp.uarray(eff, eff_err)
         else:
-            # if not (old_energies is self.effs is None):
-            #     self.effs = self.interp_eff(self.erg_centers)
-            warnings.warn("Todo")
+            if self.effs is not None:
+                assert old_erg_centers is not new_erg_centers is not None, "Must supply these args"
+                if isinstance(self.effs[0], UFloat):
+                    self.effs = unp.uarray(np.interp(new_erg_centers, old_erg_centers, unp.nominal_values(self.effs)),
+                                           np.interp(new_erg_centers, old_erg_centers, unp.std_devs(self.effs)))
+                else:
+                    self.effs = np.interp(new_erg_centers, old_erg_centers, self.effs)
 
     def print_eff(self):
         if self.eff_model is not None:
@@ -436,7 +467,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             old_energies = None
         self._energies = None
         self._erg_bins = None
-        self.recalc_effs(old_energies)
+        self.recalc_effs(old_energies, self.energies)
 
     @property
     def erg_centers(self):
@@ -574,7 +605,8 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
 
         super(EfficiencyCalMixin, self).__init__(erg_calibration, load_erg_cal)
         if load_eff_cal:
-            self.unpickle_eff()
+            if self.path is not None:
+                self.unpickle_eff()
 
         return self
 
@@ -1050,14 +1082,36 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
 
 if __name__ == '__main__':
     from scipy.stats.mstats import winsorize
+    from JSB_tools.MCNP_helper.outp_reader import OutP
+    outp = OutP('/Users/burggraf1/PycharmProjects/IACExperiment/mcnp/sims/du_shot131/outp')
+    tally = outp.get_f4_tally('Active up')
+
+    products = []
+
+    for n in [Nuclide.from_symbol('Ni58'), Nuclide.from_symbol('Ni60')]:
+        for k, v in n.get_incident_gamma_daughters('all').items():
+            y = np.average(v.xs.interp(tally.energies), weights=tally.fluxes)
+            y *= 0.5**(10/v.half_life) - 0.5**(300/v.half_life)
+            products.append([y, v])
+    products = list(sorted(products, key=lambda x: -x[0]))
+    yields = np.array([p[0] for p in products])
+    yields /= max(yields)
+    products = [p[1] for p in products]
+
+    for y, p in zip(yields, products):
+        if len(p.decay_gamma_lines):
+            print(y, p.name, p)
+            for g in p.decay_gamma_lines[:3]:
+                print(f"\t{g}")
+
+    spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot140.Spe')
+    spe.plot_erg_spectrum(eff_corr=False, make_rate=True)
+    plt.show()
+    # save_spe(spe, '/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/_test.spe')
     # _set_SPE_data('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/Nickel/Nickel.Spe')
     # pass
     # spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe')
 
-    spe.plot_erg_spectrum()
-    print(len(spe))
-    plt.show()
-    #
     # def win(a, w):
     #     w = int(w/np.mean(spe.erg_bin_widths))
     #     _hw = w//2

@@ -5,7 +5,7 @@ from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
 from JSB_tools.nuke_data_tools import Nuclide
-from JSB_tools.MCNP_helper.atomic_data import atomic_weight, ATOMIC_NUMBER, atomic_mass
+from JSB_tools.MCNP_helper.atomic_data import atomic_weight, ATOMIC_NUMBER, atomic_mass, ATOMIC_SYMBOL
 try:
     import openmc.material
 except ModuleNotFoundError:
@@ -143,6 +143,8 @@ class Material:
         for zaid, frac in zip(self._zaids, self._zaid_proportions):
             z = zaid//1000
             a = zaid % 1000
+            if a == 0:
+                 a = Nuclide.from_symbol(get_most_abundant_isotope(ATOMIC_SYMBOL[z])).A
             s = Nuclide.from_Z_A_M(z, a).atomic_symbol
             try:
                 elements_dict[s] += frac
@@ -219,7 +221,7 @@ class Material:
                 self.args = atoms, fractions, self.density, projectile, is_gas
 
             def __repr__(self):
-                out = f'elements: {self.atoms}, {100*np.array(list(map(int, self.fractions)))}, ' \
+                out = f'elements: {self.atoms}, {100*np.array(list(map(float, self.fractions)))}, ' \
                       f'density: {self.density:.3e}, gas = {self.is_gas}'
                 return out
 
@@ -229,7 +231,7 @@ class Material:
         options = list(filter(lambda x: tuple(x.atoms) == tuple(elements), options))
 
         # remove SRIM entries without the similar fractional element composition
-        options = list(filter(lambda x: all(np.isclose(x.fractions, fractions)), options))
+        options = list(filter(lambda x: all(np.isclose(x.fractions, fractions, rtol=0.03)), options))
 
         # filter for gaseous state or not
         options = list(filter(lambda x: x.is_gas == self.is_gas, options))
@@ -270,12 +272,16 @@ class Material:
                                   f"elements:  {best_option.atoms}\n"
                                   f"fractions: {best_option.fractions},'\n"
                                   f"has a density of {best_option.density:.4E}\n"
-                                  f"instead of       {self.density:.4E}  (the intended density)")
+                                  f"instead of       {self.density:.4E}  (the intended density)\n"
+                                  f"DeDx will be scaled naively (no density corrections). ")
                 srim_table = SRIMTable(*best_option.args)
 
                 lines.append(f"kf = {Nuclide.from_symbol(best_option.projectile).phits_kfcode()}")
                 for erg, dedx in zip(srim_table.ergs, srim_table.total_dedx):
                     lines.append(f"{erg:.3E} {scaling(erg)*dedx:.4E}")
+        print(f"DeDx file written for {list(_srim_outputs.keys())} in material"
+              f" {self.name if self.name is not None else self.mat_number}")
+
         dedxfile = (dedx_path/str(self.mat_number)).with_suffix('.txt')
         with open(dedxfile, 'w') as f:
             f.write('\n'.join(lines))
@@ -409,6 +415,11 @@ class Material:
 
 
 class PHITSOuterVoid:
+    """
+    Usage:
+    void = Cell(material=PHITSOuterVoid(), geometry=+chamber_cell.surface)
+
+    """
     pass
 
 

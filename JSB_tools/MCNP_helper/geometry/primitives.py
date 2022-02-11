@@ -341,7 +341,7 @@ class RightCylinderSurface(Surface):
 
     @property
     def surface_card(self):
-        assert not self.dx == self.dy == self.dz == 0, 'dx, dy, and dz cannot all be zero!'
+        assert not self.dx == self.dy == self.dz == 0, f'dx, dy, and dz cannot all be zero! In Surface {self}'
 
         comment = get_comment(self.surface_comment, self.surface_name)
         out = f"{self.surface_number} RCC " \

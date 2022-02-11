@@ -275,7 +275,9 @@ class DecayModeHandlerMixin:
     def __init__(self, nuclide, emission_data):
         #  In some cases, a given decay mode can populate ground and excited states of the same child nucleus,
         #  leading to multiple DecayMode objects for a given decay path (same parent and daughter).
-        #  Making obj.from_mode return a list in general is undersirable. This issue is managed in self.decay_mode property.
+        #  Making obj.from_mode return a list in general is undersirable.
+        #  This issue is managed in self.decay_mode property.
+        self.parent_nuclide_name = nuclide.name
         try:
             self._from_modes: List[DecayMode] = nuclide.decay_modes[emission_data['from_mode']]
         except KeyError:
@@ -297,15 +299,15 @@ class DecayModeHandlerMixin:
     def from_modes(self):
         return self._from_modes
 
-    @property
-    def parent_nuclide_name(self):
-        try:
-            return self.from_mode.parent_name
-        except AssertionError:
-
-            if not all([m.parent_name == self._from_modes[0].parent_name for m in self._from_modes]):
-                warn("WTF")
-            return self._from_modes[0].parent_name
+    # @property
+    # def parent_nuclide_name(self):
+    #     try:
+    #         return self.from_mode.parent_name
+    #     except AssertionError:
+    #
+    #         if not all([m.parent_name == self._from_modes[0].parent_name for m in self._from_modes]):
+    #             warn("WTF")
+    #         return self._from_modes[0].parent_name
 
 
 class GammaLine(DecayModeHandlerMixin):

@@ -10,6 +10,17 @@ from abc import abstractmethod
 from numbers import Number
 
 
+def gen_mcnp_geom(path):
+    """
+
+    Args:
+        path:
+
+    Returns:
+
+    """
+
+
 def rotate_zhat_to_v(v):
     # Todo
     """
