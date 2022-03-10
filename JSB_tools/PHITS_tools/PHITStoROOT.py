@@ -76,8 +76,9 @@ class PHITSTTreeHelper:
 
     @property
     def nuclide(self) -> Union[None, Nuclide]:
-        if self.tree.par_id != 19:
-            return None
+
+        if self.tree.par_id == 19:
+            pass
         elif 15 <= self.tree.par_id <= 18:
             par_id = self.tree.par_id
             try:
@@ -96,6 +97,8 @@ class PHITSTTreeHelper:
                     n = Nuclide.from_Z_A_M(2, 4)
                     PHITSTTreeHelper.nuclides[par_id] = n
                 return n
+        else:
+            return None
 
         zaid = self.tree.zaid
         z = zaid // 1000
@@ -658,7 +661,7 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
         overwrite: If false, don't overwrite existing file.
         max_time: Maximum time to run in seconds.
 
-    Returns: Root tree.
+    Returns: Root tree of simulation data.
 
     """
 

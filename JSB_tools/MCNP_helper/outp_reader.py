@@ -899,7 +899,7 @@ class StoppingPowerData:
     @classmethod
     def get_stopping_power(cls, particle: str,
                            material_element_symbols: Union[List[str], str],
-                           grams_per_cm3: float,
+                           density: float,
                            material_atom_percents: Optional[Union[List[float], float]] = None,
                            material_mass_percents: Optional[Union[List[float], float]] = None,
                            gas: bool = False,
@@ -913,12 +913,12 @@ class StoppingPowerData:
             particle: Either a zaid in the form of zzaaa, i.e. str(1000*z+a), or a nuclide name, i.e. 'Xe139'.
             material_element_symbols: List of elements that make up the medium using similar convention as in`particle`
                 argument. Can also use "U" instead of "U238" to automatically isotopic composition of natural U
-            grams_per_cm3: Density of medium.
+            density: Density of medium in g/cm3.
             material_atom_percents: relative atoms percents for each element in `material_element_symbols`
             material_mass_percents: relative mass ratios for each element in `material_element_symbols`
             gas: True is medium is gas.
             emax: Max energy to calculate stopping powers.
-            temperature:  ???
+            temperature:  Does nothing.
             mcnp_command: The command that executes MCNP in youtr terminal.
             verbose: For debugging.
 
@@ -926,8 +926,8 @@ class StoppingPowerData:
         """
         assert platform.system() != 'Windows', '`get_stopping_power` is not compatible with windows systems!'
         assert isinstance(gas, bool), '`gas` argument must be either True or False'
-        assert isinstance(grams_per_cm3, Number), '`grams_per_cm3` argument must be a number'
-        grams_per_cm3 = abs(grams_per_cm3)
+        assert isinstance(density, Number), '`grams_per_cm3` argument must be a number'
+        density = abs(density)
         mode_dict = {'electron': 'e', 'proton': 'h', 'positron': 'f'}
         mode = None
         invalid_par_des_msg = '\nParticle designator must be one of the following:\n\t{}\n,' \
@@ -935,6 +935,7 @@ class StoppingPowerData:
                               'is mass number.\t*or* use nuclide name, i.e. U238' \
             .format(list(mode_dict.keys()) + list(mode_dict.values()))
         element_match = re.compile('([a-zA-Z]+)([0-9]+)')
+
         def get_zaid(symbol):
             _m = element_match.match(symbol)
             assert _m, 'Invalid element specification: "{}"'.format(symbol)
@@ -1022,7 +1023,7 @@ class StoppingPowerData:
                 m.add_nuclide(element, fraction, percent_type)
             else:
                 m.add_element(element, fraction, percent_type)
-        m.set_density('g/cm3', grams_per_cm3)
+        m.set_density('g/cm3', density)
         mcnp_zaids = []
         mcnp_atom_percents = []
         for key, value in m.get_nuclide_atom_densities().items():

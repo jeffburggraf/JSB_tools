@@ -5,6 +5,7 @@ Todo:
 """
 from __future__ import annotations
 import warnings
+from JSB_tools.spectra import ListSpectra
 import plotly.graph_objects as go
 import marshal
 import struct
@@ -24,6 +25,7 @@ from uncertainties.core import UFloat, ufloat
 from uncertainties import unumpy as unp
 from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, discrete_interpolated_median, shade_plot, \
     rolling_median, InteractivePlot, _float
+from numpy.core._exceptions import UFuncTypeError
 from JSB_tools.spe_reader import SPEFile, EfficiencyCalMixin, EnergyCalMixin, _rebin
 
 # HERE = pytz.timezone('US/Mountain')
@@ -274,12 +276,12 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         self._energies = None
         self._energy_binned_times = None
         self._energy_spec = None
-        if not hasattr(self, "_no_channels"):  # see doc
-            for name in ['erg_bins', 'erg_centers']:
-                try:
-                    delattr(self, name)
-                except AttributeError:
-                    continue
+        # if not hasattr(self, "_no_channels"):  # see doc
+        #     for name in ['erg_bins', 'erg_centers']:
+        #         try:
+        #             delattr(self, name)
+        #         except AttributeError:
+        #             continue
 
     @property
     def fraction_live(self):
@@ -287,6 +289,11 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             dead_time_corr_window = 10
             self._fraction_live = self._calc_fraction_live(self.livetimes, self.realtimes, dead_time_corr_window)
         return self._fraction_live
+
+    def get_list_spectra(self, ) -> ListSpectra:
+        out = ListSpectra(self.adc_values, self.times, self.erg_bins, self.path, self.fraction_live, self.realtimes,
+                          self.start_time)
+        return out
 
     def time_offset(self, t):
         """
@@ -653,12 +660,25 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         assert len(time_bins) != 1, "Only one bin specified. This is not allowed. "
 
         def _median(_x):
+            """
+
+            Args:
+                _x: A list of the number of events in each energy bin (for a given time bin)
+
+            Returns:
+
+            """
             # _x = convolve_gauss(_x, min([len(_x)//2, 5]))
             out = discrete_interpolated_median(_x*bg_weights)
+
             if nominal_values:
                 return out
             else:
-                return ufloat(out, out*1/np.sqrt(sum(_x)))
+                s = sum(_x)
+                if s == 0:
+                    return ufloat(out, 0)
+                else:
+                    return ufloat(out, out*1/(np.sqrt(sum(_x))))
 
         bg = np.array([_median(x) for x in
                        np.array([np.histogram(times, bins=time_bins)[0] for times in bg_times_list]).transpose()])
@@ -858,26 +878,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         indicies = np.searchsorted(self.realtimes, self.times)
         return 1.0/self.fraction_live[indicies]
 
-    def channel_to_erg(self, channel) -> np.ndarray:
-        if isinstance(channel, list):
-            channel = np.array(channel)
-        return np.sum([channel ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
-
-    # @cached_property This could cause issues
-    @property
-    def erg_centers(self):
-        return np.array([(b0+b1)/2 for b0, b1 in zip(self.erg_bins[:-1], self.erg_bins[1:])])
-
-    # @cached_property This causes issues
-    @property
-    def erg_bins(self):
-        channel_bins = np.arange(self.n_adc_channels + 1) - 0.5   #
-        return self.channel_to_erg(channel_bins)
-
-    @cached_property  # Also used as a standard attribute.
-    def n_adc_channels(self):
-        return max(self.adc_values)
-
     def plot_count_rate(self, ax=None, smooth=None, **ax_kwargs):
         if ax is None:
             plt.figure()
@@ -1071,7 +1071,11 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
                 raise TypeError(f"Invalid `baseline_method`, '{baseline_method}'")
 
             bg = bg[erg_index0: erg_index1]
-            out -= bg
+
+            try:
+                out -= bg
+            except UFuncTypeError:
+                out = out - bg
 
         if make_density:
             out = out/(bins[1:] - bins[:-1])
@@ -1101,20 +1105,46 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
     def bin_widths(self):
         return self.erg_bins[1:] - self.erg_bins[:-1]
 
-    def rebin(self, new_erg_bins):
+    def channel_to_erg(self, channel) -> np.ndarray:
+        if isinstance(channel, list):
+            channel = np.array(channel)
+        return np.sum([channel ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
+
+    # @cached_property This could cause issues
+    @property
+    def erg_centers(self):
+        return np.array([(b0 + b1) / 2 for b0, b1 in zip(self.erg_bins[:-1], self.erg_bins[1:])])
+
+    # @cached_property This causes issues
+    @property
+    def erg_bins(self):
+        if hasattr(self, '_erg_bins'):
+            return getattr(self, '_erg_bins')
+
+        channel_bins = np.arange(self.n_adc_channels + 1) - 0.5  #
+        return self.channel_to_erg(channel_bins)
+
+    @erg_bins.setter
+    def erg_bins(self, value):  # Using this will abandon setting bins from channels & erg. cal. and instead just set directly.
+        setattr(self, '_erg_bins', value)
+
+    @cached_property  # Also used as a standard attribute.
+    def n_adc_channels(self):
+        return max(self.adc_values)
+
+    def rebin(self, other_erg_bins):
         """
         Rebin the spectrum.
 
         """
-        select = np.ones(len(self.energies), dtype=bool)
-        if new_erg_bins[0] < self.erg_bins[0]:
-            select *= np.where(self.energies < new_erg_bins[0], False, True)
-        if new_erg_bins[-1] >= self.erg_bins[-1]:
-            select *= np.where(self.energies >= new_erg_bins[-1], False, True)
-
-        energies = self.energies[select]
-
         np.random.seed(69)
+
+        energies = self.energies
+
+        if self.erg_bins[0] < other_erg_bins[0] or self.erg_bins[-1] > other_erg_bins[-1]:
+            select = (self.energies >= other_erg_bins[0]) & (self.energies < other_erg_bins[-1])
+            energies = self.energies[select]
+            self.times = self.times[select]
 
         rnds = np.random.random(len(energies)) - 0.5
         idxs = self.__erg_index__(energies)
@@ -1123,7 +1153,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         self.adc_values = energies + rnds * self.bin_widths[idxs]
 
-        self.erg_bins = new_erg_bins
+        self.erg_bins = other_erg_bins
         self.erg_calibration = np.array([0, 1])
 
         self._energy_binned_times = None
@@ -1243,31 +1273,32 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         if scales is None:
             scales = np.ones(len(list_objs))
 
-        assert all(isinstance(x, MaestroListFile) for x in list_objs), "`list_objs` must all be MaestroListFile instances"
+        assert all(isinstance(x, MaestroListFile) for x in list_objs), \
+            "`list_objs` must all be MaestroListFile instances"
 
         if leg_labels is None:
             leg_labels = [None]*len(list_objs)
 
         assert len(leg_labels) == len(list_objs)
-        args = None
+        kwargs = None
 
         for l, label, s in zip(list_objs, leg_labels, scales):
-            if args is None:
-                args = l.plotly(erg_min=erg_min, erg_max=erg_max, eff_corr=eff_corr, time_bins=time_bins,
-                                time_bin_width=time_bin_width, time_step=time_step, time_min=time_min,
-                                time_max=time_max, remove_baseline=remove_baseline, nominal_values=nominal_values,
-                                leg_label=label, dont_plot=True,
-                                scale=s)
-                args['eff_corr'] = eff_corr
-                args['time_bin_width'] = time_bin_width
-                args['leg_label'] = label
-                args['scale'] = s
-                args['dont_plot'] = True
+            if kwargs is None:
+                kwargs = l.plotly(erg_min=erg_min, erg_max=erg_max, eff_corr=eff_corr, time_bins=time_bins,
+                                  time_bin_width=time_bin_width, time_step=time_step, time_min=time_min,
+                                  time_max=time_max, remove_baseline=remove_baseline, nominal_values=nominal_values,
+                                  leg_label=label, dont_plot=True,
+                                  scale=s)
+                # kwargs['eff_corr'] = eff_corr
+                # kwargs['time_bin_width'] = time_bin_width
+                # kwargs['leg_label'] = label
+                # kwargs['scale'] = s
+                # kwargs['dont_plot'] = True  #
             else:
-                l.plotly(**args, eff_corr=eff_corr, time_bin_width=time_bin_width, leg_label=label, scale=s,
+                l.plotly(**kwargs, eff_corr=eff_corr, time_bin_width=time_bin_width, leg_label=label, scale=s,
                          dont_plot=True)
 
-        args['interactive_plot'].plot()
+        kwargs['interactive_plot'].plot()
 
     def plotly(self, erg_min=40, erg_max=None, eff_corr=True, time_bins=None, time_bin_width=15,
                time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
@@ -1292,7 +1323,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
             scale: Multiply y axis by this number.
 
-            dont_plot:
+            dont_plot: Used internally do overlay multiple plots.
 
             convolve_overlay_sigma: If a not None, but instead a number (in units of KeV), then overlay a plot that is
                 a gauss conv with sigma equal to `convolve_overlay_sigma' .
@@ -1631,8 +1662,11 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
     def pickle(self, f_path=None, write_spe=True):
         # Change attribs to np.array where appropriate
-        if not self.allow_pickle:
-            raise ValueError("Pickling not allowed!")
+        # if not self.allow_pickle:
+        #     raise ValueError("Pickling not allowed!")
+
+        if f_path is not None and (self.path is None or str(self.path) == '.'):
+            self.path = f_path  # If no self.path set it accordingly..
 
         for name in ['_erg_calibration', 'adc_values', 'sample_ready_state', 'gate_state', 'realtimes', 'livetimes',
                      'times']:
@@ -1659,15 +1693,19 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
              '_fraction_live': self._fraction_live,
              }
 
-        if hasattr(self, '_no_channels'):
-            d['_no_channels'] = True
-            d['erg_bins'] = np.array(list(self.erg_bins))
+        if hasattr(self, '_erg_bins'):
+            d['_erg_bins'] = self._erg_bins
+
+        # if hasattr(self, '_no_channels'):
+        #     d['_no_channels'] = True
+        #     d['erg_bins'] = np.array(list(self.erg_bins))
 
         d_np_types = {'gate_state': 'int', 'count_rate_meter': 'int', 'sample_ready_state': 'int'}
         if f_path is None:
             if self.path.name == '':
                 raise ValueError("No 'self.path'. Either set path or include `f_path` argument.")
             f_path = self.path.parent / self.file_name
+
         f_path = Path(f_path).with_suffix('.marshal')
 
         with open(f_path, 'wb') as f:
@@ -1706,9 +1744,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             elif isinstance(v, int):
                 v = int(v)
             setattr(self, k, v)
-
-        if hasattr(self, '_no_channels'):
-            self._energies = self.adc_values
 
         self.path = Path(self.path)
         self.start_time = datetime.datetime.strptime(self.start_time, MaestroListFile.datetime_format)
@@ -1767,7 +1802,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         return len(self.times)
 
     def __iadd__(self, other: MaestroListFile, truncate=True, fast_calc=False, rebin_tolerence=0.1,
-                 recalc_effs=True):
+                 recalc_effs=True, no_deadtime_corr=True):
         """
         Merge the events of another List file into this one.
         Note: Have not verified if the calculations for deadtime correction are correct.
@@ -1788,6 +1823,10 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         """
         assert isinstance(other, MaestroListFile)
 
+        if fast_calc:
+            recalc_effs = False
+            truncate = True
+
         if len(self.erg_bins) != len(other.erg_bins) or \
                 not all(np.abs(other.erg_bins - self.erg_bins) < rebin_tolerence):
             other.rebin(self.erg_bins)
@@ -1797,7 +1836,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
                 out = np.where(n1 + n2 != 0, (f1*n1 + f2*n2)/(n1 + n2), n1)
             return out
 
-        if self.effs is other.effs is None:
+        if (self.effs is other.effs is None) or not recalc_effs:
             pass
         else:
             if self.effs is None:
@@ -1838,15 +1877,18 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         self._energies = np.insert(self.energies, idxs, other.energies)
         self.times = np.insert(self.times, idxs, other.times)
 
-        if not (self.count_rate_meter is other.count_rate_meter is None):
-            crm_is = np.argsort([-len(self.count_rate_meter), -len(other.count_rate_meter)])
-            frac_live_longer, frac_live_shorter = [[self.fraction_live, other.fraction_live][i] for i in crm_is]
-            crm_longer, crm_shorter = [[self.count_rate_meter, other.count_rate_meter][i] for i in crm_is]
+        if not no_deadtime_corr:
+            # Todo: using self.count_rate_meter is broken once 3 or more are added together
+            #  (because it is not changed accordingly). How to fix this? !
+            if (not (self.count_rate_meter is other.count_rate_meter is None)) and not fast_calc:
+                crm_is = np.argsort([-len(self.count_rate_meter), -len(other.count_rate_meter)])
+                frac_live_longer, frac_live_shorter = [[self.fraction_live, other.fraction_live][i] for i in crm_is]
+                crm_longer, crm_shorter = [[self.count_rate_meter, other.count_rate_meter][i] for i in crm_is]
 
-            crm_shorter = np.concatenate([crm_shorter, np.zeros(len(crm_longer) - len(crm_shorter))])
-            frac_live_shorter = np.concatenate([frac_live_shorter, np.zeros(len(frac_live_longer) - len(frac_live_shorter))])
-            frac_live = factor_transform(crm_longer, frac_live_longer, crm_shorter, frac_live_shorter)
-            self._fraction_live = frac_live
+                crm_shorter = np.concatenate([crm_shorter, np.zeros(len(crm_longer) - len(crm_shorter))])
+                frac_live_shorter = np.concatenate([frac_live_shorter, np.zeros(len(frac_live_longer) - len(frac_live_shorter))])
+                frac_live = factor_transform(crm_longer, frac_live_longer, crm_shorter, frac_live_shorter)
+                self._fraction_live = frac_live
 
         self._energy_binned_times = None
         self._energy_spec = None
@@ -1899,15 +1941,31 @@ def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
 
 
 if __name__ == '__main__':
-    bins = [0, 1, 2, 3, 4, 5,]
-    other_bins = [0.5, 2, 3,4,5]
-    MaestroListFile()
+    old = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot134.marshal')
+    old2 = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot133.marshal')
+    new = old.get_list_spectra()
+    new2 = old2.get_list_spectra()
 
-    # l = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/PHELIX/2021/data/shot40[2].marshal')
-    # ax = l.plot_erg_spectrum(make_density=True)
-    # l.rebin(np.linspace(l.erg_bins[0], l.erg_bins[-1], 3000))
-    # l.plot_erg_spectrum(make_density=True, ax=ax)
+    # new_rebin = new.copy()
+    # new_rebin.rebin(np.linspace(0, 1000, 1200))
+    # ax = new_rebin.plot_erg_spectrum()
+    # ax = new_rebin.plot_erg_spectrum(ax=ax, eff_corr=True)
+    # # new_rebin.rebin(np.linspace(0, 1000, 1200))
+    #
+
+
+    # ax = new.plot_erg_spectrum(make_density=True)
+    # new_rebin.plot_erg_spectrum(make_density=True, ax=ax)
     # plt.show()
-    # l.rebin()
-    # l.rebin_energy()
+
+    ax = new.plot_efficiency()
+    ax = new2.plot_efficiency(ax=ax)
+
+    new2.rebin(new.erg_bins)
+    new2.plot_efficiency(ax=ax, label='rebined')
+    ax.legend()
+    plt.show()
+    m = new + new2
+
+    # print()
 

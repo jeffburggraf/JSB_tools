@@ -448,7 +448,7 @@ def convolve_gauss2d(a, sigma_x, kernel_sigma_window: int = 8, sigma_y=None):
     return out
 
 
-def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 10, mode='same'):
+def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mode='same'):
     """
     Simple gaussian convolution.
     Args:
@@ -529,6 +529,14 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         return ax, c
     else:
         return ax
+
+
+def mpl_hist_from_data(bin_edges, data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
+                       return_line_color=False, **mpl_kwargs):
+    y, _ = np.histogram(data, bins=bin_edges, weights=weights)
+    yerr = np.sqrt(y)
+    return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
+                    return_line_color=return_line_color, **mpl_kwargs)
 
 
 def fill_between(x, y, yerr=None, ax=None, fig_kwargs=None, label=None, binsxQ=False, **mpl_kwargs):
@@ -689,13 +697,13 @@ class FileManager:
     # todo: make gui for deleting files
     #  todo: male read only option
 
-    def __init__(self, path_to_root_dir: Union[str, Path], recreate=False):
+    def __init__(self, path_to_root_dir: Union[str, Path] = None, recreate=False):
         """
         Creates a human friendly link between file and a dictionary of descriptive attributes that make it easy to
             access files created in a previous script.
 
         Args:
-            path_to_root_dir: Path to the top directory.
+            path_to_root_dir: Path to the top directory. None for cwd.
             recreate: If you are loading an existing FileManager, then this must be False, else it will override the
                 previous data.
 
@@ -740,6 +748,9 @@ class FileManager:
 
 
         """
+        if path_to_root_dir is None:
+            path_to_root_dir = Path.cwd()
+
         assert Path(path_to_root_dir).is_dir()
         self.root_directory = Path(path_to_root_dir)
         assert self.root_directory.parent.exists() and self.root_directory.parent.is_dir(),\
@@ -821,15 +832,21 @@ class FileManager:
         FileManager.__verify_attribs__(lookup_attributes)
         assert len(lookup_attributes) != 0, \
             "If you're not going to provide any attributes then this tool is no for you."
+
         if rel_path_or_abs_path is None:
             rel_path_or_abs_path = self.auto_gen_path(lookup_attributes, self.root_directory)
+
         rel_path_or_abs_path = Path(rel_path_or_abs_path)
+
         if str(rel_path_or_abs_path.anchor) != '/':
             rel_path_or_abs_path = self.root_directory / Path(rel_path_or_abs_path)
+
         abs_path = rel_path_or_abs_path
+
         if not missing_ok:
             assert abs_path.exists(), f'The path, "{abs_path}", does not exist. Use missing_ok=True to bypass this error'
-        assert not abs_path.is_dir(), f'The path, "{abs_path}", is a directory.'
+        # assert not abs_path.is_dir(), f'The path, "{abs_path}", is a directory.'
+
         if abs_path in self.__file_lookup_data:
             if lookup_attributes in self.__file_lookup_data.values():  # path and attrib identical. May overwrite
                 # if overwrite_ok:  # overwrite

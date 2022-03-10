@@ -51,7 +51,7 @@ class ChemicalFormula:
         self.total_grams_peer_mole = np.sum(self.atom_numbers*self.atomic_weights)
 
 
-class _IdealGas:
+class _IdealGasProperties:
     R = 8.3144626181
 
     def __init__(self, list_of_chemicals: List[str]):
@@ -94,7 +94,7 @@ class _IdealGas:
         mass_ratios = np.array(mass_ratios)
         assert len(mass_ratios) == len(self.total_grams_per_mole_list)
         norm = sum(mass_ratios)
-        p_over_r_t = pressure/(_IdealGas.R * temperature)
+        p_over_r_t = pressure/(_IdealGasProperties.R * temperature)
         _x = np.sum((mass_ratios/norm)/self.total_grams_per_mole_list)
         out = 1E-6*p_over_r_t/_x
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
@@ -108,7 +108,7 @@ class _IdealGas:
         atom_fractions = np.array(atom_fractions)
         assert len(atom_fractions) == len(self.total_grams_per_mole_list)
         mean_g_per_mole = np.average(self.total_grams_per_mole_list, weights=atom_fractions)
-        p_over_r_t = pressure/(_IdealGas.R * temperature)
+        p_over_r_t = pressure/(_IdealGasProperties.R * temperature)
         out = 1E-6*p_over_r_t*mean_g_per_mole  # 1E-6 converts from g/m3 to g/cm3
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
         out = float(fmt.format(out))
@@ -198,6 +198,7 @@ class Material:
     def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx', scaling=None):
         """
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
+        Todo: Implement  plotting De/dx after it is set by this method.
         Args:
             dedx_path: Path where PHITS looks for user supplied stopping powers
             scaling: A function or a constant. If a constant, scale sopping powers by this value.
@@ -207,46 +208,9 @@ class Material:
         """
         assert dedx_path.exists(), dedx_path
 
-        from JSB_tools.SRIM import existing_outputs, SRIMTable
+        from JSB_tools.SRIM import find_all_SRIM_runs
 
         elements, fractions = self._get_elements_and_fractions
-
-        class _SrimRun:
-            def __init__(self, atoms, fractions, density, projectile, is_gas):
-                self.atoms = atoms
-                self.fractions = np.array(fractions)
-                self.density = float(density)
-                self.projectile = projectile
-                self.is_gas = is_gas
-                self.args = atoms, fractions, self.density, projectile, is_gas
-
-            def __repr__(self):
-                out = f'elements: {self.atoms}, {100*np.array(list(map(float, self.fractions)))}, ' \
-                      f'density: {self.density:.3e}, gas = {self.is_gas}'
-                return out
-
-        options = [_SrimRun(*args) for args in existing_outputs()]
-
-        # remove SRIM entries without the same element composition
-        options = list(filter(lambda x: tuple(x.atoms) == tuple(elements), options))
-
-        # remove SRIM entries without the similar fractional element composition
-        options = list(filter(lambda x: all(np.isclose(x.fractions, fractions, rtol=0.03)), options))
-
-        # filter for gaseous state or not
-        options = list(filter(lambda x: x.is_gas == self.is_gas, options))
-
-        _srim_outputs = {}
-        for option in options:  # group SRIM entries by same target (but different projectile)
-            try:
-                _srim_outputs[option.projectile].append(option)
-            except KeyError:
-                _srim_outputs[option.projectile] = [option]
-        srim_outputs = {}
-        lines = ['unit = 1']
-        if not len(_srim_outputs.items()):
-            assert False, f"No SRIM data available for the following material: \n{self}." \
-                          f"\nSee JSB_tools.SRIM to add this data."
 
         if scaling is None:
             scaling = lambda erg: 1
@@ -258,28 +222,15 @@ class Material:
                 assert hasattr(scaling, '__call__'), "Invalid type for `scaling` parameter. Must be Number of callable."
                 assert len(signature(scaling).parameters) == 1, "`scaling` function should take only one argument"
 
-        # within each group of SRIM entries with same projectile, chose one with best density.
-        # Warn if density is not exact.
-        # Then, write lines for PHITS dedx file.
-        for proj, options in _srim_outputs.items():
-            if len(options):
-                arg_min = np.argmin([abs(o.density-self.density) for o in options])
-                best_option: _SrimRun = options[arg_min]
-                srim_outputs[proj] = best_option
-                if not np.isclose(best_option.density, self.density, rtol=0.02):
-                    warnings.warn(f"\n ------------------ DENSITY WARNING ----------------"
-                                  f"\nSRIM run for projectile {best_option.projectile} in material,\n"
-                                  f"elements:  {best_option.atoms}\n"
-                                  f"fractions: {best_option.fractions},'\n"
-                                  f"has a density of {best_option.density:.4E}\n"
-                                  f"instead of       {self.density:.4E}  (the intended density)\n"
-                                  f"DeDx will be scaled naively (no density corrections). ")
-                srim_table = SRIMTable(*best_option.args)
+        lines = ['unit = 1']
+        srim_outputs = find_all_SRIM_runs(target_atoms=elements, fractions=fractions, density=self.density,
+                                          gas=self.is_gas)
 
-                lines.append(f"kf = {Nuclide.from_symbol(best_option.projectile).phits_kfcode()}")
-                for erg, dedx in zip(srim_table.ergs, srim_table.total_dedx):
-                    lines.append(f"{erg:.3E} {scaling(erg)*dedx:.4E}")
-        print(f"DeDx file written for {list(_srim_outputs.keys())} in material"
+        for proj, table in srim_outputs.items():
+            lines.append(f"kf = {Nuclide.from_symbol(proj).phits_kfcode()}")
+            for erg, dedx in zip(table.ergs, table.total_dedx):
+                lines.append(f"{erg:.3E} {scaling(erg)*dedx:.4E}")
+        print(f"DeDx file written for {list(sorted(srim_outputs.keys()))} in material"
               f" {self.name if self.name is not None else self.mat_number}")
 
         dedxfile = (dedx_path/str(self.mat_number)).with_suffix('.txt')
@@ -303,7 +254,7 @@ class Material:
             ):
         # Todo: Use N(2) or N_2 to specify number of N atoms. Thus, allowing isotope specification normally.
 
-        g = _IdealGas(list_of_chemicals)
+        g = _IdealGasProperties(list_of_chemicals)
         if len(list_of_chemicals) == 1:
             is_weight_fraction = True
             fractions = [1]
@@ -566,7 +517,7 @@ class Air(Material):
             assert temperature is pressure is None, "`density` was specified. `pressure` and `temperature` must be None"
 
         else:
-            g = _IdealGas(elements)
+            g = _IdealGasProperties(elements)
             density = g.get_density_from_atom_fractions(atom_fractions=fractions,
                                  temperature=temperature, temp_units=temp_units, pressure=pressure,
                                  pressure_units=pressure_units,  n_sig_digits=n_sig_digits)

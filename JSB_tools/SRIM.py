@@ -1,5 +1,7 @@
 """
-Runs a SRIM simulation and saves the results to a pickle file.
+This file contains an implementation to automatically running a SRIM simulation and save the results to a pickle file.
+Saved results are retrieved by SRIMTable class.
+
 Pickle file has two dumps:
     1. list of energies
     2. a list of dicts of data for each entry
@@ -7,8 +9,29 @@ The dicts have the following format:
     {"nuclear": nuclear, "electric": elec, 'range': range_, 'lon_strag': lon_strag,
                      'lat_strag': lat_strag}
 
+Examples:
+
+    from JSB_tools.MCNP_helper.materials import _IdealGas
+
+    # Run SRIM for 1:1 atom ratio of Argon + He at 1.5 bar pressure
+
+    g = _IdealGasProperties(['He', 'Ar'])
+
+    density = g.get_density_from_atom_fractions([1, 1], pressure=1.5, )
+
+    run_srim(target_atoms=['He', 'Ar'],fractions=[1,1], density=density, projectile='Xe139', max_erg=120, gas=True)
+
+
+    # Now, the results can from now on be accessed by
+    data = find_SRIM_run(target_atoms=['He', 'Ar'], fractions=[1,1], density=density, projectile='Xe139', gas=True)
+
+    # Plot, if you want
+    data.plot_dedx()
+
 
 """
+from __future__ import annotations
+from typing import List, Union, Dict
 import warnings
 from pathlib import Path
 # from mendeleev import element, Isotope
@@ -18,9 +41,9 @@ import pickle
 from matplotlib import pyplot as plt
 from scipy.interpolate import interp1d
 
-srim_dir = Path(__file__).parent/"SRIM-2013"
+srim_dir = Path(__file__).parent / "SRIM-2013"
 
-save_dir = srim_dir/'srim_outputs'
+save_dir = srim_dir / 'srim_outputs'
 if not save_dir.exists():
     save_dir.mkdir(exist_ok=True, parents=True)
 
@@ -47,7 +70,7 @@ def existing_outputs():
 
     """
     try:
-        with open(save_dir/"outputs.txt") as f:
+        with open(save_dir / "outputs.txt") as f:
             lines = f.readlines()
     except FileNotFoundError:
         lines = []
@@ -62,7 +85,7 @@ def existing_outputs():
         params = eval(_[0])
         name_params[f_name] = params
 
-        if (save_dir/f_name).exists():
+        if (save_dir / f_name).exists():
             out[params] = f_name
             new_lines.append(line)
         else:
@@ -80,7 +103,7 @@ def _save_file_attribs(attribs_dict):
     lines = []
     for k, v in attribs_dict.items():
         lines.append(f"{k} __--__ {v}\n")
-    with open(save_dir/"outputs.txt", 'w') as f:
+    with open(save_dir / "outputs.txt", 'w') as f:
         f.writelines(lines)
 
 
@@ -88,7 +111,7 @@ def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTP
     file_attribs = _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas)
     all_file_attribs = existing_outputs()
     try:
-        (save_dir/all_file_attribs[file_attribs]).unlink()
+        (save_dir / all_file_attribs[file_attribs]).unlink()
     except (KeyError, FileNotFoundError):
         pass
 
@@ -97,7 +120,7 @@ def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTP
 
     while (fname := f"out_{i}.pickle") in files_so_far:
         if fname not in all_file_attribs.values():
-            (save_dir/fname).unlink()  # pickle file not in outputs.txt. delete and use this filename
+            (save_dir / fname).unlink()  # pickle file not in outputs.txt. delete and use this filename
             break
         i += 1
 
@@ -107,16 +130,16 @@ def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTP
     data = []
     ergs = []
     stopping_units = None
-    srim_output_path = srim_dir/'SR Module'/'SR_OUTPUT.txt'
+    srim_output_path = srim_dir / 'SR Module' / 'SR_OUTPUT.txt'
 
     if save_SR_OUTPUT:
         import shutil
 
         i = 0
-        _names = map(lambda x: x.name, (srim_dir/'SR Module').iterdir())
+        _names = map(lambda x: x.name, (srim_dir / 'SR Module').iterdir())
         while (_name := f'SR_OUTPUT{i}.txt') in _names:
             i += 1
-        shutil.copy(srim_output_path, srim_output_path.parent/_name)
+        shutil.copy(srim_output_path, srim_output_path.parent / _name)
 
     with open(srim_output_path) as f:
         line = f.readline()
@@ -133,20 +156,21 @@ def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTP
                 return float(s)
             except ValueError:
                 return s
-        dist_units = {'A': 1E-8, 'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1*100*1000}
+
+        dist_units = {'A': 1E-8, 'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1 * 100 * 1000}
         erg_units = {"eV": 1E-6, "keV": 1E-3, "MeV": 1, "GeV": 1E3}
         while not re.match("-+", line := f.readline()):
-            erg, erg_unit, elec, nuclear, range_,  range_unit, lon_strag, lon_strag_unit, lat_strag, lat_strag_unit \
+            erg, erg_unit, elec, nuclear, range_, range_unit, lon_strag, lon_strag_unit, lat_strag, lat_strag_unit \
                 = tuple(map(get_value, line.split()))
             try:
-                range_ = range_*dist_units[range_unit]
-                lon_strag = lon_strag*dist_units[lon_strag_unit]
-                lat_strag = lat_strag*dist_units[lat_strag_unit]
+                range_ = range_ * dist_units[range_unit]
+                lon_strag = lon_strag * dist_units[lon_strag_unit]
+                lat_strag = lat_strag * dist_units[lat_strag_unit]
             except KeyError:
                 assert False, f"Encountered an unknown unit (it's on of these: " \
                               f"{range_unit, lat_strag_unit, lon_strag_unit})"
             try:
-                erg = erg_units[erg_unit]*erg
+                erg = erg_units[erg_unit] * erg
             except KeyError:
                 assert False, f"Encountered an unknown energy unit {erg_unit} "
             elec *= 1000  # MeV/(mg/cm2) -> MeV/(g/cm2)
@@ -156,33 +180,160 @@ def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTP
             data.append(entry)
             ergs.append(erg)
 
-        with open(save_dir/fname, 'wb') as f:
+        with open(save_dir / fname, 'wb') as f:
             pickle.dump(ergs, f)
             pickle.dump(data, f)
 
+        return save_dir/fname
 
-class SRIMTable:
-    def __init__(self, target_atoms, fractions, density, projectile, gas: int=0):
-        attribs = _get_file_attribs_tuple(target_atoms, fractions, density, projectile, gas)
+
+class _SRIMConfig:
+    """
+    Used for storing and comparing SRIM configurations
+    """
+    __all_instances: List[_SRIMConfig] = []
+
+    def __init__(self, target_atoms, fractions, density, projectile: Union[str, None], gas: int = 0, srim_file_name=None):
+        arg_srt = np.argsort(target_atoms)
+        self._target_atoms = np.array([target_atoms[i].lower() for i in arg_srt])
+        self.target_atoms = np.array([target_atoms[i] for i in arg_srt])
+
+        fractions = np.array(fractions, dtype=float)[arg_srt]
+        fractions /= fractions
+        self.fractions = fractions
+
+        self.density = float(density)
+
+        self.projectile = projectile
+        if projectile is not None:
+            self.projectile = self.projectile.lower()
+
+        self.gas = bool(gas)
+
+        self.srim_file_name = srim_file_name
+
+    def __repr__(self):
+        return f'{self.target_atoms}, {self.fractions}, {self.density}, {self.projectile}, {self.gas}'
+
+    def __eq__(self, other):
+        assert isinstance(other, _SRIMConfig)
+
+        if not (self.projectile is None or other.projectile is None):
+            if not self.projectile == other.projectile:
+                return False
+
+        if not len(self._target_atoms) == len(other._target_atoms):
+            return False
+
+        if not all(self._target_atoms == other._target_atoms):
+            return False
+
+        if not all(np.isclose(self.fractions, other.fractions)):
+            return False
+
+        if not self.gas == other.gas:
+            return False
+
+        return True
+
+    @staticmethod
+    def all_configs():
+        if len(_SRIMConfig.__all_instances):
+            return _SRIMConfig.__all_instances
+        for k, v in existing_outputs().items():
+            obj = _SRIMConfig(*k, srim_file_name=v)
+            _SRIMConfig.__all_instances.append(obj)
+        return _SRIMConfig.__all_instances
+
+
+def find_all_SRIM_runs(target_atoms, fractions, density, gas: int = 0) -> Dict[str, _SRIMTable]:
+    """
+    Find all SRIM runs with a given target (but all available projectiles).
+    Args:
+        target_atoms:
+        fractions:
+        density:
+        gas:
+
+    Returns:
+    """
+
+    search_config = _SRIMConfig(target_atoms=target_atoms, fractions=fractions, density=density, projectile=None,
+                                gas=gas)  # We now try to find an SRIM run with a configuration matching `search_config`
+
+    candidates = [config for config in _SRIMConfig.all_configs() if search_config == config]  # all available configs
+    if not len(candidates):  # No match found
+        raise FileNotFoundError(f"No SRIM data with the following configuration:\n{search_config}")
+
+    outs = {}
+
+    for config in candidates:  # group configs by projectile
         try:
-            file_name = existing_outputs()[attribs]
+            outs[config.projectile].append(config)
         except KeyError:
-            assert False, f"No SRIM data for the following configuration:\n{attribs}\nAdd data on a windows machine" \
-                          f"using `run_srim(..)`. "
-        with open(save_dir/file_name, 'rb') as f:
+            outs[config.projectile] = [config]
+
+    for proj, configs in outs.items():
+        densities = np.array([config.density for config in configs])
+        best: _SRIMConfig = configs[np.argmin(np.abs(densities - density))]
+        best_table = _SRIMTable(best.target_atoms, best.fractions, density, best.projectile, best.gas,
+                                best.srim_file_name)  # SRIM run with closest matching density.
+
+        if abs((best.density - density))/density > 0.75:
+            warnings.warn(f"Could not find an SRIM run with a density similar to the provided density of {density}."
+                          f"\nClosest was  {best.density} ")
+
+        outs[proj] = best_table
+    return outs
+
+
+def find_SRIM_run(target_atoms, fractions, density, projectile: Union[str, None], gas: int = 0) -> _SRIMTable:
+    """
+    Use this to look up the results of past SRIM runs!
+    Args:
+        target_atoms:
+        fractions:
+        density:
+        projectile:
+        gas:
+
+    Returns:
+
+    """
+    search_config = _SRIMConfig(target_atoms=target_atoms, fractions=fractions, density=density, projectile=projectile,
+                                gas=gas)
+    candidates = [config for config in _SRIMConfig.all_configs() if search_config == config]
+    if not len(candidates):
+        raise FileNotFoundError(f"No SRIM data with the following configuration:\n{search_config}")
+
+    densities = np.array([config.density for config in candidates])
+    best: _SRIMConfig = candidates[np.argmin(np.abs(densities - density))]
+    out = _SRIMTable(best.target_atoms, best.fractions, density, best.projectile, best.gas, best.srim_file_name)
+    return out
+
+
+class _SRIMTable:
+    #  TODO: MNake a common de/dx structure that is used by MCNPStoppingPower and SRIM...
+    #   Also somehow merge this or something into _SRIMConfig
+    def __init__(self,  target_atoms, fractions, density, projectile, gas, file_name=None):
+        self.target_atoms = target_atoms
+        self.fractions = fractions
+        self.density = density
+        self.projectile = projectile
+        self.gas = gas
+        self.file_name = file_name
+
+        with open(save_dir / self.file_name, 'rb') as f:
             self.ergs = pickle.load(f)
             data = pickle.load(f)
-        self.target_atoms = attribs[0]
-        self.atom_fractions = attribs[1]
-        self.density = attribs[2]
-        self.proj = attribs[3]
-        self.is_gas = attribs[-1]
+
         self.electric = []
         self.nuclear = []
         self.ranges = []
         self.lat_straggling = []
         self.lon_straggling = []
         self.total_dedx = []
+
         for d in data:
             self.electric.append(d['electric'])
             self.nuclear.append(d['nuclear'])
@@ -191,31 +342,41 @@ class SRIMTable:
             self.lat_straggling.append(d['lat_strag'])
             self.total_dedx.append(self.electric[-1] + self.nuclear[-1])
 
+        self.total_dedx = np.array(self.total_dedx)
+
+    def __repr__(self):
+        return f'{self.target_atoms}, {self.fractions}, {self.density}, {self.projectile}, {self.gas}'
+
     @property
     def mat_title(self):
         if len(self.target_atoms) == 1:
             return self.target_atoms[0]
         outs = []
-        for a, f in zip(self.target_atoms, self.atom_fractions):
+        for a, f in zip(self.target_atoms, self.fractions):
             outs.append(f'{a}({float(f)})')
         return ' '.join(outs)
 
-    def plot_dedx(self, ax=None):
+    def plot_dedx(self, ax=None, use_density=True):
         if ax is None:
             _, ax = plt.subplots()
-        title = f"{self.proj} in {self.mat_title}"
+        title = f"{self.projectile} in {self.mat_title}"
         x = self.ergs
         y = self.total_dedx
+        if use_density:
+            y *= self.density
         ax.plot(x, y)
         ax.set_xlabel('Energy [MeV]')
-        ax.set_ylabel('Stopping Power [MeV cm2/g]')
+        if not use_density:
+            ax.set_ylabel('Stopping Power [MeV cm2/g]')
+        else:
+            ax.set_ylabel('Stopping Power [MeV/cm]')
         ax.set_title(title)
         return ax
 
     def plot_range(self, ax=None):
         if ax is None:
             _, ax = plt.subplots()
-        title = f"{self.proj} in {self.mat_title}"
+        title = f"{self.projectile} in {self.mat_title}"
         x = self.ergs
         y = self.ranges
         ax.plot(x, y)
@@ -249,7 +410,8 @@ def _check_args(target_atoms, fractions, density, projectile, max_erg, gas=False
     fractions = np.array(fractions)
 
     if len(bad[0]) > 0:
-        warnings.warn(f"Removing the following elements due to zero atom fractions provided: {np.array(target_atoms)[bad]}")
+        warnings.warn(
+            f"Removing the following elements due to zero atom fractions provided: {np.array(target_atoms)[bad]}")
     assert len(good) > 0, "No non-zero atom fractions!"
     _target_atoms = target_atoms[good]
     target_atoms = []
@@ -299,56 +461,12 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, s
     ion = Ion(proj_symbol, max_erg, proj_mass)
     sr = SR(layer, ion, output_type=5)
     sr.run(srim_directory=srim_dir)
-    _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTPUT=save_SR_OUTPUT)
+    fname = _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTPUT=save_SR_OUTPUT)
 
-    return SRIMTable(target_atoms, fractions, density, projectile, gas)
+    return _SRIMTable(target_atoms=target_atoms, fractions=fractions, density=density, projectile=projectile,
+                      gas=gas, file_name=fname)
 
 
 if __name__ == '__main__':
-      # For IAC models
-    from JSB_tools.MCNP_helper.materials import _IdealGas
-
-    # for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
-    #     run_srim(['C'], [1], 1.7, n, 120)
-    g_ar = _IdealGas(['Ar'])
-    g_ar_he = _IdealGas(['Ar', 'He'])
-    g_he = _IdealGas(['He'])
-    for n in ['Xe139', 'Sr94', 'La144', 'Cs140', 'I136', 'Nb99', 'Sb132', 'Sr94', 'Xe140', 'Mo104']:
-        run_srim(['C', 'H', 'O'], [10, 8, 4], 1.38, n, 120, save_SR_OUTPUT=True)
-        # for gas in [g_he, g_ar_he, g_ar]:
-        #     density = gas.get_density_from_atom_fractions([1]*len(gas.list_of_chemicals), pressure=1.1)
-        #     run_srim(gas.list_of_chemicals, [1]*len(gas.list_of_chemicals), density, n, 120, True)
-
-    # g = _IdealGas(['Ar'])
-    # g_ar_he = _IdealGas(['Ar', 'He'])
-    # g_he = _IdealGas(['He'])
-    #
-    # for n in ['Xe139', 'Kr91', 'Sr94', 'Sb132']:
-    #     # run_srim(['U'], [1], 19, n, 120)  # Uranium
-    #     for press in [0.9, 0.95, 1.0, 1.1, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.6]:
-    #         for gas in [g_he]:
-    #             density = gas.get_density_from_atom_fractions([1], pressure=press)
-    #             run_srim(gas.list_of_chemicals, [1]*len(gas.list_of_chemicals), density, n, 120, True )
-
-    #
-    #         density_heR = g_ar_he.get_density_from_atom_fractions([1,1], pressure=press)
-    #         run_srim(['Ar', 'He'], [1, 1], density, n, 120, True)  # He Ar Mix
-    #
-    #
-    #     for frac in np.arange(0, 0.6, 0.1):
-    #         fracs = [0.5-frac, frac]
-    #         density = g_ar_he.get_density_from_atom_fractions(fracs, pressure=1)
-    #         run_srim(['Ar', 'He'], fracs, density, n, 120, True)
-    # atoms = ['Ar40', 'He4']
-    # he_fracs = list(np.arange(0, 1.2, 0.2)) +   
-    # # he_fracs = [0.5]
-    # for he_frac in sorted(he_fracs):
-    #     fractions = [he_frac, 1-he_frac]
-    #     g = _IdealGas(atoms)
-    #     density = g.get_density_from_atom_fractions(fractions, pressure=1.1, )
-    #     run_srim(atoms, fractions, density, 'Xe139', 120, True)
-    #     run_srim(atoms, fractions, density, 'Kr91', 120, True)
-    #     # run_srim()
-    # run_srim(['U'], [1], 19.1, "Xe139", 120, False)
-    # run_srim(['U'], [1], 19.1, "Kr91", 120, False)
-
+    _SRIMTable(['He'], [1], 1.2, 'Xe139', 1)
+    from JSB_tools.MCNP_helper.materials import _IdealGasProperties

@@ -765,22 +765,25 @@ class FissionYields:
         self.__weighted_by_xs = False
         self.weights = np.ones_like(self.energies)
 
-    def threshold(self, frac_of_max=0.02):
+    def threshold(self, frac_of_max=0.02) -> List[str]:
         """
         Remove all yields that are lewss than frac_of_max*y_m, where y_m is the nucleus with maximum yield.
         Args:
             frac_of_max:
 
-        Returns:
+        Returns: List of nuclides that were excluded
 
         """
         cut_off = sum(self.yields[list(self.yields.keys())[0]])*frac_of_max
         flag = False
+        out = []
         for k in list(self.yields.keys()):
+            out.append(k)
             if sum(unp.nominal_values(self.yields[k])) < cut_off:
                 flag = True
             if flag:
                 del self.yields[k]
+        return out
 
     def get_yield(self, nuclide_name):
         """
@@ -1067,7 +1070,10 @@ class CrossSection1D:
 
         label = mpl_kwargs.pop('label', None)
         if label is None:
-            src = self.data_source.lower() if isinstance(self.data_source, str) else ""
+            try:
+                src = self.data_source.lower() if isinstance(self.data_source, str) else ""
+            except AttributeError:
+                src = 'No src data'
             label = f"{self.__fig_label__} ({src})"
 
         ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label)
@@ -1235,7 +1241,7 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
 
 def decay_default_func(nuclide_name):
     """"""
-    def func(ts):
+    def func(ts, *args, **kwargs):
         if hasattr(ts, '__iter__'):
             out = {nuclide_name: np.ones_like(ts)}
         else:
@@ -1245,15 +1251,15 @@ def decay_default_func(nuclide_name):
     return func
 
 
-def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_term=0., yield_thresh=1E-5):
+def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
     """
     This function solves the following problem:
         Starting with some amount (see init_term) of a given unstable nuclide, what amount of the parent and its
          progeny nuclides remain after time t?
 
     Use driving_term arg for the case of nuclei being generated at a constant rate (in Hz), e.g. via a beam.
-    A negative driving_term can be used, however, if/when the number of parent nuclei goes negative,
-     the solution becomes unphysical.
+    A negative driving_term can be used, however, not that if the number of parent nuclei goes negative
+    the solution is unphysical.
 
     Spontaneous fission products are not (yet) included in decay progeny.
 
@@ -1262,18 +1268,17 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_ter
     The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem
         (or inhomogeneous system of lin. diff. eq. in the case of a nonzero driving_term).
 
-    Todo: Verify solutions in great detail, especially the new diving_term feature.
+    Todo: test if using `init_term` arg is the same as using `scale` arg in the returned function.
 
     Args:
         nuclide_name: Name of parent nuclide.
-        decay_rate: If True, return decays per second instead of fraction remaining.
         init_term: The scale for the amount of parent nucleus at t=0 - i.e. the initial condition.
         driving_term: Set to non-zero if parent nucleus is being produced at a constant rate (in Hz).
-        yield_thresh: Threshold used to discard nuclei with minuscule yields. TODO: Figure out how to define and impliment this
 
     Returns:
         A function that takes a time (or array of times), and returns nuclide fractions at time(s) t.
-            Return values of this function are of form: Dict[nuclide_name: Str, fractions: Union[np.ndarray, float]]
+        Return values of this function are of form: Dict[nuclide_name: Str, fractions: Union[np.ndarray, float]]
+        See 'func' docstring below for more details.
 
     """
 
@@ -1340,7 +1345,27 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_ter
 
     coeffs = np.linalg.solve(eig_vecs.T, b - particular_coeffs)  # solve for initial conditions
 
-    def func(ts, plot=False) -> Dict[str, np.ndarray]:
+    def func(ts, scale=1, decay_rate=False, threshold=None, plot=False) -> Dict[str, np.ndarray]:
+        """
+        Evaluates the diff. eq. solution for all daughter nuclides at the provided times (`ts`).
+        Can determine, as a function of time, the quantity of all decay daughters or the decay rate.
+        This is controlled by the `decay_rate` argument.
+        Args:
+            ts: Times at which to evaluate the specified quantity
+            scale: Scalar to be applied to the yield of all daughters.
+            decay_rate: If True, return decays per second instead of fraction remaining.
+            threshold: Fraction of the total integrated yield below which solution arent included. None includes all.
+            plot: Plot for debugging.
+
+        Returns: dict of the form, e.g.:
+            {'U235': [1., 0.35, 0.125],
+             'Pb207': [0, 0.64, 0.87],
+              ...}
+
+        """
+        if threshold is not None:
+            raise NotImplementedError("Todo")
+
         if hasattr(ts, '__iter__'):
             iter_flag = True
         else:
@@ -1356,9 +1381,9 @@ def decay_nuclide(nuclide_name: str, decay_rate=False, init_term=1., driving_ter
         yields = np.array(yields).T
 
         if not decay_rate:
-            out = {name: rel_yield for name, rel_yield in zip(column_labels, yields)}
+            out = {name: scale*rel_yield for name, rel_yield in zip(column_labels, yields)}
         else:
-            out = {name: rel_yield*rate for name, rel_yield, rate in
+            out = {name: scale*rel_yield*rate for name, rel_yield, rate in
                     zip(column_labels, yields, np.abs(np.diagonal(lambda_matrix)))}
 
         if not iter_flag:
@@ -1459,6 +1484,7 @@ class Nuclide:
 
         self.__Z_A_iso_state__ = get_z_a_m_from_name(name)
 
+        self.excitation_energy = kwargs.get("excitation_energy", 0)
         self.half_life: UFloat = kwargs.get("half_life", None)
         self.spin: int = kwargs.get("spin", None)
         self.mean_energies = kwargs.get("mean_energies", None)  # look into this
@@ -1916,7 +1942,16 @@ class Nuclide:
             hl = self.human_friendly_half_life()
         except ValueError:
             hl = self.half_life
-        out = "<Nuclide: {}; t_1/2 = {}>".format(self.name, hl)
+
+        if self.isometric_state != 0:
+            if self.excitation_energy == 0:
+                ext_print = " (? keV)"
+            else:
+                ext_print = f" ({self.excitation_energy*1E-3:.6g} keV)"
+        else:
+            ext_print = ""
+
+        out = f"<Nuclide: {self.name}{ext_print}; t_1/2 = {hl}>"
         if self.__decay_mode_for_print__ is not None:
             out += f" (from decay {self.__decay_mode_for_print__.__repr__()})"
         return out
@@ -2486,9 +2521,25 @@ class ActivationReactionContainer:
 
 if __name__ == "__main__":
     n = Nuclide.from_symbol("C13")
-
-    n.get_incident_gamma_daughters('tendl')
-    print()
+    print(Nuclide.from_symbol('U235').decay_daughters)
+    times = np.linspace(0, Nuclide.from_symbol('U235').half_life.n*3, 30)
+    # f = decay_nuclide('U235')
+    # print(f(times))
+    f0 = decay_nuclide('U235', init_term=10)
+    f1 = decay_nuclide('U235', init_term=10)
+    y0 = f0(times)
+    y1 = f1(times)
+    fig, (ax0, ax1) = plt.subplots(1, 2)
+    for k in y0:
+        if sum(y0[k]) < 1E-7:
+            continue
+        ax0.plot(times, unp.nominal_values(y0[k]), label=k)
+        ax1.plot(times, unp.nominal_values(y1[k]), label=k)
+    ax1.legend()
+    ax0.legend()
+    #
+    plt.show()
+    # print()
 
     # talys_calculation('C13', 'g')
     # f = decay_nuclide('Xe139', True)

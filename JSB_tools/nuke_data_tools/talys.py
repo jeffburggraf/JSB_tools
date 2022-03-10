@@ -9,23 +9,52 @@ from os import system
 
 talys_dir = Path(__file__).parent/'data'/'talys'
 
-tally_executable = '/Users/burggraf1/talys/talys'
+tally_executable = '/Users/burggraf1/Talys/talys'
 
 
-def run(target, projectile, min_erg=0.1, max_erg=120.1, erg_step=0.5):
+def run(target, projectile, min_erg=0.1, max_erg=120.1, erg_step=0.5,
+        fission_yields=False, outdiscrete=False, maxlevelstar=30, **kwargs):
+    """
+    Args:
+        target:
+        projectile: n, p, d, t, h, a, g representing neutron, proton, deuteron, triton, 3He, alpha and gamma, respectively.
+        min_erg:
+        max_erg:
+        erg_step:
+        fission_yields:
+        outdiscrete:
+        maxlevelstar: The number of excited levels (starting from gs) considered in non-elastic reactions.
+    Returns:
+
+    """
     m = re.match("([A-Z][a-z]{0,2})-?([0-9]{1,3})", target)
     assert m
     a_symbol = m.groups()[0]
     mass = int(m.groups()[1])
-    s = f'projectile {projectile}\nelement {a_symbol}\nmass {mass}\nenergy {min_erg} {max_erg} {erg_step} '
+    lines = [f'projectile {projectile}', f'element {a_symbol}',
+             f'mass {mass}', f'energy {min_erg} {max_erg} {erg_step}']
+
+    kwargs['maxlevelstar'] = maxlevelstar
+
+    for k, v in kwargs.items():
+        lines.append(f"{k} {v}")
+
+    if fission_yields:
+        lines.append('outfy y')
+
+    if outdiscrete:
+        lines.append('outdiscrete y')
+
     f_name = f"{a_symbol}{mass}-{projectile}"
     assert projectile in ['p', 'n', 'g']
     data_path = talys_dir/f_name
     Path.mkdir(data_path, exist_ok=True)
+    s = '\n'.join(lines)
     with open(data_path/f_name, 'w') as f:
         f.write(s)
+
     cmd = f'cd {data_path};{tally_executable} < {f_name} > output'
-    # '
+
     out = system(cmd)
 
     return out
@@ -33,7 +62,8 @@ def run(target, projectile, min_erg=0.1, max_erg=120.1, erg_step=0.5):
 
 def pickle_result(target, projectile):
     data = {}
-    path = talys_dir/(f'{target}-{projectile}')
+    path = talys_dir/f'{target}-{projectile}'
+
     for p in path.iterdir():
         m_ground = re.match('rp[0-9]+\.tot', p.name)
         m_excited = re.match('rp[0-9]+\.L([0-9]+)', p.name)
@@ -66,12 +96,16 @@ def pickle_result(target, projectile):
                 ergs.append(erg)
                 xss.append(xs*1E-3)
             data[product] = xss
+
     with open(path/'data.pickle', 'wb') as f:
         pickle.dump(data, f)
         pickle.dump(ergs, f)
 
 
 if __name__ == '__main__':
-    args = ('N14', 'g')
-    run(*args)
-    pickle_result(*args)
+    # args = ('N14', 'g')
+    target = 'U235'
+    projectile = 'n'
+
+    run(target, projectile, 0.5, 15, outdiscrete=True, fission_yields=False, filediscrete=30, maxlevelstar=30)
+    # pickle_result(*args)

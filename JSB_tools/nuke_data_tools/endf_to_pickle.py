@@ -173,6 +173,7 @@ def pickle_spectra(nuclide: Nuclide, open_mc_decay: Decay):
 
 def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
     """
+    Todo: Re-implement this. It's kinda ugly?
     Pickles nuclide properties into ../data/nuclides/x.pickle
     Writes   __fast__gamma_dict__.marshal, which can be used to quickly look up decays by decay energy.
     data structure of __fast__gamma_dict__:
@@ -200,6 +201,7 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
 
     jeff_decay_file_match = re.compile('([A-Z][a-z]{0,2})([0-9]{1,3})([mnop]*)')
     endf_decay_file_match = re.compile(r'dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf')
+    misc_evaluation_data = {'excitation_energy': {}}
 
     for endf_file_path in directory_endf.iterdir():
         file_name = endf_file_path.name
@@ -214,7 +216,9 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
                 continue
 
             print('Reading ENDSF decay data from {}'.format(endf_file_path.name))
-            d = Decay(Evaluation(endf_file_path))
+            e = Evaluation(endf_file_path)
+            d = Decay(e)
+            misc_evaluation_data['excitation_energy'][nuclide_name] = e.target['excitation_energy']*1E-3  #eV -> keV
 
             if d.nuclide["stable"]:
                 half_life = ufloat(np.inf, 0)
@@ -241,8 +245,10 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
                 continue
             print('Reading JEFF decay data from {}'.format(jeff_file_path.name))
 
-            eval = Evaluation(jeff_file_path)
-            d = Decay(eval)
+            e = Evaluation(jeff_file_path)
+            d = Decay(e)
+            misc_evaluation_data['excitation_energy'][nuclide_name] = e.target['excitation_energy']*1E-3  #eV -> keV
+
             if nuclide_name in openmc_decays:
                 openmc_decays[nuclide_name]['jeff'] = d
             else:
@@ -263,6 +269,12 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
         else:
             parent_nuclide = Nuclide(parent_nuclide_name, __internal__=True)
             NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
+        for attr in misc_evaluation_data:
+            try:
+                v = misc_evaluation_data[attr][parent_nuclide_name]
+                setattr(parent_nuclide, attr, v)
+            except KeyError:
+                continue
 
         daughter_names = [mode.daughter for mode in openmc_decay.modes]
         for daughter_nuclide_name in daughter_names:
@@ -723,7 +735,8 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
-    pickle_fission_product_yields()
+    pickle_decay_data(pickle_data=False)
+    # pickle_fission_product_yields()
     # pickle_proton_activation_data()
     # pickle_gamma_fission_xs_data()
     # pickle_neutron_activation_data()

@@ -311,8 +311,9 @@ class InputDeck:
             new_file_dir = self.inp_file_path.parent
         else:
             new_file_dir = Path(new_file_dir)
-            assert new_file_dir.exists() and new_file_dir.is_dir(), f'`new_file_dir` must be a directory that exists.\n' \
+            assert new_file_dir.parent.exists(), f'`new_file_dir` must be a directory that exists.\n' \
                                                                     f'"{new_file_dir}"'
+            new_file_dir.mkdir(exist_ok=True)
         self.inp_root_directory = new_file_dir
         self.directories_created = []
 
@@ -625,6 +626,19 @@ class InputDeck:
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
                         warn_msg_in_cleanpy=True, sch_cmd=False):
+        """
+
+        Args:
+            inp_file_path:
+            new_file_dir:
+            cycle_rnd_seed:
+            gen_run_script:
+            warn_msg_in_cleanpy:
+            sch_cmd:
+
+        Returns:
+
+        """
         return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy,
                          sch_cmd=sch_cmd)
