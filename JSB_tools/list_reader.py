@@ -5,7 +5,7 @@ Todo:
 """
 from __future__ import annotations
 import warnings
-from JSB_tools.spectra import ListSpectra
+from JSB_tools.spectra import ListSpectra, EfficiencyCalMixin
 import plotly.graph_objects as go
 import marshal
 import struct
@@ -26,7 +26,7 @@ from uncertainties import unumpy as unp
 from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, discrete_interpolated_median, shade_plot, \
     rolling_median, InteractivePlot, _float
 from numpy.core._exceptions import UFuncTypeError
-from JSB_tools.spe_reader import SPEFile, EfficiencyCalMixin, EnergyCalMixin, _rebin
+from JSB_tools.spe_reader import SPEFile, EnergyCalMixin, _rebin
 
 # HERE = pytz.timezone('US/Mountain')
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
@@ -84,9 +84,8 @@ def get_spe_lines(_l: MaestroListFile):
     return spe_lines
 
 
-class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
-    datetime_format = '%m/%d/%Y %H:%M:%S'
-    file_datetime_format = '%Y-%m-%d_%H-%M-%S.%f--%Z%z'
+class MaestroListFile(ListSpectra, EnergyCalMixin):
+
     """
     Start time is determined by the Connections Win_64 time sent right after the header. This clock doesn't
     necessarily start with the 10ms rolling-over clock, so the accuracy of the start time is +/- 5ms.
@@ -112,13 +111,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             debug:
         """
         path = Path(path)
-        self.path = path
         self._spe: SPEFile = None
-
-        super(MaestroListFile, self).__init__()
-
-        if not path.exists():  # assume file name given. Use JSB_tools/user_saved_data/SpecTestingData
-            path = cwd/'user_saved_data'/'SpecTestingData'/path
 
         assert path.exists(), f'List file not found,"{path}"'
 
@@ -140,7 +133,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             self.valid_erg_cal = self.read('1s', f)
             self.erg_units = self.read("4s", f)
             _erg_calibration = [self.read('f', f) for i in range(3)]
-            super(EfficiencyCalMixin, self).__init__(_erg_calibration, load_erg_cal=False)
+            # super(EfficiencyCalMixin, self).__init__(_erg_calibration, load_erg_cal=False)
 
             self.valid_shape_cal = self.read('1s', f)
             self.shape_cal = [self.read('f', f) for i in range(3)]
@@ -149,6 +142,8 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             self.total_realtime = self.read('f', f)
             self.total_livetime = self.read('f', f)
             self.read('9s', f)
+
+
             self.start_time: Union[datetime.datetime, None] = None
 
             self.n_rollovers = 0  # Everytime the clock rolls over ()every 10 ms),
@@ -159,10 +154,11 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             self.realtimes = []
             self.sample_ready_state = []
             self.gate_state = []
+
             self.__10ms_counts__ = 0  # The number of ADC events each 10ms clock tick. Used for self.counts_per_sec.
             self.count_rate_meter = []
 
-            self.times = []
+            self.__times = []
             self.n_words = 0
 
             f_size = path.stat().st_size
@@ -199,89 +195,52 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             print("Live time: ", self.total_livetime)
             print("Real time: ", self.total_realtime)
             print("Total % live: ", self.total_livetime / self.total_realtime)
-            print("N events/s = ", len(self.times) / self.total_realtime)
+            print("N events/s = ", len(self.__times) / self.total_realtime)
             print(f"Total counts: {self.n_counts}")
 
         self.adc_values = np.array(self.adc_values)
         t_log = time.time()
         if _print_progress:
             print('Converting pulse height data to energy...', end='')
-        self._energies = self.channel_to_erg(self.adc_values)
-        if _print_progress:
-            print(f'Done. ({time.time() - t_log:.1f} seconds)')
-        if _print_progress:
-            t_log = time.time()
-            print("Done.\nCalculating livetime fractions...", end='')
 
         self._fraction_live = None
 
-        if _print_progress:
-            print(f'Done. ({time.time() - t_log:.1f} seconds)')
-
-        if _print_progress:
-            t_log = time.time()
-            print("Converting data to numpy arrays...", end='')
         self.sample_ready_state = np.array(self.sample_ready_state)
         self.gate_state = np.array(self.gate_state)
         self.times = np.array(self.times)
-        self._energies = np.array(self._energies)
+
         self.realtimes = np.array(self.realtimes)
         self.livetimes = np.array(self.livetimes)
 
-        # self.times.flags.writeable = False
         self.realtimes.flags.writeable = False
         self.livetimes.flags.writeable = False
 
-        if _print_progress:
-            print(f'Done. ({time.time() - t_log:.1f} seconds)')
+        erg_bins = self.channel_to_erg(self._channels_list)
 
-        self._energy_binned_times = None
-        self._energy_spec = None
-
-        self.unpickle_eff()
-
-        if debug:
-            plt.plot(self.realtimes, self.livetimes)
-            plt.xlabel("Real-time [s]")
-            plt.ylabel("Live-time [s]")
-            plt.figure()
-
-            plt.plot(self.realtimes, self.fraction_live)
-            plt.title("")
-            plt.xlabel("Real-time [s]")
-            plt.ylabel("% live-time")
-
-        self.allow_pickle = True
-        super(EnergyCalMixin, self).__init__()
+        super(MaestroListFile, self).__init__(self.adc_values, times=self.__times,
+                                              erg_bins=erg_bins, path=path,
+                                              fraction_live=self.fraction_live,
+                                              fraction_live_times=self.realtimes,
+                                              start_time=self.start_time)
 
     def set_useful_energy_range(self, erg_min=None, erg_max=None):
-        if erg_min is None:
-            cut1 = True
-        else:
-            cut1 = self.energies > erg_min
-        if erg_max is None:
-            cut2 = True
-        else:
-            cut2 = self.energies < erg_max
-        s = np.where(cut1 & cut2)
-        self.times = self.times[s]
-        self._energies = self.energies[s]
-        self.adc_values = self.adc_values[s]
+        pass  # todo
+        # if erg_min is None:
+        #     cut1 = True
+        # else:
+        #     cut1 = self.energies > erg_min
+        # if erg_max is None:
+        #     cut2 = True
+        # else:
+        #     cut2 = self.energies < erg_max
+        # s = np.where(cut1 & cut2)
+        # self.times = self.times[s]
+        # self._energies = self.energies[s]
+        # self.adc_values = self.adc_values[s]
 
-    def __reset_properties__(self,):
-        """
-        Reset cached data related to energy, thus forcing code to recalculate from raw channel data.
-        """
-        self._spe = None
-        self._energies = None
-        self._energy_binned_times = None
-        self._energy_spec = None
-        # if not hasattr(self, "_no_channels"):  # see doc
-        #     for name in ['erg_bins', 'erg_centers']:
-        #         try:
-        #             delattr(self, name)
-        #         except AttributeError:
-        #             continue
+    @property
+    def _channels_list(self):
+        return np.arange(self.n_adc_channels + 1) - 0.5
 
     @property
     def fraction_live(self):
@@ -289,11 +248,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             dead_time_corr_window = 10
             self._fraction_live = self._calc_fraction_live(self.livetimes, self.realtimes, dead_time_corr_window)
         return self._fraction_live
-
-    def get_list_spectra(self, ) -> ListSpectra:
-        out = ListSpectra(self.adc_values, self.times, self.erg_bins, self.path, self.fraction_live, self.realtimes,
-                          self.start_time)
-        return out
 
     def time_offset(self, t):
         """
@@ -310,12 +264,10 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         Returns: None
 
         """
-        # self.times.flags.writeable = True
         self.times = self.times + t
-        # self.times.flags.writeable = False
 
-        self._energy_binned_times = None
-        self._energy_spec = None
+        for l in self.energy_binned_times:
+            l += t
 
     @staticmethod
     def _calc_fraction_live(livetimes, realtimes, dead_time_corr_window=10):
@@ -359,45 +311,14 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         return self._spe
 
     @property
-    def energies(self):
-        if self._energies is None:
-            self._energies = self.channel_to_erg(self.adc_values)
-            self._energies.flags.writeable = False
-        return self._energies
-
-    @energies.setter
-    def energies(self, value):
-        """
-        If value is not None, then set energies directly and ignore self.adc_values
-
-        If None, set energies top be recalculated from self.adc_values
-
-        Args:
-            value:
-
-        Returns:
-
-        """
-        self._energy_binned_times = None
-
-        if value is None:
-            self._energies = None
-        else:
-            self._erg_calibration = np.array([0, 1])
-            self._energies = self.adc_values = value
-
-    @property
     def erg_calibration(self):
         return self._erg_calibration
 
     @erg_calibration.setter
     def erg_calibration(self, coeffs):
         self._erg_calibration = np.array(coeffs)
-        old_erg_centers = self.erg_centers.copy()
-        self.energies = None
-        if self._spe is not None:
-            self.SPE.erg_calibration = coeffs
-        self.recalc_effs(old_erg_centers, self.erg_centers)
+        self.erg_bins = self.channel_to_erg(self._channels_list)
+        self.reset_cach()
 
     def read_32(self, f) -> str:
         """
@@ -443,6 +364,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
         Returns: None
 
         """
+
         try:
             word = self.read_32(f)
         except struct.error:
@@ -453,7 +375,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             self.adc_values.append(adc_value)
             n_200ns_ticks = int(word[16:], 2)
             adc_time = self.n_rollovers * 10E-3 + n_200ns_ticks * 200E-9
-            self.times.append(adc_time)
+            self.__times.append(adc_time)
             self.__10ms_counts__ += 1
             if debug:
                 word_debug = f"ADC word, Value = {adc_value}, n_200ns_ticks = {n_200ns_ticks}, real time: {adc_time}," \
@@ -601,251 +523,12 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         Returns: Tuple[signal window rate, baseline rate estimation, bins used]
         """
-        if bg_offsets is None:
-            bg_offsets = [2*signal_window_kev]*2
-        elif isinstance(bg_offsets, Iterable):
-            bg_offsets = tuple(map(lambda x: 2*signal_window_kev if x is None else x, bg_offsets))
-            if not len(bg_offsets) == 2:
-                raise ValueError('Too many elements in arg `bg_offsets')
-        elif isinstance(bg_offsets, (float, int)):
-            bg_offsets = tuple([bg_offsets]*2)
-        else:
-            raise ValueError(f'Bad value for `bg_offsets`: {bg_offsets}')
-
-        if bg_window_kev is None:
-            bg_window_kev = 6*signal_window_kev
-
-        bg_offsets = np.abs(bg_offsets)
-
-        bg_window_left_bounds = np.array([-bg_window_kev/2, 0]) + energy - bg_offsets[0]
-        bg_window_right_bounds = np.array([0, bg_window_kev/2]) + energy + bg_offsets[1]
-        sig_window_bounds = [energy-signal_window_kev/2, energy+signal_window_kev/2]
-
-        bg_window_left_is = self.__erg_index__(bg_window_left_bounds)
-        bg_window_right_is = self.__erg_index__(bg_window_right_bounds)
-        # bg_window_right_is[-1] += 1  # + 1 for python slicing rules
-        # bg_window_left_is[-1] += 1  # + 1 for python slicing rules
-
-        sig_window_is = self.__erg_index__(sig_window_bounds)
-        # sig_window_is[-1] += 1  # + 1 for python slicing rules
-        n_sig_erg_bins = sig_window_is[-1] - sig_window_is[0]
-
-        if eff_corr:
-            bg_weights = np.concatenate([1.0/unp.nominal_values(self.effs[slice(*bg_window_left_is)]),
-                                         1.0/unp.nominal_values(self.effs[slice(*bg_window_right_is)])])
-
-            sig_weight = np.average((1.0/self.effs[slice(*sig_window_is)]),
-                                     weights=np.fromiter(map(len, self.__energy_binned_times__[slice(*sig_window_is)]),
-                                                         dtype=int))
-        else:
-            bg_weights = 1
-            sig_weight = ufloat(1, 0)
-
-        bg_times_list = self.__energy_binned_times__[slice(*bg_window_left_is)]
-        bg_times_list += self.__energy_binned_times__[slice(*bg_window_right_is)]
-
-        sig_times_list = self.__energy_binned_times__[slice(*sig_window_is)]
-        sig_times = np.concatenate(sig_times_list)
-
-        # sig_times, n_sig_erg_bins = self.energy_slice(*sig_window_bounds, return_num_bins=True)
-
-        if isinstance(bins, str):
-            _, time_bins = np.histogram(sig_times, bins=bins)
-        elif isinstance(bins, int):
-            time_bins = np.linspace(sig_times[0], sig_times[-1], bins)
-        else:
-            assert hasattr(bins, '__iter__')
-            time_bins = bins
-
-        assert len(time_bins) != 1, "Only one bin specified. This is not allowed. "
-
-        def _median(_x):
-            """
-
-            Args:
-                _x: A list of the number of events in each energy bin (for a given time bin)
-
-            Returns:
-
-            """
-            # _x = convolve_gauss(_x, min([len(_x)//2, 5]))
-            out = discrete_interpolated_median(_x*bg_weights)
-
-            if nominal_values:
-                return out
-            else:
-                s = sum(_x)
-                if s == 0:
-                    return ufloat(out, 0)
-                else:
-                    return ufloat(out, out*1/(np.sqrt(sum(_x))))
-
-        bg = np.array([_median(x) for x in
-                       np.array([np.histogram(times, bins=time_bins)[0] for times in bg_times_list]).transpose()])
-        bg *= n_sig_erg_bins  # from per_bin to per width of signal window
-
-        sig = np.histogram(sig_times, bins=time_bins)[0]
-        sig = sig.astype(float)
-
-        if not nominal_values:
-            sig = unp.uarray(sig, np.sqrt(sig))
-
-        sig *= sig_weight.n if nominal_values else sig_weight
-
-        if debug_plot is not False:
-            if isinstance(debug_plot, str) and debug_plot.lower() == 'simple':
-                ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0] - signal_window_kev,
-                                               bg_window_right_bounds[-1] + signal_window_kev,
-                                               time_min=time_bins[0],
-                                               time_max=time_bins[-1],
-                                               return_bin_values=True,
-                                               eff_corr=eff_corr,
-                                               )
-                shade_plot(ax, bg_window_left_bounds, color='red')
-                shade_plot(ax, bg_window_right_bounds, color='red', label='Bg. window')
-                shade_plot(ax, sig_window_bounds, color='blue', label='Sig. window')
-                ax.legend()
-            else:
-                axs = None
-                for bin_index, (b1, b2) in enumerate(zip(time_bins[:-1], time_bins[1:])):
-                    plot_legend = False
-                    if bin_index % 4 == 0:
-                        fig, axs = plt.subplots(2, 2, figsize=(12, 5))
-                        fig.suptitle(self.path.name)
-                        axs = axs.flatten()
-                        plt.subplots_adjust(hspace=0.4, wspace=0.1, left=0.04, right=0.97)
-                        plot_legend = True
-
-                    lines = []
-                    legends = []
-                    ax = axs[bin_index%4]
-
-                    ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0] - signal_window_kev,
-                                                   bg_window_right_bounds[-1] + signal_window_kev,
-                                                   time_min=b1,
-                                                   time_max=b2,
-                                                   return_bin_values=True,
-                                                   ax=ax,
-                                                   eff_corr=eff_corr)
-
-                    l = shade_plot(ax, sig_window_bounds)
-                    lines.append(l)
-                    legends.append('Sig. window')
-
-                    l = shade_plot(ax, bg_window_right_bounds, color='red')
-                    _ = shade_plot(ax, bg_window_left_bounds, color='red')
-                    lines.append(l)
-                    legends.append('Bg. window')
-
-                    bg_est = bg[bin_index] / n_sig_erg_bins
-                    sig_est = sig[bin_index] / n_sig_erg_bins
-                    if isinstance(bg_est, UFloat):
-                        bg_est = bg_est.n
-                        sig_est = sig_est.n
-
-                    l = ax.plot(bg_window_right_bounds, [bg_est] * 2, color='red', ls='--')[0]
-                    _ = ax.plot(bg_window_left_bounds, [bg_est] * 2,  color='red', ls='--')
-                    lines.append(l)
-                    legends.append('Bg. est.')
-
-                    l = ax.plot(sig_window_bounds, [sig_est] * 2, color='blue', ls='--')[0]
-                    lines.append(l)
-                    legends.append('sig. est.')
-
-                    if plot_legend:
-                        plt.figlegend(lines, legends, 'upper right')
-
-                    ax.text(np.mean(bg_window_left_bounds), ax.get_ylim()[-1]*0.82, f'{bg_est*n_sig_erg_bins:.2e}',
-                            horizontalalignment='center',
-                            verticalalignment='center', color='red', size='small', rotation='vertical')
-                    ax.text(np.mean(sig_window_bounds), ax.get_ylim()[-1] * 0.82, f'{sig_est*n_sig_erg_bins:.2e}',
-                            horizontalalignment='center',
-                            verticalalignment='center', color='blue', size='small', rotation='vertical')
-
-        if make_rate:
-            if not isinstance(time_bins, np.ndarray):
-                time_bins = np.array(time_bins)
-            b_widths = time_bins[1:] - time_bins[:-1]
-            sig /= b_widths
-            bg /= b_widths
-
-        if convolve is not None:
-            sig, bg = convolve_gauss(sig, convolve), convolve_gauss(bg, convolve)
-
         if offset_sample_ready:
-            time_bins -= self.sample_ready_median
+            self.time_offset(-self.sample_ready_median)
 
-        if hasattr(scale, '__call__'):
-            c = scale(time_bins)
-        else:
-            if hasattr(scale, '__len__'):
-                assert len(scale) == len(time_bins) - 1, '`normalization` argument of incorrect length.'
-            c = scale
+        # todo super() ...
 
-        return (sig - bg)*c, bg*c, time_bins
 
-    def plot_time_dependence(self, energy, bins: Union[str, int, np.ndarray] = 'auto', signal_window_kev: float = 3,
-                             bg_window_kev=None, bg_offsets: Union[None, Tuple, float] = None, make_rate=False,
-                             eff_corr=False,
-                             plot_background=False, ax=None, offset_sample_ready=False,
-                             convolve=None,
-                             debug_plot=False, **mpl_kwargs):
-        """
-        Todo: finish this doc string
-        Args:
-            energy:
-            bins:
-            signal_window_kev:
-            bg_window_kev:
-            bg_offsets:
-            make_rate:
-            eff_corr:
-            plot_background:
-            ax:
-            offset_sample_ready:
-            convolve:
-            debug_plot:
-            mpl_kwargs:
-
-        Returns:
-
-        """
-        sig, bg, bins = \
-            self.get_time_dependence(energy=energy, bins=bins, signal_window_kev=signal_window_kev,
-                                     bg_window_kev=bg_window_kev, bg_offsets=bg_offsets, make_rate=make_rate,
-                                     eff_corr=eff_corr, nominal_values=False, offset_sample_ready=offset_sample_ready,
-                                     convolve=convolve, debug_plot=debug_plot)
-
-        if ax is None:
-            fig, ax = plt.subplots()
-            if self.path is not None:
-                ax.set_title(self.path.name)
-                label = mpl_kwargs.pop("label", self.path.name)
-            else:
-                label = ''
-            elims = energy - signal_window_kev/2, energy + signal_window_kev/2
-            fig.suptitle(f"{elims[0]:.1f} < erg < {elims[-1]:.1f}")
-
-        _, c = mpl_hist(bins, sig, return_line_color=True, ax=ax,
-                        label=label + "(signal)" if plot_background else "", **mpl_kwargs)
-
-        if plot_background:
-            mpl_kwargs['ls'] = '--'
-            mpl_kwargs.pop('c', None)
-            mpl_kwargs.pop('color', None)
-            mpl_kwargs['c'] = c
-            mpl_hist(bins, bg, return_line_color=True, ax=ax, label=label + "(baseline)", **mpl_kwargs)
-
-        y_label = "Raw" if not eff_corr else ""
-        y_label += " Counts"
-
-        if make_rate:
-            y_label += '/s'
-
-        ax.set_ylabel(y_label)
-        ax.set_xlabel("time [s]")
-
-        return ax
 
     def est_half_life(self, energy):
         raise NotImplementedError()
@@ -925,48 +608,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             directory.mkdir()
         return directory
 
-    def __erg_index__(self, energies):
-        """
-        Get the index which corresponds to the correct energy bin(s).
-
-        Examples:
-            The result can be used to find the number of counts in the bin for 511 KeV:
-                self.counts[self.erg_bin_index(511)]
-
-        Args:
-            energies:
-
-        Returns:
-
-        """
-        out = np.searchsorted(self.erg_bins, energies, side='right') - 1
-
-        return out
-
-    @property
-    def __energy_binned_times__(self) -> List[np.ndarray]:
-        """
-        The times of all events are segregated into the available energy bins.
-        Returns:
-
-        """
-        # msg = True
-        if self._energy_binned_times is None:
-            self._energy_binned_times = [[] for _ in range(len(self.erg_bins) - 1)]
-            # erg_indicies = self.__erg_index__(self.energies)
-            for i, t in zip(self.__erg_index__(self.energies), self.times):
-                if i >= self.n_adc_channels:
-                    # if msg:
-                    #     warnings.warn("TODO: I am a bug caused by rebinning. Find and kill me")
-                    #     msg = False
-                    continue
-                self._energy_binned_times[i].append(t)
-            self._energy_binned_times = [np.array(ts) for ts in self._energy_binned_times]
-            self._energy_spec = None  # Force _energy_spec to update on next call
-            return self._energy_binned_times
-        else:
-            return self._energy_binned_times
-
     @property
     def energy_spec(self):
         """
@@ -979,584 +620,14 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             self._energy_spec = np.array(list(map(len, self.__energy_binned_times__)))
         return self._energy_spec
 
-    def erg_bins_cut(self, erg_min, erg_max):
-        """
-        Get array of energy bins in range specified by arguments.
-        Args:
-            erg_min:
-            erg_max:
-
-        Returns:
-
-        """
-        i0 = self.__erg_index__(erg_min)
-        i1 = self.__erg_index__(erg_max) + 1
-        return self.erg_bins[i0: i1]
-        # return self.erg_bins[np.where((self.erg_bins >= erg_min) & (self.erg_bins <= erg_max))]
-
-    def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
-                         time_max: float = None, rebin=1, eff_corr=False, make_density=False, nominal_values=False,
-                         return_bin_edges=False,
-                         remove_baseline=False, baseline_method='ROOT', baseline_kwargs=None):
-        """
-        Get energy spectrum according to provided condition.
-        Args:
-            erg_min:
-            erg_max:
-            time_min:
-            time_max:
-            rebin: Combine bins into rebin groups
-            eff_corr: If True, correct for efficiency to get absolute counts.
-            make_density: If True, divide by bin widths.
-            nominal_values: If False, return unp.uarray
-            return_bin_edges: Return the energy bins, e.g. for use in a histogram.
-            remove_baseline: If True, remove baseline according to the following arguments.
-            baseline_method: If "ROOT" then use JSB_tools.calc_background
-                             If "median" then use JSB_tools.rolling_median
-            baseline_kwargs: Kwargs ot pass to either JSB_tools.calc_background or JSB_tools.rolling_median
-
-        Returns:
-
-        """
-        if erg_min is None:
-            erg_min = self.erg_bins[0]
-        if erg_max is None:
-            erg_max = self.erg_bins[-1]
-        assert erg_min < erg_max, f"`erg_min` must be less than `erg_max`, not erg_min={erg_min} and erg_max={erg_max}"
-
-        time_min, time_max, erg_min, erg_max = tuple(map(_float, [time_min, time_max, erg_min, erg_max]))
-
-        b = (time_min is not None, time_max is not None)
-
-        if b == (0, 0):
-            get_n_events = len
-        elif b == (1, 0):
-            def get_n_events(x):
-                return len(x) - np.searchsorted(x, time_min, side='left')
-        elif b == (0, 1):
-            def get_n_events(x):
-                return np.searchsorted(x, time_max, side='right')
-        else:
-            def get_n_events(x):
-                return np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min,
-                                                                                    side='left')
-
-        erg_index0 = self.__erg_index__(erg_min)
-        erg_index1 = self.__erg_index__(erg_max)
-
-        time_arrays = self.__energy_binned_times__[erg_index0: erg_index1]
-
-        out = np.fromiter(map(get_n_events, time_arrays), dtype=int)
-
-        bins = self.erg_bins_cut(erg_min, erg_max)
-
-        if not nominal_values:
-            out = unp.uarray(out, np.sqrt(out))
-
-        if remove_baseline:
-            full_y = np.fromiter(map(get_n_events, self.__energy_binned_times__), dtype=int)
-
-            if baseline_kwargs is None:
-                baseline_kwargs = {}
-            baseline_method = baseline_method.lower()
-            if baseline_method == 'root':
-                bg = calc_background(full_y, **baseline_kwargs)
-                # out = out - calc_background(full_y, **baseline_kwargs)
-            elif baseline_method == 'median':
-                if 'window' not in baseline_kwargs:
-                    baseline_kwargs['window_width'] = 75  # size of rolling window in keV
-                # out = out - rolling_median(values=full_y, **baseline_kwargs)
-                bg = rolling_median(values=full_y, **baseline_kwargs)
-            else:
-                raise TypeError(f"Invalid `baseline_method`, '{baseline_method}'")
-
-            bg = bg[erg_index0: erg_index1]
-
-            try:
-                out -= bg
-            except UFuncTypeError:
-                out = out - bg
-
-        if make_density:
-            out = out/(bins[1:] - bins[:-1])
-
-        if eff_corr:
-            assert self.effs is not None, 'Cannot perform efficiency correction. No efficiency data. '
-            effs = self.effs[erg_index0: erg_index1]
-            if nominal_values:
-                effs = unp.nominal_values(effs)
-                if not out.dtype == 'float64':
-                    out = out.astype('float64')
-            out /= effs
-
-        if rebin != 1:
-            out, bins = _rebin(rebin, out, bins)
-
-        if return_bin_edges:
-            return out, bins
-        else:
-            return out
-
-    @property
-    def bin_centers(self):
-        return 0.5*(self.erg_bins[1:] + self.erg_bins[:-1])
-
-    @property
-    def bin_widths(self):
-        return self.erg_bins[1:] - self.erg_bins[:-1]
-
     def channel_to_erg(self, channel) -> np.ndarray:
         if isinstance(channel, list):
             channel = np.array(channel)
         return np.sum([channel ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
 
-    # @cached_property This could cause issues
-    @property
-    def erg_centers(self):
-        return np.array([(b0 + b1) / 2 for b0, b1 in zip(self.erg_bins[:-1], self.erg_bins[1:])])
-
-    # @cached_property This causes issues
-    @property
-    def erg_bins(self):
-        if hasattr(self, '_erg_bins'):
-            return getattr(self, '_erg_bins')
-
-        channel_bins = np.arange(self.n_adc_channels + 1) - 0.5  #
-        return self.channel_to_erg(channel_bins)
-
-    @erg_bins.setter
-    def erg_bins(self, value):  # Using this will abandon setting bins from channels & erg. cal. and instead just set directly.
-        setattr(self, '_erg_bins', value)
-
     @cached_property  # Also used as a standard attribute.
     def n_adc_channels(self):
         return max(self.adc_values)
-
-    def rebin(self, other_erg_bins):
-        """
-        Rebin the spectrum.
-
-        """
-        np.random.seed(69)
-
-        energies = self.energies
-
-        if self.erg_bins[0] < other_erg_bins[0] or self.erg_bins[-1] > other_erg_bins[-1]:
-            select = (self.energies >= other_erg_bins[0]) & (self.energies < other_erg_bins[-1])
-            energies = self.energies[select]
-            self.times = self.times[select]
-
-        rnds = np.random.random(len(energies)) - 0.5
-        idxs = self.__erg_index__(energies)
-
-        old_erg_centers = self.erg_centers
-
-        self.adc_values = energies + rnds * self.bin_widths[idxs]
-
-        self.erg_bins = other_erg_bins
-        self.erg_calibration = np.array([0, 1])
-
-        self._energy_binned_times = None
-
-        if self.effs is not None:
-            self.recalc_effs(old_erg_centers, self.erg_centers)
-
-    def merge_bins(self, n):
-        self.rebin(self.erg_bins[::int(n)])
-
-    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = 0,
-                          time_max: float = None, rebin=1, eff_corr=False, remove_baseline=False, make_density=False,
-                          title=None, ax=None,
-                          label=None,
-                          return_bin_values=False):
-        """
-        Plot energy spectrum with time and energy cuts.
-        Args:
-            erg_min:
-            erg_max:
-            time_min:
-            time_max:
-            rebin: Combine n bins
-            eff_corr: If True, correct for efficiency to get absolute counts.
-            remove_baseline: If True, remove baseline.
-            make_density:
-            title:
-            ax:
-            label:
-            return_bin_values:
-
-        Returns:
-
-        """
-        if ax is None:
-            fig = plt.figure()
-            fig.suptitle(Path(self.file_name).name)
-            ax = plt.gca()
-
-        bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max, make_density=make_density,
-                                                 return_bin_edges=True, rebin=rebin, eff_corr=eff_corr)
-        if remove_baseline:
-            bl = calc_background(bin_values)
-            bin_values = -bl + bin_values
-
-        mpl_hist(bins, bin_values, ax=ax, label=label)
-        if title is None:
-            if not (time_min == 0 and time_max is None):
-                ax.set_title(f"{time_min:.1f} <= t <= {time_max:.1f}")
-        else:
-            ax.set_title(title)
-
-        ax.set_xlabel('Energy [KeV]')
-        ax.set_ylabel('Counts')
-        if not return_bin_values:
-            return ax
-        else:
-            return ax, bin_values
-
-    def slicer(self, erg_min=None, erg_max=None, time_min=None, time_max=None):
-        """
-        Return an array that can be used to select the desired times or energies.
-        Examples:
-            s = l.slicer(erg_max=200, erg_min=50, time_max=34)
-            plt.histogram(l.times[s])  # plot selected times
-            plt.histogram(l.energies[s])  # plot selected energies
-        Args:
-            erg_min:
-            erg_max:
-            time_min:
-            time_max:
-
-        Returns:
-
-        """
-        if erg_min is not None:
-            mask = (erg_min <= self.energies)
-        else:
-            mask = np.ones(len(self.times), dtype=bool)
-        if erg_max is not None:
-            mask &= (self.energies <= erg_max)
-
-        if time_min is not None:
-            mask[:np.searchsorted(self.times, time_min)] = False
-
-        if time_max is not None:
-            mask[np.searchsorted(self.times, time_max, side='right'):] = False
-
-        return np.where(mask)
-
-    @staticmethod
-    def multi_plotly(list_objs: List[MaestroListFile], scales=None, leg_labels=None, erg_min=40, erg_max=None, eff_corr=True,
-                     time_bins=None, time_bin_width=15,
-                     time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
-                     nominal_values=True):
-        """
-        Plots energy spectra at different time intervals according to an interactive slider.
-        Args:
-            list_objs: series of MaestroListFile objects
-            scales: List of normalizations of each list_obj
-            leg_labels: None,
-            erg_min:
-            erg_max:
-            eff_corr:
-            time_bins:
-            time_bin_width:
-            time_step:
-            time_min:
-            time_max:
-            remove_baseline:
-            nominal_values:
-
-        Returns:
-
-        """
-        _plt: InteractivePlot = None
-        if scales is None:
-            scales = np.ones(len(list_objs))
-
-        assert all(isinstance(x, MaestroListFile) for x in list_objs), \
-            "`list_objs` must all be MaestroListFile instances"
-
-        if leg_labels is None:
-            leg_labels = [None]*len(list_objs)
-
-        assert len(leg_labels) == len(list_objs)
-        kwargs = None
-
-        for l, label, s in zip(list_objs, leg_labels, scales):
-            if kwargs is None:
-                kwargs = l.plotly(erg_min=erg_min, erg_max=erg_max, eff_corr=eff_corr, time_bins=time_bins,
-                                  time_bin_width=time_bin_width, time_step=time_step, time_min=time_min,
-                                  time_max=time_max, remove_baseline=remove_baseline, nominal_values=nominal_values,
-                                  leg_label=label, dont_plot=True,
-                                  scale=s)
-                # kwargs['eff_corr'] = eff_corr
-                # kwargs['time_bin_width'] = time_bin_width
-                # kwargs['leg_label'] = label
-                # kwargs['scale'] = s
-                # kwargs['dont_plot'] = True  #
-            else:
-                l.plotly(**kwargs, eff_corr=eff_corr, time_bin_width=time_bin_width, leg_label=label, scale=s,
-                         dont_plot=True)
-
-        kwargs['interactive_plot'].plot()
-
-    def plotly(self, erg_min=40, erg_max=None, eff_corr=True, time_bins=None, time_bin_width=15,
-               time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
-               interactive_plot: InteractivePlot = None, nominal_values=True, leg_label=None, scale=1,
-               dont_plot=False, convolve_overlay_sigma=None,
-               time_scale_func: Callable=None ):
-        """
-
-        Args:
-            erg_min:
-            erg_max:
-            eff_corr:
-            time_bins:
-            time_bin_width:
-            time_step:
-            time_min:
-            time_max:
-            remove_baseline:
-            interactive_plot:
-            nominal_values:
-            leg_label:
-
-            scale: Multiply y axis by this number.
-
-            dont_plot: Used internally do overlay multiple plots.
-
-            convolve_overlay_sigma: If a not None, but instead a number (in units of KeV), then overlay a plot that is
-                a gauss conv with sigma equal to `convolve_overlay_sigma' .
-
-            time_scale_func: function which takes two args, left_time_bin and right_time_bin, and returns a float.
-                The returned float will be used to scale the result accordingly.
-
-        Returns:
-            dictionary of keys/values of some arguments passed to self.plotly. e.g.:
-                {"interactive_plot": interactive_plot: JSB_tools.InteractivePlot,
-                #  The rest of the key/values are arguments provided to plotly (they may be different if None wsa used).
-                "remove_baseline": `remove_baseline`,
-                "time_bins": time_bins,
-                "erg_max": erg_max, "erg_min": erg_min,
-                "nominal_values": nominal_values}
-
-        """
-        if time_bins is not None:
-            time_bins = np.array(time_bins, copy=False)
-            assert time_bins.ndim == 2 and time_bins.shape[1] == 2
-            # assert None is time_bin_width is time_step is time_min is time_max,
-        else:
-            if time_max is None:
-                time_max = self.times[-1]
-            if time_min is None:
-                time_min = -time_bin_width/2
-
-            assert None not in [time_min, time_bin_width, time_step]
-            time_max = time_min + time_step * ((time_max - time_min) // time_step)
-            time_centers = np.arange(time_min, time_max + time_step, time_step)
-            lbins = time_centers - time_bin_width / 2
-            rbins = time_centers + time_bin_width / 2
-            time_bins = list(zip(np.where(lbins >= time_min, lbins, time_min), np.where(rbins <= time_max, rbins, time_max)))
-
-        time_bins = np.array(time_bins, copy=False)
-
-        ys = []
-
-        if convolve_overlay_sigma is not None:
-            ys_convolved = []
-            assert isinstance(convolve_overlay_sigma, (int, float))
-            convolve_sigma = int(convolve_overlay_sigma / np.mean(self.bin_widths))
-
-        else:
-            ys_convolved = None
-            convolve_sigma = None
-
-        def convolve(__y__):
-            if not nominal_values:
-                __y__ = unp.nominal_values(__y__)
-            return convolve_gauss(__y__, convolve_sigma)
-
-        labels4frames = []
-        assert len(time_bins) > 0
-        bin_edges = None
-
-        assert len(time_bins), "No time bins! Mistakes were made (probably by you just now)."
-
-        for (b0, b1) in time_bins:
-            _y, bin_edges = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr,
-                                                  nominal_values=nominal_values,
-                                                  return_bin_edges=True)
-
-            _y /= (b1 - b0)
-            _y *= scale
-
-            if time_scale_func is not None:
-                _y *= time_scale_func(b0, b1)
-
-            if remove_baseline:
-                _y -= rolling_median(45, _y)
-            ys.append(_y)
-            if ys_convolved is not None:
-                ys_convolved.append(convolve(_y))
-            labels4frames.append(f"{b0} <= t < {b1} ({0.5*(b0 + b1)})")
-
-        if interactive_plot is None:
-            interactive_plot = InteractivePlot(labels4frames, "time ")
-
-        x = (bin_edges[1:] + bin_edges[:-1]) / 2
-
-        if leg_label is None:
-            leg_label = self.file_name
-
-        color = interactive_plot.add_ys(x, ys, leg_label=leg_label, line_type='hist', return_color=True)
-        if ys_convolved is not None:
-            interactive_plot.add_ys(x, ys_convolved, line_type=None, opacity=0.65, leg_label=f'{leg_label}*{convolve_sigma}')
-
-        tot_time = (time_bins[-1][-1] - time_bins[0][0])
-
-        if nominal_values:
-            tot_y = np.mean(ys, axis=0)
-            error_y = None
-        else:
-            tot = np.mean(ys, axis=0)
-            tot_y = unp.nominal_values(tot)
-            error_y = unp.std_devs(tot)
-        # tot_y = self.get_erg_spectrum(erg_min=erg_min, erg_max=erg_max, time_min=time_min, time_max=time_max,
-        #                               remove_baseline=remove_baseline, nomin)
-
-        interactive_plot.add_persistent(x, tot_y, yerr=error_y, leg_label='All time', opacity=0.5, line_type='hist')
-
-        # interactive_plot.fig.update_layout(
-        #     scene=dict(
-        #         yaxis=dict(range=[0, interactive_plot.max_y])))
-
-        if not dont_plot:
-            interactive_plot.plot()
-
-        return {"interactive_plot": interactive_plot, "remove_baseline": remove_baseline, "time_bins": time_bins,
-                "erg_max": erg_max, "erg_min": erg_min,
-                "nominal_values": nominal_values,
-                'convolve_overlay_sigma': convolve_overlay_sigma,
-                'time_scale_func': time_scale_func}
-
-    # def plotly(self, erg_min=None, erg_max=None, erg_bins='auto', eff_corr=True, time_bin_width=15,
-    #            time_step: int = 5, time_min=0, time_max=None, percent_of_max=False, remove_baseline=False, title=None):
-    #     """
-    #     Args:
-    #         erg_min:
-    #         erg_max:
-    #         erg_bins:
-    #         eff_corr:
-    #         time_bin_width: Width of time range for each slider step.
-    #         time_step: delta t between each slider step
-    #         time_min: Min time
-    #         time_max: Max time for plot.
-    #         percent_of_max: It True, each bin is fraction of max.
-    #         remove_baseline:
-    #
-    #     Returns:
-    #
-    #     """
-    #     if erg_min is None:
-    #         erg_min = self.erg_bins[0]
-    #     if erg_max is None:
-    #         erg_max = self.erg_bins[-1]
-    #     if title is None:
-    #         title = self.file_name if self.file_name is not None else "untitled"
-    #
-    #     if time_max is None:
-    #         time_max = self.times[-1]
-    #
-    #     # time_centers = np.linspace(time_min, time_max, int((time_max-time_min) // time_step + 1))
-    #     time_max = time_min + time_step*((time_max - time_min)//time_step)
-    #     time_centers = np.arange(time_min, time_max, time_step)
-    #     time_groups = [(max([time_min, b - time_bin_width / 2]), min([time_max, b + time_bin_width / 2])) for b in time_centers]
-    #     time_bin_widths = [b1-b0 for b0, b1 in time_groups]
-    #
-    #     energy_bins = self.erg_bins_cut(erg_min, erg_max)
-    #     energy_bin_centers = (energy_bins[1:] + energy_bins[:-1])/2
-    #     labels4bins = []
-    #
-    #     ys = []
-    #
-    #     for b_width, (b0, b1) in zip(time_bin_widths, time_groups):
-    #         _y = self.get_erg_spectrum(erg_min, erg_max, b0, b1, eff_corr=eff_corr, nominal_values=True) / b_width
-    #         if remove_baseline:
-    #             _y -= rolling_median(45, _y)
-    #         ys.append(_y)
-    #         labels4bins.append((b0, b1))
-    #
-    #     ys = np.array(ys)
-    #
-    #     fig = go.Figure()
-    #
-    #     y_tot = self.get_erg_spectrum(erg_min, erg_max, time_max=time_max, nominal_values=True,
-    #                                   remove_baseline=remove_baseline, eff_corr=eff_corr)/(time_max-time_min)
-    #
-    #     fig.add_trace(
-    #         go.Bar(
-    #             visible=True,
-    #             name=f"All time",
-    #             x=energy_bin_centers,
-    #             y=y_tot,
-    #             marker_color='red',
-    #         )
-    #     )
-    #
-    #     steps = [dict(
-    #             method="update",
-    #             args=[{"visible": [True] + [False] * 2*len(time_centers)},
-    #                   {"title": f"{title} All time"}],  # layout attribute
-    #         )]
-    #
-    #     _max_y = 0
-    #     if percent_of_max:
-    #         ys /= np.array([np.max(convolve_gauss(_y, 3)) for _y in ys])[:, np.newaxis]
-    #
-    #     for index, (y, (t0, t1)) in enumerate(zip(ys, time_groups)):
-    #         b_width = t1 - t0
-    #         b_center = (t1+t0)/2
-    #         if max(y)>_max_y:
-    #             _max_y = max(y)
-    #
-    #         label = f"t ~= {b_center:.1f} [s] ({t0:.1f} < t < {t1:.1f})"
-    #         assert len(energy_bin_centers) == len(y), [len(energy_bin_centers), len(y)]
-    #         fig.add_trace(
-    #             go.Scatter(
-    #                 visible=False,
-    #                 x=energy_bin_centers,
-    #                 y=y,
-    #                 marker_color='blue',
-    #                 line={'shape': 'hvh'}
-    #             ),
-    #         )
-    #         fig.add_trace(
-    #             go.Scatter(
-    #                 visible=False,
-    #                 x=energy_bin_centers,
-    #                 y=convolve_gauss(y, 3),
-    #                 ))
-    #         step = dict(
-    #             method="update",
-    #             args=[{"visible": [False] * (2*len(time_centers) + 1)},
-    #                   {"title": f"{title} {label}"}],  # layout attribute
-    #         )
-    #         step["args"][0]["visible"][2*index+1] = True  # Toggle trace to "visible"
-    #         step["args"][0]["visible"][2*index+2] = True  # Toggle trace to "visible"
-    #         steps.append(step)
-    #     fig.update_yaxes(range=[0, _max_y*1.1])
-    #     sliders = [dict(
-    #         active=0,
-    #         currentvalue={"prefix": "time "},
-    #         pad={"t": 50},
-    #         steps=steps
-    #     )]
-    #
-    #     fig.update_layout(
-    #         sliders=sliders, bargap=0, bargroupgap=0.0
-    #     )
-    #     fig.show()
-    #     return fig
 
     def time_slice(self, time_min, time_max):
         """
@@ -1644,22 +715,6 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
             self._spe = out
         return out
 
-    def __set_optional_attribs_defaults__(self):
-        """
-        Sets unimportant attributes and place holders to their defaults. The vast majority of class features will work
-         without theses attributes. Does not modify attributes if they exist.
-
-        Returns: None
-        """
-        attribs = ['max_words', 'count_rate_meter', 'device_address', 'list_style', 'description', 'valid_erg_cal',
-                   'serial_number', 'MCB_type_string', 'erg_units', 'shape_cal', 'detector_id', 'count_rate_meter',
-                   '_energy_binned_times', '_energy_spec', '_spe', '_fraction_live', '_energies']
-        for name in attribs:
-            if not hasattr(self, name):
-                setattr(self, name, None)
-
-        self.allow_pickle = True
-
     def pickle(self, f_path=None, write_spe=True):
         # Change attribs to np.array where appropriate
         # if not self.allow_pickle:
@@ -1731,7 +786,7 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         self = MaestroListFile.__new__(MaestroListFile)
         super(MaestroListFile, self).__init__()  # run EfficiencyMixin init
-        self.__set_optional_attribs_defaults__()
+
         for k, v in d.items():
             if isinstance(v, bytes):
                 if k in d_np_types:
@@ -1754,148 +809,148 @@ class MaestroListFile(EfficiencyCalMixin, EnergyCalMixin, OriginalDataMixin):
 
         return self
 
-    @classmethod
-    def build(cls, adc_values, times, n_adc_channels, erg_calibration, gate_state=None,
-              sample_ready_state=None, path=None, start_time=None, realtimes=None, livetimes=None,
-              total_livetime=None, total_realtime=None, effs=None, eff_model=None,
-              load_erg_cal=None) -> MaestroListFile:
-        self = MaestroListFile.__new__(MaestroListFile)
-        super(MaestroListFile, self).__init__()  # run EfficiencyMixin init
-
-        self.__set_optional_attribs_defaults__()
-        self.adc_values = np.array(adc_values, dtype=float)
-        self.n_adc_channels = n_adc_channels
-        self.times = np.array(times)
-        self._erg_calibration = list(map(float, erg_calibration))  # no np.float64
-        if path is None:
-            self.path = None
-        else:
-            self.path = Path(path)
-        if start_time is None:
-            start_time = datetime.datetime.now()
-        self.start_time = start_time
-
-        self.realtimes = realtimes
-        self.livetimes = livetimes
-
-        self.gate_state = np.array(gate_state) if gate_state is not None else gate_state
-        self.sample_ready_state = np.array(sample_ready_state) if sample_ready_state is not None else sample_ready_state
-
-        if self.sample_ready_state is None:
-            if self.realtimes is None:
-                self.sample_ready_state = np.array([0])
-            else:
-                self.sample_ready_state = np.zeros_like(self.realtimes)
-
-        if total_realtime is None:
-            total_realtime = times[-1]
-        self.total_realtime = float(total_realtime) if total_realtime is not None else None
-        self.total_livetime = float(total_livetime) if total_livetime is not None else None
-        self.effs = effs
-        self.eff_model = eff_model
-        super(EfficiencyCalMixin, self).__init__(self.erg_calibration, load_erg_cal=load_erg_cal)
-        self.allow_pickle = True
-        super(EnergyCalMixin, self).__init__()
-        return self
+    # @classmethod
+    # def build(cls, adc_values, times, n_adc_channels, erg_calibration, gate_state=None,
+    #           sample_ready_state=None, path=None, start_time=None, realtimes=None, livetimes=None,
+    #           total_livetime=None, total_realtime=None, effs=None, eff_model=None,
+    #           load_erg_cal=None) -> MaestroListFile:
+    #     self = MaestroListFile.__new__(MaestroListFile)
+    #     super(MaestroListFile, self).__init__()  # run EfficiencyMixin init
+    #
+    #     self.__set_optional_attribs_defaults__()
+    #     self.adc_values = np.array(adc_values, dtype=float)
+    #     self.n_adc_channels = n_adc_channels
+    #     self.times = np.array(times)
+    #     self._erg_calibration = list(map(float, erg_calibration))  # no np.float64
+    #     if path is None:
+    #         self.path = None
+    #     else:
+    #         self.path = Path(path)
+    #     if start_time is None:
+    #         start_time = datetime.datetime.now()
+    #     self.start_time = start_time
+    #
+    #     self.realtimes = realtimes
+    #     self.livetimes = livetimes
+    #
+    #     self.gate_state = np.array(gate_state) if gate_state is not None else gate_state
+    #     self.sample_ready_state = np.array(sample_ready_state) if sample_ready_state is not None else sample_ready_state
+    #
+    #     if self.sample_ready_state is None:
+    #         if self.realtimes is None:
+    #             self.sample_ready_state = np.array([0])
+    #         else:
+    #             self.sample_ready_state = np.zeros_like(self.realtimes)
+    #
+    #     if total_realtime is None:
+    #         total_realtime = times[-1]
+    #     self.total_realtime = float(total_realtime) if total_realtime is not None else None
+    #     self.total_livetime = float(total_livetime) if total_livetime is not None else None
+    #     self.effs = effs
+    #     self.eff_model = eff_model
+    #     super(EfficiencyCalMixin, self).__init__(self.erg_calibration, load_erg_cal=load_erg_cal)
+    #     self.allow_pickle = True
+    #     super(EnergyCalMixin, self).__init__()
+    #     return self
 
     def __len__(self):
         return len(self.times)
 
-    def __iadd__(self, other: MaestroListFile, truncate=True, fast_calc=False, rebin_tolerence=0.1,
-                 recalc_effs=True, no_deadtime_corr=True):
-        """
-        Merge the events of another List file into this one.
-        Note: Have not verified if the calculations for deadtime correction are correct.
-        Args:
-            other: A other list file.
-
-            truncate: If True, truncate all events in the list file with the largest recorded time that occur at a
-                time after the final recorded time in the other list file. I.e., if one list file was acquiring for
-                longer than the other, it is usually beneficial to truncate the longer one so that they are the
-                 same length.
-
-            fast_calc: If True, settings will be set for speed.
-
-            rebin_tolerence: If bins are different by more than this then rebin other ListFile
-
-        Returns:
-
-        """
-        assert isinstance(other, MaestroListFile)
-
-        if fast_calc:
-            recalc_effs = False
-            truncate = True
-
-        if len(self.erg_bins) != len(other.erg_bins) or \
-                not all(np.abs(other.erg_bins - self.erg_bins) < rebin_tolerence):
-            other.rebin(self.erg_bins)
-
-        def factor_transform(n1, f1, n2, f2):
-            with np.errstate(divide='ignore', invalid='ignore'):
-                out = np.where(n1 + n2 != 0, (f1*n1 + f2*n2)/(n1 + n2), n1)
-            return out
-
-        if (self.effs is other.effs is None) or not recalc_effs:
-            pass
-        else:
-            if self.effs is None:
-                effs1 = np.ones_like(self.erg_centers)
-            else:
-                effs1 = self.effs
-            if other.effs is None:
-                effs2 = np.ones_like(other.erg_centers)
-            else:
-                effs2 = other.effs
-
-            rel_eff_errs = np.mean([unp.std_devs(effs1), unp.std_devs(effs2)], axis=0)
-            effs2 = unp.nominal_values(effs2)
-            effs1 = unp.nominal_values(effs1)
-
-            n1 = self.get_erg_spectrum(nominal_values=True, eff_corr=False)
-            n2 = other.get_erg_spectrum(nominal_values=True, eff_corr=False)
-
-            merged_effs = factor_transform(n1, effs1, n2, effs2)
-            self.effs = unp.uarray(merged_effs, rel_eff_errs)
-
-        if truncate:
-            tr = [self, other]
-            larger_index = None
-            if self.times[-1] > other.times[-1]:
-                larger_index = 0
-            elif self.times[-1] < other.times[-1]:
-                larger_index = 1
-            if larger_index is not None:
-                larger_list = tr.pop(larger_index)
-                smaller = tr[0]
-                max_time = smaller.times[-1]
-                max_i = np.searchsorted(larger_list.times, max_time)
-                setattr(larger_list, 'times', larger_list.times[:max_i])
-                setattr(larger_list, '_energies', larger_list.energies[:max_i])
-
-        idxs = np.searchsorted(self.times, other.times)
-        self._energies = np.insert(self.energies, idxs, other.energies)
-        self.times = np.insert(self.times, idxs, other.times)
-
-        if not no_deadtime_corr:
-            # Todo: using self.count_rate_meter is broken once 3 or more are added together
-            #  (because it is not changed accordingly). How to fix this? !
-            if (not (self.count_rate_meter is other.count_rate_meter is None)) and not fast_calc:
-                crm_is = np.argsort([-len(self.count_rate_meter), -len(other.count_rate_meter)])
-                frac_live_longer, frac_live_shorter = [[self.fraction_live, other.fraction_live][i] for i in crm_is]
-                crm_longer, crm_shorter = [[self.count_rate_meter, other.count_rate_meter][i] for i in crm_is]
-
-                crm_shorter = np.concatenate([crm_shorter, np.zeros(len(crm_longer) - len(crm_shorter))])
-                frac_live_shorter = np.concatenate([frac_live_shorter, np.zeros(len(frac_live_longer) - len(frac_live_shorter))])
-                frac_live = factor_transform(crm_longer, frac_live_longer, crm_shorter, frac_live_shorter)
-                self._fraction_live = frac_live
-
-        self._energy_binned_times = None
-        self._energy_spec = None
-        self.path = Path()  # prevent from overwriting pickle with default path.
-        self.allow_pickle = False
-        return self
-
+    # def __iadd__(self, other: MaestroListFile, truncate=True, fast_calc=False, rebin_tolerence=0.1,
+    #              recalc_effs=True, no_deadtime_corr=True):
+    #     """
+    #     Merge the events of another List file into this one.
+    #     Note: Have not verified if the calculations for deadtime correction are correct.
+    #     Args:
+    #         other: A other list file.
+    #
+    #         truncate: If True, truncate all events in the list file with the largest recorded time that occur at a
+    #             time after the final recorded time in the other list file. I.e., if one list file was acquiring for
+    #             longer than the other, it is usually beneficial to truncate the longer one so that they are the
+    #              same length.
+    #
+    #         fast_calc: If True, settings will be set for speed.
+    #
+    #         rebin_tolerence: If bins are different by more than this then rebin other ListFile
+    #
+    #     Returns:
+    #
+    #     """
+    #     assert isinstance(other, MaestroListFile)
+    #
+    #     if fast_calc:
+    #         recalc_effs = False
+    #         truncate = True
+    #
+    #     if len(self.erg_bins) != len(other.erg_bins) or \
+    #             not all(np.abs(other.erg_bins - self.erg_bins) < rebin_tolerence):
+    #         other.rebin(self.erg_bins)
+    #
+    #     def factor_transform(n1, f1, n2, f2):
+    #         with np.errstate(divide='ignore', invalid='ignore'):
+    #             out = np.where(n1 + n2 != 0, (f1*n1 + f2*n2)/(n1 + n2), n1)
+    #         return out
+    #
+    #     if (self.effs is other.effs is None) or not recalc_effs:
+    #         pass
+    #     else:
+    #         if self.effs is None:
+    #             effs1 = np.ones_like(self.erg_centers)
+    #         else:
+    #             effs1 = self.effs
+    #         if other.effs is None:
+    #             effs2 = np.ones_like(other.erg_centers)
+    #         else:
+    #             effs2 = other.effs
+    #
+    #         rel_eff_errs = np.mean([unp.std_devs(effs1), unp.std_devs(effs2)], axis=0)
+    #         effs2 = unp.nominal_values(effs2)
+    #         effs1 = unp.nominal_values(effs1)
+    #
+    #         n1 = self.get_erg_spectrum(nominal_values=True, eff_corr=False)
+    #         n2 = other.get_erg_spectrum(nominal_values=True, eff_corr=False)
+    #
+    #         merged_effs = factor_transform(n1, effs1, n2, effs2)
+    #         self.effs = unp.uarray(merged_effs, rel_eff_errs)
+    #
+    #     if truncate:
+    #         tr = [self, other]
+    #         larger_index = None
+    #         if self.times[-1] > other.times[-1]:
+    #             larger_index = 0
+    #         elif self.times[-1] < other.times[-1]:
+    #             larger_index = 1
+    #         if larger_index is not None:
+    #             larger_list = tr.pop(larger_index)
+    #             smaller = tr[0]
+    #             max_time = smaller.times[-1]
+    #             max_i = np.searchsorted(larger_list.times, max_time)
+    #             setattr(larger_list, 'times', larger_list.times[:max_i])
+    #             setattr(larger_list, '_energies', larger_list.energies[:max_i])
+    #
+    #     idxs = np.searchsorted(self.times, other.times)
+    #     self._energies = np.insert(self.energies, idxs, other.energies)
+    #     self.times = np.insert(self.times, idxs, other.times)
+    #
+    #     if not no_deadtime_corr:
+    #         # Todo: using self.count_rate_meter is broken once 3 or more are added together
+    #         #  (because it is not changed accordingly). How to fix this? !
+    #         if (not (self.count_rate_meter is other.count_rate_meter is None)) and not fast_calc:
+    #             crm_is = np.argsort([-len(self.count_rate_meter), -len(other.count_rate_meter)])
+    #             frac_live_longer, frac_live_shorter = [[self.fraction_live, other.fraction_live][i] for i in crm_is]
+    #             crm_longer, crm_shorter = [[self.count_rate_meter, other.count_rate_meter][i] for i in crm_is]
+    #
+    #             crm_shorter = np.concatenate([crm_shorter, np.zeros(len(crm_longer) - len(crm_shorter))])
+    #             frac_live_shorter = np.concatenate([frac_live_shorter, np.zeros(len(frac_live_longer) - len(frac_live_shorter))])
+    #             frac_live = factor_transform(crm_longer, frac_live_longer, crm_shorter, frac_live_shorter)
+    #             self._fraction_live = frac_live
+    #
+    #     self._energy_binned_times = None
+    #     self._energy_spec = None
+    #     self.path = Path()  # prevent from overwriting pickle with default path.
+    #     self.allow_pickle = False
+    #     return self
+#
 
 def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
                                time_bins: Union[str, int, np.ndarray] = 'auto',
