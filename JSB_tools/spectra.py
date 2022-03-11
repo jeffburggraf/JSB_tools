@@ -832,7 +832,7 @@ class ListSpectra(EfficiencyCalMixin):
 
         path = Path(path)
 
-        path = path.with_suffix('.marshal')
+        path = path.with_suffix('.list')
         data = {name: None for name in ListSpectra.pickle_attribs}
         for name, (func, _) in ListSpectra.pickle_attribs.items():
             if not hasattr(self, name):
@@ -862,7 +862,8 @@ class ListSpectra(EfficiencyCalMixin):
     def from_pickle(cls, path: Path):
         self = cls.__new__(cls)
 
-        path = Path(path).with_suffix('.marshal')
+        path = Path(path).with_suffix('.list')
+
         with open(path, 'rb') as f:
             data = marshal.load(f)
 
