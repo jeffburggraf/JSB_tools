@@ -612,7 +612,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
 
     @classmethod
     def from_lis(cls, path):
-        from JSB_tools.list_reader import MaestroListFile
+        from JSB_tools.maestro_reader import MaestroListFile
         l = MaestroListFile.from_pickle(path)
         return l.SPE
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import numpy as np
-from JSB_tools.list_reader import MaestroListFile
+from JSB_tools.maestro_reader import MaestroListFile
 from JSB_tools import Nuclide
 import plotly.graph_objects as go
 from uncertainties import UFloat

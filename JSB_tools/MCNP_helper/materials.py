@@ -546,6 +546,14 @@ class Graphite(Material):
         self.add_zaid(6000, 1)
 
 
+class Copper(Material):
+    def __init__(self, density=8.96, mat_number: int = None, mat_name: str = "Copper",
+                 mat_kwargs: Dict[str, str] = None):
+        super(Copper, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_zaid(29063, 0.6915)
+        self.add_zaid(29065, 0.3085)
+
+
 if __name__ == "__main__":
     print(StainlessSteel())
     # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)

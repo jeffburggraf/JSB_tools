@@ -27,6 +27,9 @@ from JSB_tools.nuke_data_tools import Nuclide, FissionYields, decay_nuclide
 import matplotlib.ticker as ticker
 from uncertainties import UFloat
 from scipy import ndimage
+from matplotlib.widgets import Button
+from matplotlib.figure import Axes, Figure
+
 try:
     import ROOT
     root_exists = True
@@ -38,6 +41,99 @@ __all__ = ['decay_nuclide']
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
+
+
+
+class TabPlot:
+    """
+    Make a mpl Figure with a button to switch between plots.
+
+    Examples:
+        import numpy as np
+        from matplotlib import pyplot as plt
+
+        f = TabPlot()
+
+        x = np.linspace(0, np.pi * 2, 1000)
+        # fig = plt.figure()
+
+        for i in range(1, 20):
+            ax = f.new_ax(i)
+            ax.plot(x, np.sin(x * i), label='label 1')
+            ax.plot(x, np.sin(x * i) ** 2, label='label 2')
+            ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
+            ax.legend()
+            ax.set_title(str(i))
+
+        plt.show()
+
+    """
+    def __init__(self, *args, **kwargs):
+        self.fig = plt.figure(*args, **kwargs)
+        self._vis_flag = True
+        self.button_axs = []
+        self.plt_axs = []
+        self.button_labels = []
+
+        self.button_funcs = []
+
+        self.buttons = []
+        self.prev_x = 0
+
+    units_per_letter = 0.1/4
+
+    @property
+    def button_len(self):
+        return sum(map(len, self.button_labels))
+
+    def get_button_func(self):
+        i = len(self.plt_axs) - 1
+
+        def set_vis(event):
+            for axs in self.plt_axs:
+                if axs is self.plt_axs[i]:
+                    [ax.set_visible(1) for ax in axs]
+                else:
+                    [ax.set_visible(0) for ax in axs]
+            self.fig.canvas.draw_idle()
+
+        return set_vis
+
+    def new_ax(self, button_label, nrows=1, ncols=1, *args, **kwargs) -> Axes:
+        button_label = f"{button_label: <4}"
+        self.button_labels.append(button_label)
+
+        axs = self.fig.subplots(nrows=nrows, ncols=ncols, *args, **kwargs)
+        if not hasattr(axs, '__iter__'):
+            axs = [axs]
+        self.plt_axs.append(axs)
+
+        b_unit = 0.1/4
+
+        button_x = self.prev_x + b_unit
+        button_width = len(button_label)*b_unit
+        button_y = + 0.1*(button_x//1)
+
+        self.prev_x = button_x + button_width
+
+        button_ax = plt.axes([button_x % 1, button_y, button_width, 0.075])
+
+        button = Button(button_ax, button_label)
+
+        self.fig.subplots_adjust(bottom=button_y + 0.075 + 0.1)
+
+        self.buttons.append(button)
+
+        button.on_clicked(self.get_button_func())
+
+        if self._vis_flag:
+            self._vis_flag = False
+        else:
+            [ax.set_visible(0) for ax in axs]
+
+        self.button_axs.append(button_ax)
+
+        return axs if len(axs) > 1 else axs[0]
 
 
 def _float(x):
@@ -308,6 +404,118 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     return out
 
 
+def get_bin_index(bins, vals):
+    return np.searchsorted(bins, vals, side='right') - 1
+
+
+def multi_peak_fit(bins, y, peak_centers: List[float], baseline_method='ROOT', baseline_kwargs=None,
+                   fit_window: float = None, debug_plot=False):
+    """
+    Fit one or more peaks in a close vicinity.
+    Args:
+        bins:
+        y:
+        peak_centers: List of peak_centers of peaks of interest. Doesn't have to be exact, but the closer the better.
+        baseline_method: either 'ROOT' or 'median'
+        baseline_kwargs: Arguments send to calc_background() or rolling_median() (See JSB_tools.__init__)
+        fit_window: A window that should at least encompass the peaks (single number in KeV).
+        debug_plot: Produce an informative plot.
+
+    Returns:
+
+    """
+    from scipy.signal import find_peaks
+    from lmfit.models import GaussianModel
+    model = None
+    params = None
+
+    bin_widths = bins[1:] - bins[:-1]
+    x = 0.5*(bins[1:] + bins[:-1])
+
+    if baseline_kwargs is None:
+        baseline_kwargs = {}
+    baseline_method = baseline_method.lower()
+
+    if baseline_method == 'root':
+        baseline = calc_background(y, **baseline_kwargs)
+    elif baseline_method == 'median':
+        if 'window_width_kev' in baseline_kwargs:
+            _window_width = baseline_kwargs['window_width_kev']
+        else:
+            _window_width = 30
+        _window_width /= bin_widths[len(bin_widths)//2]
+        baseline = rolling_median(values=y, window_width=_window_width)
+    else:
+        raise TypeError(f"Invalid `baseline_method`: '{baseline_method}'")
+
+    y -= baseline
+
+    centers_idx = list(sorted(get_bin_index(bins, peak_centers)))
+    _center = int((centers_idx[0] + centers_idx[-1])/2)
+    _bin_width = bin_widths[_center]
+
+    if fit_window is None:
+        if len(peak_centers) > 1:
+            fit_window = 1.5*max([max(peak_centers) - min(peak_centers)])
+            if fit_window*_bin_width < 10:
+                fit_window = 10/_bin_width
+        else:
+            fit_window = 10/_bin_width
+
+    _slice = slice(int(max([0, _center - fit_window//2])), int(min([len(y)-1, _center+fit_window//2])))
+    y = y[_slice]
+    x = x[_slice]
+    plt.figure()
+    density_sale = bin_widths[_slice]  # array to divide by bin widths.
+    y /= density_sale  # make density
+
+    peaks, peak_infos = find_peaks(unp.nominal_values(y), height=unp.std_devs(y), width=0)
+
+    select_peak_ixs = np.argmin(np.array([np.abs(c - np.searchsorted(x, peak_centers)) for c in peaks]).T, axis=1)
+    peak_widths = peak_infos['widths'][select_peak_ixs]*bin_widths[_center]
+    amplitude_guesses = peak_infos['peak_heights'][select_peak_ixs]*peak_widths
+    sigma_guesses = peak_widths/2.355
+
+    for i, erg in enumerate(peak_centers):
+        m = GaussianModel(prefix=f'_{i}')
+        # erg = extrema_centers[np.argmin(np.abs(erg-extrema_centers))]
+        if model is None:
+            params = m.make_params()
+            params[f'_{i}center'].set(value=erg)
+            model = m
+        else:
+            model += m
+            params.update(m.make_params())
+
+        params[f'_{i}amplitude'].set(value=amplitude_guesses[i], min=0)
+        params[f'_{i}center'].set(value=erg)
+        params[f'_{i}sigma'].set(value=sigma_guesses[i])
+
+    weights = unp.std_devs(y)
+    weights = np.where(weights>0, weights, 1)
+    weights = 1.0/weights
+
+    fit_result = model.fit(data=unp.nominal_values(y), x=x, weights=weights, params=params)
+
+    if debug_plot:
+        ax = mpl_hist(bins[_slice.start: _slice.stop + 1], y*density_sale, label='Observed')
+        _xs_upsampled = np.linspace(x[0], x[-1], 5*len(x))
+        density_sale_upsampled = density_sale[np.searchsorted(x, _xs_upsampled)]
+        model_ys = fit_result.eval(x=_xs_upsampled, params=fit_result.params)*density_sale_upsampled
+        model_errors = fit_result.eval_uncertainty(x=_xs_upsampled, params=fit_result.params)*density_sale_upsampled
+        ax.plot(_xs_upsampled, model_ys, label='Model')
+        ax.fill_between(_xs_upsampled, model_ys-model_errors, model_ys+model_errors, alpha=0.5, label='Model error')
+        ax.legend()
+        ax.set_ylabel("Counts")
+        ax.set_xlabel("Energy")
+        for i in range(len(peak_centers)):
+            amp = ufloat(fit_result.params[f'_{i}amplitude'].value, fit_result.params[f'_{i}amplitude'].stderr)
+            _x = fit_result.params[f'_{i}center'].value
+            _y = model_ys[np.searchsorted(_xs_upsampled, _x)]
+            ax.text(_x, _y*1.05, f'N={amp:.2e}')
+
+    return fit_result
+
 def discrete_interpolated_median(list_, poisson_errors=False):
     """
     Median of a list of integers.
@@ -417,8 +625,11 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
         return unp.uarray(result, np.abs(rel_errors*result))
 
 
-def mpl_style():
+def mpl_style(usetex=True):
     plt.style.use(style_path)
+    if not usetex:
+        plt.rcParams.update({
+            "text.usetex": False,})
 
 
 def norm2d_kernel(length_x, sigma_x, length_y=None, sigma_y=None):
@@ -473,7 +684,7 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
 
 
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_line_color=False, **mpl_kwargs):
+             return_line_color=False, return_line=False, **mpl_kwargs):
     """
 
     Args:
@@ -512,8 +723,10 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     bin_centers = [(bin_edges[i + 1] + bin_edges[i]) / 2 for i in range(len(bin_edges) - 1)]
     yp = np.concatenate([y, [y[-1]]])
-    invalid_plt_kwargs = ['elinewidth', 'capsize', 'barsabove', 'lolims', 'uplims', 'errorevery', 'capthick']
+    invalid_plt_kwargs = ['elinewidth', 'capsize', 'barsabove', 'lolims', 'uplims', 'errorevery', 'capthick', 'marker',
+                          'ds']
     plt_kwargs = {k: v for k, v in mpl_kwargs.items() if k not in invalid_plt_kwargs}
+
     lines = ax.plot(bin_edges, yp, label=label, ds='steps-post', marker='None', **plt_kwargs)
 
     c = lines[0].get_color()
@@ -521,14 +734,23 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     mpl_kwargs.pop('ls', None)
     mpl_kwargs.pop('color', None)
 
+    marker = mpl_kwargs.pop('marker', 'None')
     lines.append(ax.errorbar(bin_centers, y, yerr,
-                             ls='None',  marker='None', **mpl_kwargs))
+                             ls='None', marker=marker, **mpl_kwargs))
     if label is not None:
         ax.legend()
+
+    out = [ax]
+
+    if return_line:
+        out += [lines]
     if return_line_color:
-        return ax, c
-    else:
+        out += [c]
+
+    if len(out) == 1:
         return ax
+    else:
+        return tuple(out)
 
 
 def mpl_hist_from_data(bin_edges, data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
@@ -758,6 +980,7 @@ class FileManager:
         if not self.root_directory.exists():
             print(f'Creating directory for FileContainer:\n{self.root_directory}')
             self.root_directory.mkdir()
+
         self.__file_lookup_data: Dict[Path, dict] = {}
 
         # path to file that stores association information
@@ -909,6 +1132,10 @@ class FileManager:
         """
         lookup_kwargs = lookup_attributes  #.items()
         matches = {}
+
+        if len(lookup_kwargs) == 0:
+            return self.__file_lookup_data
+
         def test_match(d_search, d_exists):
             for k in d_search.keys():
                 if k not in d_exists:
@@ -927,9 +1154,6 @@ class FileManager:
             return True
 
         for path, attribs in self.__file_lookup_data.items():
-        #     all_attribs_list = list(attribs.items())
-        #
-        #     if all(a in all_attribs_list for a in lookup_kwargs):
             if test_match(lookup_kwargs, attribs):
                 matches[path] = {k: v for k, v in attribs.items()}
         if len(matches) == 0:
@@ -1090,8 +1314,20 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    h = human_friendly_time(24*60*60*32 + 3*60+3.234455, 2)
-    print(h)
-    # plt.show()
+
+    f = TabPlot()
+
+    x = np.linspace(0, np.pi * 2, 1000)
+    # fig = plt.figure()
+
+    for i in range(1, 20):
+        ax = f.new_ax(i)
+        ax.plot(x, np.sin(x * i), label='label 1')
+        ax.plot(x, np.sin(x * i) ** 2, label='label 2')
+        ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
+        ax.legend()
+        ax.set_title(str(i))
+
+    plt.show()
 
 

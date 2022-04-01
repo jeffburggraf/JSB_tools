@@ -33,20 +33,6 @@ OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 cwd = Path(__file__).parent
 
 
-class OriginalDataMixin:
-    def __init__(self):
-        self.__erg_calibration = tuple(self.erg_calibration)
-
-        self.__adc_values = np.array(self.adc_values)
-        self.__adc_values.flags.writeable = False
-
-        self.__n_adc_channels = self.n_adc_channels
-
-    def __recover__(self):
-        self.erg_calibration = self.__erg_calibration
-        self.adc_values = self.__adc_values
-        self.n_adc_channels = self.__n_adc_channels
-
 
 def ole2datetime(oledt):
     return OLE_TIME_ZERO + datetime.timedelta(days=float(oledt))
@@ -85,7 +71,7 @@ def get_spe_lines(_l: MaestroListFile):
 
 
 class MaestroListFile(ListSpectra, EnergyCalMixin):
-    pickle_attribs = 'erg_calibration', 'device_address', 'MCB_type_string', 'serial_number', \
+    pickle_attribs = '_erg_calibration', 'device_address', 'MCB_type_string', 'serial_number', \
                      'detector_id', 'total_realtime', 'total_livetime', 'count_rate_meter', 'n_adc_channels',\
                      'description', 'realtimes', 'livetimes', 'sample_ready_state', 'gate_state'
 
@@ -121,7 +107,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
         with open(path, 'rb') as f:
             lst_header = self.read('i', f)
 
-            self.adc_values: Union[np.ndarray, List[float]] = []
+            self.adc_channels = []
             assert lst_header == -13, f"Invalid list mode header. Should be '-13', got " \
                                       f"'{lst_header}' instead."
             self.list_style = self.read('i', f)
@@ -136,8 +122,6 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
             self.valid_erg_cal = self.read('1s', f)
             self.erg_units = self.read("4s", f)
             self._erg_calibration = [self.read('f', f) for i in range(3)]
-
-            # super(EfficiencyCalMixin, self).__init__(_erg_calibration, load_erg_cal=False)
 
             self.valid_shape_cal = self.read('1s', f)
             self.shape_cal = [self.read('f', f) for i in range(3)]
@@ -201,7 +185,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
             print("N events/s = ", len(self.__times) / self.total_realtime)
             print(f"Total counts: {self.n_counts}")
 
-        self.adc_values = np.array(self.adc_values)
+        self.adc_channels = np.array(self.adc_channels)
         t_log = time.time()
         if _print_progress:
             print('Converting pulse height data to energy...', end='')
@@ -218,11 +202,11 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
         self.realtimes.flags.writeable = False
         self.livetimes.flags.writeable = False
 
-        erg_bins = self.channel_to_erg(self._channels_list)
+        erg_bins = self.channel_to_erg(self.channels_list)
 
         fraction_live = self._calc_fraction_live(self.livetimes, self.realtimes, 10)
 
-        super(MaestroListFile, self).__init__(channels_list=self.adc_values, times=self.__times,
+        super(MaestroListFile, self).__init__(adc_channels=self.adc_channels, times=self.__times,
                                               erg_bins=erg_bins, path=path,
                                               fraction_live=fraction_live,
                                               fraction_live_times=self.realtimes,
@@ -244,7 +228,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
         # self.adc_values = self.adc_values[s]
 
     @property
-    def _channels_list(self):
+    def channels_list(self):
         return np.arange(self.n_adc_channels + 1) - 0.5
 
     # @property
@@ -271,8 +255,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
         """
         self.times = self.times + t
 
-        for l in self.energy_binned_times:
-            l += t
+        self.reset_cach()
 
     @staticmethod
     def _calc_fraction_live(livetimes, realtimes, dead_time_corr_window=10):
@@ -322,7 +305,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
     @erg_calibration.setter
     def erg_calibration(self, coeffs):
         self._erg_calibration = np.array(coeffs)
-        self.erg_bins = self.channel_to_erg(self._channels_list)
+        self.erg_bins = self.channel_to_erg(self.channels_list)
         self.reset_cach()
 
     def read_32(self, f) -> str:
@@ -377,7 +360,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
         word_debug = None
         if word[:2] == "11":  # ADC word
             adc_value = int(word[2:16], 2)
-            self.adc_values.append(adc_value)
+            self.adc_channels.append(adc_value)
             n_200ns_ticks = int(word[16:], 2)
             adc_time = self.n_rollovers * 10E-3 + n_200ns_ticks * 200E-9
             self.__times.append(adc_time)
@@ -588,9 +571,14 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
             ax = plt.gca()
         if 'label' not in ax_kwargs:
             ax_kwargs['label'] = "SAMPLEREADY"
+
         ax.set_xlabel("Real time [s]")
         ax.set_ylabel("State")
         ax.plot(self.realtimes, self.sample_ready_state, **ax_kwargs)
+
+        if self.path is not None:
+            ax.set_title(self.path.name)
+
         return ax
 
     def plot_gate(self, ax=None, **ax_kwargs):
@@ -611,26 +599,22 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
             directory.mkdir()
         return directory
 
-    @property
-    def energy_spec(self):
-        """
-        Just the number of counts in each energy bin. Redundant. Just a special case of
-            self.get_erg_spectrum (but faster).
-        Returns:
-
-        """
-        if self._energy_spec is None:
-            self._energy_spec = np.array(list(map(len, self.__energy_binned_times__)))
-        return self._energy_spec
+    # @property
+    # def energy_spec(self):
+    #     """
+    #     Just the number of counts in each energy bin. Redundant. Just a special case of
+    #         self.get_erg_spectrum (but faster).
+    #     Returns:
+    #
+    #     """
+    #     if self._energy_spec is None:
+    #         self._energy_spec = np.array(list(map(len, self.energy_binned_times)))
+    #     return self._energy_spec
 
     def channel_to_erg(self, channel) -> np.ndarray:
         if isinstance(channel, list):
             channel = np.array(channel)
         return np.sum([channel ** i * c for i, c in enumerate(self.erg_calibration)], axis=0)
-
-    @cached_property  # Also used as a standard attribute.
-    def n_adc_channels(self):
-        return max(self.adc_values)
 
     def time_slice(self, time_min, time_max):
         """
@@ -664,6 +648,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
             return out
 
     def build_spe(self, min_time=None, max_time=None):
+        # todo after canges
         """
         Construct and return the SPEFile instance from list data.
         Args:
@@ -674,7 +659,7 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
 
         """
         if min_time is None and max_time is None:
-            counts = self.energy_spec
+            counts = self.get_erg_spectrum()
             set_spe = True  # if True, save the result so that it isn't built again this session
             total_livetime = self.total_livetime
             total_realtime = self.total_realtime
@@ -706,189 +691,46 @@ class MaestroListFile(ListSpectra, EnergyCalMixin):
                 total_livetime = total_realtime
 
         path = None
-        if self.path is not None and len(self.path.name) :
+        if self.path is not None and len(self.path.name):
             path = self.path.with_suffix('.Spe')
+
         out = SPEFile.build(path=path, counts=counts,
                             erg_calibration=self._erg_calibration, livetime=total_livetime, realtime=total_realtime,
-                            channels=np.arange(self.n_adc_channels), erg_units=self.erg_units, shape_cal=self.shape_cal,
+                            channels=np.arange(self.n_adc_channels),
                             description=self.description, system_start_time=self.start_time, eff_model=self.eff_model,
-                            effs=self.effs, eff_scale=self.eff_scale, load_erg_cal=self._load_erg_cal)
+                            effs=self.effs, eff_scale=self.eff_model_scale, shape_cal=[0, 1, 0], erg_units='keV')
 
         if set_spe:
             self._spe = out
         return out
 
-    def pickle(self, path=None):
+    def pickle(self, path=None, pickle_eff=True, meta_data=None):
         assert not (self.path is path is None), "A `path` argument must be supplied as it wasn't specified at " \
                                                 "initialization. "
         if path is None:
             path = self.path
 
         path = Path(path)
-        meta_data_path = path.with_suffix('.list_meta')
-        data = {}
+
+        if meta_data is None:
+            meta_data = {}
+
         for name in self.pickle_attribs:
-            data[name] = getattr(self, name)
+            assert name not in meta_data, f"`meta_data` key, '{name}', is already an attribute of present class. " \
+                                          f"No overwriting allowed here."
 
-        with open(path, 'wb') as f:
-            pickle.dump(data, f)
+            meta_data[name] = getattr(self, name)
 
-        super(MaestroListFile, self).pickle()
+        super(MaestroListFile, self).pickle(path=path, pickle_eff=pickle_eff, meta_data=meta_data)
 
     @classmethod
     def from_pickle(cls, path, load_erg_cal=None) -> MaestroListFile:
         path = Path(path)
-        self = super(cls).from_pickle(path)
-
-        with open(path.with_suffix('.list_meta'), 'rb') as f:
-            data = pickle.load(f)
-
-        for name in cls.pickle_attribs:
-            setattr(self, name, data[name])
+        self = super(cls, cls).from_pickle(path)
+        self._spe = None
 
         return self
-    # @classmethod
-    # def build(cls, adc_values, times, n_adc_channels, erg_calibration, gate_state=None,
-    #           sample_ready_state=None, path=None, start_time=None, realtimes=None, livetimes=None,
-    #           total_livetime=None, total_realtime=None, effs=None, eff_model=None,
-    #           load_erg_cal=None) -> MaestroListFile:
-    #     self = MaestroListFile.__new__(MaestroListFile)
-    #     super(MaestroListFile, self).__init__()  # run EfficiencyMixin init
-    #
-    #     self.__set_optional_attribs_defaults__()
-    #     self.adc_values = np.array(adc_values, dtype=float)
-    #     self.n_adc_channels = n_adc_channels
-    #     self.times = np.array(times)
-    #     self._erg_calibration = list(map(float, erg_calibration))  # no np.float64
-    #     if path is None:
-    #         self.path = None
-    #     else:
-    #         self.path = Path(path)
-    #     if start_time is None:
-    #         start_time = datetime.datetime.now()
-    #     self.start_time = start_time
-    #
-    #     self.realtimes = realtimes
-    #     self.livetimes = livetimes
-    #
-    #     self.gate_state = np.array(gate_state) if gate_state is not None else gate_state
-    #     self.sample_ready_state = np.array(sample_ready_state) if sample_ready_state is not None else sample_ready_state
-    #
-    #     if self.sample_ready_state is None:
-    #         if self.realtimes is None:
-    #             self.sample_ready_state = np.array([0])
-    #         else:
-    #             self.sample_ready_state = np.zeros_like(self.realtimes)
-    #
-    #     if total_realtime is None:
-    #         total_realtime = times[-1]
-    #     self.total_realtime = float(total_realtime) if total_realtime is not None else None
-    #     self.total_livetime = float(total_livetime) if total_livetime is not None else None
-    #     self.effs = effs
-    #     self.eff_model = eff_model
-    #     super(EfficiencyCalMixin, self).__init__(self.erg_calibration, load_erg_cal=load_erg_cal)
-    #     self.allow_pickle = True
-    #     super(EnergyCalMixin, self).__init__()
-    #     return self
 
-    def __len__(self):
-        return len(self.times)
-
-    # def __iadd__(self, other: MaestroListFile, truncate=True, fast_calc=False, rebin_tolerence=0.1,
-    #              recalc_effs=True, no_deadtime_corr=True):
-    #     """
-    #     Merge the events of another List file into this one.
-    #     Note: Have not verified if the calculations for deadtime correction are correct.
-    #     Args:
-    #         other: A other list file.
-    #
-    #         truncate: If True, truncate all events in the list file with the largest recorded time that occur at a
-    #             time after the final recorded time in the other list file. I.e., if one list file was acquiring for
-    #             longer than the other, it is usually beneficial to truncate the longer one so that they are the
-    #              same length.
-    #
-    #         fast_calc: If True, settings will be set for speed.
-    #
-    #         rebin_tolerence: If bins are different by more than this then rebin other ListFile
-    #
-    #     Returns:
-    #
-    #     """
-    #     assert isinstance(other, MaestroListFile)
-    #
-    #     if fast_calc:
-    #         recalc_effs = False
-    #         truncate = True
-    #
-    #     if len(self.erg_bins) != len(other.erg_bins) or \
-    #             not all(np.abs(other.erg_bins - self.erg_bins) < rebin_tolerence):
-    #         other.rebin(self.erg_bins)
-    #
-    #     def factor_transform(n1, f1, n2, f2):
-    #         with np.errstate(divide='ignore', invalid='ignore'):
-    #             out = np.where(n1 + n2 != 0, (f1*n1 + f2*n2)/(n1 + n2), n1)
-    #         return out
-    #
-    #     if (self.effs is other.effs is None) or not recalc_effs:
-    #         pass
-    #     else:
-    #         if self.effs is None:
-    #             effs1 = np.ones_like(self.erg_centers)
-    #         else:
-    #             effs1 = self.effs
-    #         if other.effs is None:
-    #             effs2 = np.ones_like(other.erg_centers)
-    #         else:
-    #             effs2 = other.effs
-    #
-    #         rel_eff_errs = np.mean([unp.std_devs(effs1), unp.std_devs(effs2)], axis=0)
-    #         effs2 = unp.nominal_values(effs2)
-    #         effs1 = unp.nominal_values(effs1)
-    #
-    #         n1 = self.get_erg_spectrum(nominal_values=True, eff_corr=False)
-    #         n2 = other.get_erg_spectrum(nominal_values=True, eff_corr=False)
-    #
-    #         merged_effs = factor_transform(n1, effs1, n2, effs2)
-    #         self.effs = unp.uarray(merged_effs, rel_eff_errs)
-    #
-    #     if truncate:
-    #         tr = [self, other]
-    #         larger_index = None
-    #         if self.times[-1] > other.times[-1]:
-    #             larger_index = 0
-    #         elif self.times[-1] < other.times[-1]:
-    #             larger_index = 1
-    #         if larger_index is not None:
-    #             larger_list = tr.pop(larger_index)
-    #             smaller = tr[0]
-    #             max_time = smaller.times[-1]
-    #             max_i = np.searchsorted(larger_list.times, max_time)
-    #             setattr(larger_list, 'times', larger_list.times[:max_i])
-    #             setattr(larger_list, '_energies', larger_list.energies[:max_i])
-    #
-    #     idxs = np.searchsorted(self.times, other.times)
-    #     self._energies = np.insert(self.energies, idxs, other.energies)
-    #     self.times = np.insert(self.times, idxs, other.times)
-    #
-    #     if not no_deadtime_corr:
-    #         # Todo: using self.count_rate_meter is broken once 3 or more are added together
-    #         #  (because it is not changed accordingly). How to fix this? !
-    #         if (not (self.count_rate_meter is other.count_rate_meter is None)) and not fast_calc:
-    #             crm_is = np.argsort([-len(self.count_rate_meter), -len(other.count_rate_meter)])
-    #             frac_live_longer, frac_live_shorter = [[self.fraction_live, other.fraction_live][i] for i in crm_is]
-    #             crm_longer, crm_shorter = [[self.count_rate_meter, other.count_rate_meter][i] for i in crm_is]
-    #
-    #             crm_shorter = np.concatenate([crm_shorter, np.zeros(len(crm_longer) - len(crm_shorter))])
-    #             frac_live_shorter = np.concatenate([frac_live_shorter, np.zeros(len(frac_live_longer) - len(frac_live_shorter))])
-    #             frac_live = factor_transform(crm_longer, frac_live_longer, crm_shorter, frac_live_shorter)
-    #             self._fraction_live = frac_live
-    #
-    #     self._energy_binned_times = None
-    #     self._energy_spec = None
-    #     self.path = Path()  # prevent from overwriting pickle with default path.
-    #     self.allow_pickle = False
-    #     return self
-#
 
 def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
                                time_bins: Union[str, int, np.ndarray] = 'auto',
@@ -934,5 +776,11 @@ def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
 
 
 if __name__ == '__main__':
-    old = MaestroListFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot134.Lis')
+    old = MaestroListFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/tuesday/shot1.Lis')
+    old.pickle()
+    ax = old.plot_erg_spectrum()
+
+    s = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/tuesday/shot1.Lis')
+    s.plot_erg_spectrum(ax=ax)
+    plt.show()
     print()

@@ -70,7 +70,7 @@ class MCNPSICard:
     used_numbers = set()
 
     @staticmethod
-    def reset_si_numbers():
+    def clear_all():
         MCNPSICard.used_numbers = set()
 
     @staticmethod

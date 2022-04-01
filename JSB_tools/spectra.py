@@ -1,12 +1,11 @@
 from __future__ import annotations
-
+import sys
 import datetime
 import marshal
 import pickle
 import warnings
 from pathlib import Path
-from typing import List, Callable, Union, Tuple
-
+from typing import List, Callable, Union, Tuple, Iterable
 import lmfit
 import numpy as np
 import sortednp as snp
@@ -17,7 +16,7 @@ from uncertainties import UFloat, ufloat
 from JSB_tools import mpl_hist, calc_background, rolling_median, _float, discrete_interpolated_median, shade_plot
 from JSB_tools import convolve_gauss, calc_background, InteractivePlot
 from copy import deepcopy
-
+from matplotlib.axes import Axes
 np.random.seed(69)
 
 
@@ -42,13 +41,30 @@ def cached_decorator(func):
         except AttributeError:
             val = func(self)
             setattr(self, var_name, val)
+            self._cached.add(var_name)
             return val
     return out
 
 
 class EfficiencyCalMixin:
+    #  TODO !!!!!!!! setting self.eff_model_scale needs to automatically recals efficiencies!
+    #   Also dont unpickle self._effs directly. Will cause problems.
+
     """
     Mixin class for storing and maneging spectra's efficiency calibrations.
+
+    Usage:
+        Let spec be an instance of ListSpecra
+        # Method 1
+        spec.eff_path = Path("path/to/pickled_effcalmixin.eff")
+
+        # method  2
+        ... create lmfit.models.ModelResult object ...
+        spec.set_efficiency_model(lmfit_model_result)
+
+        # method 3
+        ... Create array of efficiency values with correct shape (float or ufloat types allowed)...
+        spec.set_efficiency_values(array_of_effs)
 
     Each Spe/List file has one associated with it. By default, all fields are None (efficiency is unity).
 
@@ -71,6 +87,34 @@ class EfficiencyCalMixin:
         list file or an Spe file.
 
     """
+
+    def eval(self, erg):
+        i = np.searchsorted(self.erg_centers, erg, side='left')
+        i = min([len(self.erg_centers)-1, i])
+        return self.effs[i]
+
+    @classmethod
+    def stand_alone(cls, erg_centers, path):
+        """
+        Use class as a stand alone class and not a mixin.
+
+        Args:
+            erg_centers:
+            path:
+
+        Returns:
+
+        """
+        self = cls()
+        self.erg_centers = erg_centers
+        with open(path, 'rb') as f:
+            # out = EfficiencyCalMixin.__new__(EfficiencyCalMixin)
+            d = pickle.load(f)
+            for k, v in d.items():
+                setattr(self, k, v)
+        self.recalc_effs()
+        return self
+
     def __init__(self):
         self._effs = None
         self.eff_model: lmfit.model.ModelResult = None
@@ -81,50 +125,86 @@ class EfficiencyCalMixin:
         eff_errs = np.interp(new_energies, self.erg_centers, unp.std_devs(self.effs))
         return unp.uarray(eff, eff_errs)
 
-    def __eff_path__(self, other_path=None) -> Path:
-        if other_path is not None:
-            path = Path(other_path)
+    def __eff_path__(self) -> Path:
+        """
+
+        Automatically create path from self.eff_path, or self.path is necessary.
+
+        Returns:
+
+        """
+        # Precedence is self.eff_path, then self.path.
+
+        if self.eff_path is None:
+            if self.path is None:
+                raise FileNotFoundError("Cannot unpickle efficiency bc self.path and self.eff_path is None and "
+                                        "`other_path` was not supplied.")
+            else:
+                path = self.path
+                eff_dir = path.parent / 'cal_files'
+                if not eff_dir.exists():
+                    eff_dir.mkdir(exist_ok=True)
+                return eff_dir / path.with_suffix('.eff').name
         else:
-            assert self.path is not None, 'self.path is None! User must supply other_path arg.'
-            path = self.path
+            path = self.eff_path
 
-        eff_dir = path.parent / 'cal_files'
+        return path.with_suffix('.eff')
 
-        if not eff_dir.exists():
-            eff_dir.mkdir(exist_ok=True)
-
-        return eff_dir / path.with_suffix('.eff').name
-
-    def unpickle_eff(self):
+    def unpickle_eff(self, path=None):
         """
         Unpickle from auto-determined path. If no file exists, set attribs to defaults.
         Returns:
 
         """
         try:
-            path = self.__eff_path__()
-            with open(path, 'rb') as f:
-                # out = EfficiencyCalMixin.__new__(EfficiencyCalMixin)
+            if path is None:
+                _path = self.__eff_path__()
+            else:
+                _path = Path(path)
+            _path = _path.with_suffix('.eff')
+
+            with open(_path, 'rb') as f:
                 d = pickle.load(f)
                 for k, v in d.items():
                     setattr(self, k, v)
+
         except FileNotFoundError:
-            pass
+            if path is not None:  # Manual specification failed. Raise!
+                raise
+
         except Exception:
             warnings.warn("Could not unpickle efficiency")
             raise
 
     def pickle_eff(self, path=None):
-        path = self.__eff_path__(path)
-        self.effs
-        if self._effs is self.eff_model is None:  # no efficiency data. Delete old if it exists.
-            path.unlink(missing_ok=True)
+        """
+        Write data to pickle file. If self.eff_model is None, write self._effs. Otherwise, same only the model and
+            recalculate self.effs later.
+        Args:
+            path:
+
+        Returns:
+
+        """
+        if self.eff_model is not None:
+            assert isinstance(self.eff_model, lmfit.model.ModelResult), \
+                "self.model_result must be an instance of lmfit.model.ModelResult"
+        if path is None:
+            path = self.__eff_path__()
         else:
-            d = {'_effs': self._effs, 'eff_model': self.eff_model, 'eff_model_scale': self.eff_model_scale}
-            with open(path, 'wb') as f:
-                pickle.dump(d, f)
+            path = Path(path).with_suffix(".eff")
+
+        d = {'_effs': self._effs if self.eff_model is None else None, 'eff_model': self.eff_model,
+             'eff_model_scale': self.eff_model_scale}
+        with open(path, 'wb') as f:
+            pickle.dump(d, f)
 
     def eval_eff_model(self):
+        """
+        Evaluate and return efficiencies
+        Returns:
+
+        """
         assert self.eff_model is not None
         effs = self.eff_model.eval(x=self.erg_centers)
         effs = np.where(effs > 1E-6, effs, 1E-6)
@@ -139,10 +219,25 @@ class EfficiencyCalMixin:
 
         return self._effs
 
+    @effs.setter
+    def effs(self, values):
+        assert len(self) == len(values)
+        self._effs = values
+        self.eff_model = None
+
+    def __len__(self):
+        if self.effs is None:
+            return 0
+        return len(self.effs)
+
     def recalc_effs(self, old_erg_centers=None, new_erg_centers=None):
         """
-        Recalculate for new energies of parent class, *or* if old_energies and new_energies are specified, recalculate
-          efficiency points (and delete the model if it exists).
+        Either 1. Recalculate for new energies of parent class using model
+        *or*   2. if old_energies and new_energies are specified, recalculate efficiency points
+                  (and delete the model if it exists).
+
+        The reason for the two logic paths is that interpolation is used when self.eff_model is None.
+
         Args:
             old_erg_centers:
             new_erg_centers:
@@ -150,11 +245,13 @@ class EfficiencyCalMixin:
         Returns:
 
         """
+
         if self.eff_model is not None:
             self._effs = None  # force model to be re-evaluated later.
         else:
             if self.effs is not None:
                 assert old_erg_centers is not new_erg_centers is not None, "Must supply these args"
+
                 if isinstance(self.effs[0], UFloat):
                     self._effs = unp.uarray(np.interp(new_erg_centers, old_erg_centers, unp.nominal_values(self.effs)),
                                            np.interp(new_erg_centers, old_erg_centers, unp.std_devs(self.effs)))
@@ -205,54 +302,64 @@ class EfficiencyCalMixin:
 class ListSpectra(EfficiencyCalMixin):
     datetime_format = '%m/%d/%Y %H:%M:%S'
 
-    # all attributes that should be ndarrays, along eith each dtype
-    ndarray_attribs = {'channels_list': int,
-                       'energies': float,
+    _cached = set()  # a set of the names of cached attributes (automatically poopulated).
+
+    # all attributes that should be ndarrays, along with each dtype
+    ndarray_attribs = {'adc_channels': int,
                        '_energies': float,
                        'times': float,
                        'erg_bins': float,
                        'fraction_live': float,
                        'fraction_live_times': float}
 
-    cached_properties = 'energies', 'energy_binned_times'  # used to reset all such properties when needed
+    _reset_properties = 'energies', 'energy_binned_times'  # used to reset all such properties when needed
 
     def reset_cach(self):
-        for name in ListSpectra.cached_properties:
+        for name in ListSpectra._reset_properties:
             name = f'_{name}'
             try:
                 delattr(self, name)
             except AttributeError:
                 pass
-        self._effs = None
+        # self._effs = None
 
-
+    # var_name: (function to apply before marshaling, function to apply after un-marshaling). None means lambda x:x
+    # Function is only applied if un-marshaled value is not None.
     pickle_attribs = {'_energies': (None, None),
-                      'channels_list': (None, None),
+                      'adc_channels': (None, None),
                       'times': (None, None),
                       'erg_bins': (None, None),
                       'path': (str, Path),
                       'fraction_live': (None, None),
                       'fraction_live_times': (None, None),
                       'start_time': (lambda x: x.strftime(ListSpectra.datetime_format),
-                                     lambda x: datetime.datetime.strptime(x, ListSpectra.datetime_format))
+                                     lambda x: datetime.datetime.strptime(x, ListSpectra.datetime_format)),
+                      'eff_path': (str, Path)
                       }
 
-    def __init__(self, channels_list, times, erg_bins, path=None,
+    def __init__(self, adc_channels, times, erg_bins, path=None,
                  fraction_live=None, fraction_live_times=None,
                  start_time: datetime.datetime = None):
         """
 
         Args:
-            channels_list: A list of channels corresponding to each event.
+            adc_channels: A list of ADC channels corresponding to each event. Max value allowed is len(erg_bins) - 2.
+
             times: The associated times for each event in channels_list
-            erg_bins: Used to define mapping between channels_list and energies.
+
+            erg_bins: Used to define mapping between channels_list and energies. len(erg_bins) = 1 + (# of ADC channels)
+                e.g., a value of 0 in adc_channels corresponds to an
+                event with energy bin of [erg_bins[0], erg_bins[1])
+
             path: Used to tie this instance to a file path. Used for pickling/unpickling.
 
         """
         self.times = times
-        self.channels_list = channels_list
+        self.adc_channels = adc_channels
 
-        assert max(channels_list) < len(erg_bins) - 1, \
+        self.eff_path = None  # for linking to efficiency calibration
+
+        assert max(adc_channels) < len(erg_bins) - 1, \
             "A channel in channels_list is beyond the number of energy bins provided!"
 
         self.erg_bins = erg_bins
@@ -272,7 +379,10 @@ class ListSpectra(EfficiencyCalMixin):
         self.start_time = start_time
 
         for name, dtype in ListSpectra.ndarray_attribs.items():
-            val = getattr(self, name)
+            try:
+                val = getattr(self, name)
+            except AttributeError:
+                continue
             if not isinstance(val, np.ndarray):
                 if val is not None:
                     setattr(self, name, np.array(val, dtype=dtype))
@@ -281,11 +391,22 @@ class ListSpectra(EfficiencyCalMixin):
                 setattr(self, name, val)
 
         super(ListSpectra, self).__init__()
-        self.unpickle_eff()
+
+        try:
+            self.unpickle_eff()
+        except FileNotFoundError:
+            pass
+
+    def set_efficiency_model(self, model: lmfit.model):
+        self.eff_model = model
+
+    def set_efficiency_values(self, effs):
+        assert len(effs) == len(self.energies)
+        self.effs = effs
 
     @cached_decorator
     def energies(self):
-        return self.erg_centers[self.channels_list]
+        return self.erg_centers[self.adc_channels]
 
     # @energies.setter
     # def energies(self, val):
@@ -312,8 +433,9 @@ class ListSpectra(EfficiencyCalMixin):
         """
         out = [[] for _ in range(len(self.erg_bins) - 1)]
 
-        # for i, t in zip(self.__erg_index__(self.energies), self.times):  #old way
-        for i, t in zip(self.channels_list, self.times):
+        assert len(self.adc_channels) == len(self.times), "This is not allowed. There is a bug."
+
+        for i, t in zip(self.adc_channels, self.times):
             if i >= self.n_channels:
                 raise IndexError("Bug. ")
 
@@ -365,7 +487,6 @@ class ListSpectra(EfficiencyCalMixin):
                             scale: Union[float, Callable, np.ndarray] = 1.,
                             nominal_values=True,
                             convolve: Union[float, int] = None,
-                            offset_sample_ready=False,
                             debug_plot: Union[bool, str] = False):
         """
         Get the time dependence around erg +/- signal_window_kev/2. Baseline is estimated and subtracted.
@@ -387,7 +508,6 @@ class ListSpectra(EfficiencyCalMixin):
             nominal_values: If False, return unp.uarray (i.e. include Poissonian errors).
             convolve: If not None, perform gaussian convolution with sigma according to this value
                 (sigma units are array indicies).
-            offset_sample_ready: Subtract the median of the times for which SAMPLE READY port is ON.
             debug_plot: If False, do nothing.
                         If True, plot signal and background (energy vs counts) for every time bin.
                         If "simple", plot one plot for all bins.
@@ -606,7 +726,7 @@ class ListSpectra(EfficiencyCalMixin):
         sig, bg, bins = \
             self.get_time_dependence(energy=energy, bins=bins, signal_window_kev=signal_window_kev,
                                      bg_window_kev=bg_window_kev, bg_offsets=bg_offsets, make_rate=make_rate,
-                                     eff_corr=eff_corr, nominal_values=False, offset_sample_ready=offset_sample_ready,
+                                     eff_corr=eff_corr, nominal_values=False,
                                      convolve=convolve, debug_plot=debug_plot)
 
         label = ''
@@ -642,9 +762,10 @@ class ListSpectra(EfficiencyCalMixin):
         return ax
 
     def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
-                         time_max: float = None, rebin=1, eff_corr=False, make_density=False, nominal_values=False,
+                         time_max: float = None, eff_corr=False, make_density=False, nominal_values=False,
                          return_bin_edges=False,
-                         remove_baseline=False, baseline_method='ROOT', baseline_kwargs=None):
+                         remove_baseline=False, baseline_method='ROOT', baseline_kwargs=None,
+                         debug_plot=False):
         """
         Get energy spectrum according to provided condition.
         Args:
@@ -652,19 +773,23 @@ class ListSpectra(EfficiencyCalMixin):
             erg_max:
             time_min:
             time_max:
-            rebin: Combine bins into rebin groups
             eff_corr: If True, correct for efficiency to get absolute counts.
             make_density: If True, divide by bin widths.
             nominal_values: If False, return unp.uarray
             return_bin_edges: Return the energy bins, e.g. for use in a histogram.
             remove_baseline: If True, remove baseline according to the following arguments.
+
             baseline_method: If "ROOT" then use JSB_tools.calc_background
                              If "median" then use JSB_tools.rolling_median
+
             baseline_kwargs: Kwargs ot pass to either JSB_tools.calc_background or JSB_tools.rolling_median
+                (e.g. window_width (defualt = 75))
+            debug_plot:
 
         Returns:
 
         """
+
         if erg_min is None:
             erg_min = self.erg_bins[0]
         if erg_max is None:
@@ -693,7 +818,7 @@ class ListSpectra(EfficiencyCalMixin):
 
         time_arrays = self.energy_binned_times[erg_index0: erg_index1]
 
-        out = np.fromiter(map(get_n_events, time_arrays), dtype=int)
+        out = np.fromiter(map(get_n_events, time_arrays), dtype=float)
 
         bins = self.erg_bins_cut(erg_min, erg_max)
 
@@ -701,7 +826,7 @@ class ListSpectra(EfficiencyCalMixin):
             out = unp.uarray(out, np.sqrt(out))
 
         if remove_baseline:
-            full_y = np.fromiter(map(get_n_events, self.energy_binned_times), dtype=int)
+            full_y = np.fromiter(map(get_n_events, self.energy_binned_times), dtype=float)
 
             if baseline_kwargs is None:
                 baseline_kwargs = {}
@@ -732,23 +857,40 @@ class ListSpectra(EfficiencyCalMixin):
             effs = self.effs[erg_index0: erg_index1]
             if nominal_values:
                 effs = unp.nominal_values(effs)
-                if not out.dtype == 'float64':
-                    out = out.astype('float64')
+                # if not out.dtype == 'float64':
+                #     out = out.astype('float64')
             out /= effs
 
-        # if rebin != 1:
-        #     out, bins = _rebin(rebin, out, bins)
+        if debug_plot:
+            if isinstance(debug_plot, Axes):
+                _ax = debug_plot
+            else:
+                _ax = None
+
+            erg_width = erg_max - erg_min
+            window = [erg_min-0.75*erg_width, erg_max+0.75*erg_width]
+
+            _ax = self.plot_erg_spectrum(erg_min=window[0], erg_max=window[1], ax=_ax, time_min=time_min,
+                                         time_max=time_max,
+                                         remove_baseline=remove_baseline, baseline_method=baseline_method,
+                                         baseline_kwargs=baseline_kwargs,
+                                         make_density=make_density, eff_corr=eff_corr)
+
+            _ax.set_title(f"{_ax.get_title()}\n" + rf"$\Sigma$ = {sum(out)}")
+            shade_plot(ax=_ax, window=[erg_min, erg_max], color='black')
 
         if return_bin_edges:
             return out, bins
         else:
             return out
 
-    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = 0,
-                          time_max: float = None, rebin=1, eff_corr=False, remove_baseline=False, make_density=False,
+    def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
+                          time_max: float = None, eff_corr=False, make_density=False, remove_baseline=False,
+                          baseline_method='ROOT', baseline_kwargs=None,
                           ax=None,
                           label=None,
-                          return_bin_values=False):
+                          return_bin_values=False,
+                          scale=1, **mpl_kwargs):
         """
         Plot energy spectrum with time and energy cuts.
         Args:
@@ -756,13 +898,19 @@ class ListSpectra(EfficiencyCalMixin):
             erg_max:
             time_min:
             time_max:
-            rebin: Combine n bins
             eff_corr: If True, correct for efficiency to get absolute counts.
+
             remove_baseline: If True, remove baseline.
-            make_density:
+            remove_baseline: If True, remove baseline according to the following arguments.
+
+            baseline_method: If "ROOT" then use JSB_tools.calc_background
+                             If "median" then use JSB_tools.rolling_median
+
+            make_density: Divide by bin widths.
             ax:
             label:
             return_bin_values:
+            scale:
 
         Returns:
 
@@ -778,16 +926,27 @@ class ListSpectra(EfficiencyCalMixin):
             fig = plt.gcf()
         fig.suptitle(title)
 
-        bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max, make_density=make_density,
-                                                 return_bin_edges=True, rebin=rebin, eff_corr=eff_corr)
-        if remove_baseline:
-            bl = calc_background(bin_values)
-            bin_values = -bl + bin_values
+        bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max, eff_corr=eff_corr,
+                                                 make_density=make_density,
+                                                 return_bin_edges=True, remove_baseline=remove_baseline,
+                                                 baseline_method=baseline_method, baseline_kwargs=baseline_kwargs)
+        if scale != 1:
+            bin_values *= scale
 
-        mpl_hist(bins, bin_values, ax=ax, label=label)
+        # if remove_baseline:
+        #     bl = calc_background(bin_values)
+        #     bin_values = -bl + bin_values
 
-        if not (time_min == 0 and time_max is None):
-            ax.set_title(f"{time_min:.1f} <= t <= {time_max:.1f}")
+        mpl_kwargs['label'] = label
+        mpl_hist(bins, bin_values, ax=ax, **mpl_kwargs)
+
+        if not (time_min is time_max is None):
+            if time_max is None:
+                time_max = self.times[-1]
+            if time_min is None:
+                time_min = 0
+            title0 = f"{ax.get_title()}; " if ax.get_title() else ""
+            ax.set_title(f"{title0}{time_min:.1f} <= t <= {time_max:.1f}")
 
         ax.set_xlabel('Energy [KeV]')
         ax.set_ylabel('Counts')
@@ -807,8 +966,15 @@ class ListSpectra(EfficiencyCalMixin):
 
         """
         out = ListSpectra.__new__(ListSpectra)
-        attribs = 'channels_list', 'times', 'erg_bins', 'path', 'fraction_live', 'fraction_live_times', 'start_time',\
-                  '_effs', '_eff_model', 'eff_scale', '_erg_centers', '_energies', '_effs'
+        # attribs = 'adc_channels', 'times', 'erg_bins', 'path', 'fraction_live', 'fraction_live_times', 'start_time',\
+        #           '_effs', 'eff_model', 'eff_model_scale', '_erg_centers', '_energies'
+
+        attribs = set(ListSpectra.ndarray_attribs.keys())
+        attribs.update(ListSpectra.pickle_attribs.keys())
+        attribs.update(['_effs', 'eff_model', 'eff_model_scale'])
+        # self._effs = None
+        # self.eff_model: lmfit.model.ModelResult = None
+        # self.eff_model_scale = 1
 
         for a in attribs:
             try:
@@ -824,16 +990,32 @@ class ListSpectra(EfficiencyCalMixin):
 
         return out
 
-    def pickle(self, path=None):
-        assert not (self.path is path is None), "A `path` argument must be supplied as it wasn't specified at " \
-                                                "initialization. "
+    def pickle(self, path=None, pickle_eff=True, meta_data: dict = None):
+        """
+
+        Args:
+            path: path_to_pickle_file. None will use self.path.
+            pickle_eff: Pickle efficiency? Or no?
+            meta_data: dict of attribute_name:attribute pairs. will be pickled into seperate
+            file and unpickled as expected.
+
+
+        Returns:
+
+        """
+        assert not (self.path is path is None), "A `path` argument must be supplied since self.path is not None"
+
         if path is None:
             path = self.path
 
+        if not hasattr(self, '_energies'):
+            _ = self.energies  # force evaluation
+
         path = Path(path)
 
-        path = path.with_suffix('.list')
-        data = {name: None for name in ListSpectra.pickle_attribs}
+        path = path.with_suffix('.pylist')
+        # data = {name: None for name in ListSpectra.pickle_attribs}
+        data = {}
         for name, (func, _) in ListSpectra.pickle_attribs.items():
             if not hasattr(self, name):
                 continue
@@ -841,9 +1023,10 @@ class ListSpectra(EfficiencyCalMixin):
                 val = getattr(self, name)
 
             if val is None:
+                data[name] = val
                 continue
 
-            if func is not None:  # Apply function that makes obj marshalable.
+            if func is not None:  # Apply a function to make obj marshalable.
                 val = func(val)
 
             try:  # make sure dtypes are correct.
@@ -858,32 +1041,75 @@ class ListSpectra(EfficiencyCalMixin):
         with open(path, 'wb') as f:
             marshal.dump(data, f)
 
+        if meta_data is not None:
+            meta_data_path = path.with_suffix('.list_meta')
+
+            with open(meta_data_path, 'wb') as f:
+                pickle.dump(meta_data, f)
+
+        if pickle_eff:
+            self.pickle_eff()
+
     @classmethod
-    def from_pickle(cls, path: Path):
+    def from_pickle(cls, path: Path, ignore_missing_data=False):
         self = cls.__new__(cls)
 
-        path = Path(path).with_suffix('.list')
+        path = Path(path).with_suffix('.pylist')
 
         with open(path, 'rb') as f:
             data = marshal.load(f)
 
         for name, (_, func) in ListSpectra.pickle_attribs.items():
-            val = data[name]
+            try:
+                val = data[name]
+            except KeyError as e:
+                if not ignore_missing_data:
+                    raise Exception(f"Pickle'd data missing attribute '{name}' from {path}") from e
+                continue
+
             if isinstance(val, bytes):
+
                 assert name in ListSpectra.ndarray_attribs
                 val = np.frombuffer(val, dtype=ListSpectra.ndarray_attribs[name])
             else:
-                if func is not None:
+                if func is not None and val is not None:
                     val = func(val)
             setattr(self, name, val)
 
-        super(ListSpectra, self).__init__()
+        super(ListSpectra, self).__init__()  # EfficiencyCalMixin
+
+        meta_data_path = path.with_suffix('.list_meta')
+
+        try:
+            with open(meta_data_path, 'rb') as f:
+                meta_data = pickle.load(f)
+
+            for name, val in meta_data.items():
+                setattr(self, name, val)
+        except FileNotFoundError:
+            pass
+
         self.unpickle_eff()
 
         return self
 
     def __len__(self):
         return len(self.erg_centers)
+
+    def energy_cut(self, erg_min=None, erg_max=None):
+        """Remove all events with energy outside range"""
+        sel = np.ones(len(self.energies), dtype=bool)
+
+        if erg_min is not None:
+            sel[self.energies < erg_min] = False
+
+        if erg_max is not None:
+            sel[self.energies > erg_max] = False
+
+        self.adc_channels = self.adc_channels[sel]
+        self.times = self.adc_channels[sel]
+
+        self.reset_cach()
 
     def merge_bins(self, n):
         self.rebin(self.erg_bins[::int(n)])
@@ -893,14 +1119,15 @@ class ListSpectra(EfficiencyCalMixin):
             new_bins = np.array(new_bins)
 
         sel = np.ones(len(self.energies), dtype=bool)
+
         if self.erg_bins[-1] > new_bins[-1] or self.erg_bins[0] < new_bins[0]:
             max_i = self.__erg_index__(new_bins[-1])
             min_i = self.__erg_index__(new_bins[0])
             if min_i > 0:
-                sel &= self.channels_list >= min_i
+                sel &= self.adc_channels >= min_i
 
             if max_i < len(self) - 1:
-                sel &= self.channels_list < max_i
+                sel &= self.adc_channels < max_i
 
         if sel is True:
             sel = Ellipsis
@@ -910,43 +1137,57 @@ class ListSpectra(EfficiencyCalMixin):
         old_energies = self.energies[sel]
 
         new_energies = old_energies + \
-                       self.bin_widths[self.channels_list[sel]]*(np.random.random(len(old_energies)) - 0.5)
+                       self.bin_widths[self.adc_channels[sel]] * (np.random.random(len(old_energies)) - 0.5)
 
         self.erg_bins = new_bins
-        self.channels_list = self.__erg_index__(new_energies)
+        self.adc_channels = self.__erg_index__(new_energies)
 
-        self._energies = self.erg_centers[self.channels_list]
+        self.times = self.times[sel]  # remove from times what we did from energies
 
-        try:
-            del self._energy_binned_times
-        except AttributeError:
-            pass
-
-        self.energy_binned_times
+        self.reset_cach()
 
         if self.effs is not None:
             self.recalc_effs(old_erg_centers=old_erg_centers, new_erg_centers=self.erg_centers)
 
-    def __add__(self, other: ListSpectra):
-        self = self.copy()
-        other = other.copy()
+    def __repr__(self):
+        return f"ListSpectra: len={len(self.erg_centers)}; n_events:{len(self.times)}"
+
+    def __iadd__(self, other):
+        return self.__add__(other, copy=False)
+
+    def __add__(self, other: ListSpectra, copy=True, recalc_effs=True):
+        if copy:
+            self = self.copy()
 
         other.rebin(self.erg_bins)
 
         self.times, (indices_self, indices_other) = snp.merge(self.times, other.times, indices=True)
 
-        new_energies = np.zeros_like(self.times)
-        new_energies[indices_self] = self.energies
-        new_energies[indices_other] = other.energies
+        new_adc_channels = np.zeros(len(self.times), dtype=int)
+        new_adc_channels[indices_self] = self.adc_channels
+        new_adc_channels[indices_other] = other.adc_channels
 
-        if self.effs is not None and other.effs is not None:
+        self.adc_channels = new_adc_channels
+
+        self.reset_cach()
+
+        if (self.effs is not None) and (other.effs is not None) and recalc_effs:
             if len(self.effs) == len(other.effs):
                 if not all(np.isclose(unp.nominal_values(self.effs), unp.nominal_values(other.effs), rtol=0.01)):
                     erg_spec_self = self.get_erg_spectrum(nominal_values=True, eff_corr=False)
                     erg_spec_other = other.get_erg_spectrum(nominal_values=True, eff_corr=False)
                     effs_self = unp.nominal_values(self.effs)
                     effs_other = unp.nominal_values(other.effs)
+
+                    # Todo: The rel error of the sum is not the correct end point
                     rel_errors = (unp.std_devs(effs_other) + unp.std_devs(effs_other))/(effs_self + effs_other)
+
+                    # don't divide by zero below. Setting zero entries to one results in taking the average between
+                    # efficiencies
+                    zero_ids = np.where((erg_spec_self == erg_spec_other) & (erg_spec_other == 0))[0]
+                    erg_spec_other[zero_ids] = 1
+                    erg_spec_self[zero_ids] = 1
+
                     new_effs = (effs_self*erg_spec_self + effs_other*erg_spec_other)/(erg_spec_self + erg_spec_other)
                     new_effs = unp.uarray(new_effs, rel_errors*new_effs)
                     self.effs = new_effs
@@ -954,8 +1195,9 @@ class ListSpectra(EfficiencyCalMixin):
                     pass  # We're good.
             else:
                 raise NotImplementedError("No way to combine different length Spectra yet. Todo")
-
         # todo: fraction live
+
+        return self
 
     @staticmethod
     def multi_plotly(list_objs: List[ListSpectra], scales=None, leg_labels=None, erg_min=40, erg_max=None,
@@ -1009,8 +1251,8 @@ class ListSpectra(EfficiencyCalMixin):
 
         kwargs['interactive_plot'].plot()
 
-    def plotly(self, erg_min=40, erg_max=None, eff_corr=True, time_bins=None, time_bin_width=15,
-               time_step: int = 5, time_min=None, time_max=None, remove_baseline=False,
+    def plotly(self, erg_min=40, erg_max=None, eff_corr=False, time_bins=None, time_bin_width=15,
+               time_step: float = 5., time_min=None, time_max=None, remove_baseline=False,
                interactive_plot: InteractivePlot = None, nominal_values=True, leg_label=None, scale=1,
                dont_plot=False, convolve_overlay_sigma=None,
                time_scale_func: Callable = None):
@@ -1021,8 +1263,8 @@ class ListSpectra(EfficiencyCalMixin):
             erg_max:
             eff_corr:
             time_bins:
-            time_bin_width:
-            time_step:
+            time_bin_width: time range for each "frame"
+            time_step: time step between each "frame".
             time_min:
             time_max:
             remove_baseline:
@@ -1116,7 +1358,7 @@ class ListSpectra(EfficiencyCalMixin):
         x = (bin_edges[1:] + bin_edges[:-1]) / 2
 
         if leg_label is None:
-            leg_label = self.path
+            leg_label = self.path.name if self.path is not None else ""
 
         color = interactive_plot.add_ys(x, ys, leg_label=leg_label, line_type='hist', return_color=True)
         if ys_convolved is not None:
@@ -1151,9 +1393,6 @@ class ListSpectra(EfficiencyCalMixin):
                 'time_scale_func': time_scale_func}
 
 
-
-
-
 def debug_list() -> ListSpectra:
     n = 25000
     erg_bins = np.arange(0, 2000)
@@ -1164,12 +1403,34 @@ def debug_list() -> ListSpectra:
     return ListSpectra(channels_list, times, erg_bins, Path().cwd()/'test', start_time=datetime.datetime.now())
 
 
-if __name__ == '__main__':
-    s = debug_list()
-    # s.pickle()
-    s1 = ListSpectra.from_pickle(Path().cwd()/'test')
+def get_test_spec1():
+    return ListSpectra.from_pickle(Path(__file__).parent/'misc_data'/'test_spec1.pylist')
 
-    print()
+
+def get_test_spec2():
+    return ListSpectra.from_pickle(Path(__file__).parent/'misc_data'/'test_spec2.pylist')
+
+
+if __name__ == '__main__':
+    # import  cProfile
+    # from line_profiler import line_profiler
+    s1 = get_test_spec1()
+    s2 = get_test_spec2()
+
+    def f():
+        ListSpectra.__add__(s1, s2)
+
+
+    from line_profiler import LineProfiler
+
+    lprofiler = LineProfiler()
+
+    lprofiler.add_function(ListSpectra.__add__)
+    lp_wrapper = lprofiler(f)
+
+    lprofiler.print_stats()
+
+
 
 
 

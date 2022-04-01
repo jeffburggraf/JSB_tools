@@ -284,6 +284,10 @@ class DecayModeHandlerMixin:
             self._from_modes = []
 
     @property
+    def parent_nuclide(self) -> Nuclide:
+        return Nuclide.from_symbol(self.parent_nuclide_name)
+
+    @property
     def from_mode(self):
         if len(self._from_modes) == 1:
             return self._from_modes[0]
@@ -767,22 +771,34 @@ class FissionYields:
 
     def threshold(self, frac_of_max=0.02) -> List[str]:
         """
-        Remove all yields that are lewss than frac_of_max*y_m, where y_m is the nucleus with maximum yield.
+        Remove all yields that are less than frac_of_max*y_m, where y_m is the nucleus with maximum yield.
         Args:
             frac_of_max:
 
         Returns: List of nuclides that were excluded
 
         """
-        cut_off = sum(self.yields[list(self.yields.keys())[0]])*frac_of_max
-        flag = False
+        if frac_of_max == 0.0:
+            return []
+
+        if self.inducing_par != 'sf':
+            cut_off = sum(self.yields[list(self.yields.keys())[0]]) * frac_of_max
+
+            def get_rel_yield():
+                return sum(unp.nominal_values(self.yields[k]))
+
+        else:
+            cut_off = max(self.yields.values()).n * frac_of_max
+
+            def get_rel_yield():
+                return self.yields[k].n
+
         out = []
         for k in list(self.yields.keys()):
-            out.append(k)
-            if sum(unp.nominal_values(self.yields[k])) < cut_off:
-                flag = True
-            if flag:
+            if get_rel_yield() < cut_off:
                 del self.yields[k]
+                out.append(k)
+
         return out
 
     def get_yield(self, nuclide_name):
@@ -1251,11 +1267,15 @@ def decay_default_func(nuclide_name):
     return func
 
 
-def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
+def decay_nuclide(nuclide_name: str, init_quantity=1., init_rate=None, driving_term=0.,
+                  fiss_prod=False, fiss_prod_thresh=0, max_half_life=None):
     """
-    This function solves the following problem:
-        Starting with some amount (see init_term) of a given unstable nuclide, what amount of the parent and its
+    Generate and return a function that solves the following problem:
+        Starting with some amount (see init_quantity) of a given unstable nuclide, what amount of the parent and its
          progeny nuclides remain after time t?
+
+    Solves the diff. eq y' == M.y, where M is a matrix derived from decay rates/branching ratios. Either y or y' can be
+    returned (see
 
     Use driving_term arg for the case of nuclei being generated at a constant rate (in Hz), e.g. via a beam.
     A negative driving_term can be used, however, not that if the number of parent nuclei goes negative
@@ -1268,17 +1288,27 @@ def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
     The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem
         (or inhomogeneous system of lin. diff. eq. in the case of a nonzero driving_term).
 
-    Todo: test if using `init_term` arg is the same as using `scale` arg in the returned function.
-
     Args:
         nuclide_name: Name of parent nuclide.
-        init_term: The scale for the amount of parent nucleus at t=0 - i.e. the initial condition.
-        driving_term: Set to non-zero if parent nucleus is being produced at a constant rate (in Hz).
+
+        init_quantity: scalar representing the amount of parent nuclei at t=0 - i.e. the initial condition.
+
+        init_rate: Similar to init_quantity, except specify a initial rate (decays/second).
+            Only one of the two init args can be used
+
+        driving_term: Set to non-zero number to have the parent nucleus be produced at a constant rate (in Hz).
+
+        fiss_prod: If True, decay fission products as well.
+
+        fiss_prod_thresh: Threshold of a given fission product yield (rel to highest yielded product).
+            Between 0 and 1.0. 0 means accept all.
+
+        max_half_life: A given decay chain will halt after reaching a nucleus with half life (in sec.) above this value.
 
     Returns:
         A function that takes a time (or array of times), and returns nuclide fractions at time(s) t.
         Return values of this function are of form: Dict[nuclide_name: Str, fractions: Union[np.ndarray, float]]
-        See 'func' docstring below for more details.
+        See 'return_func' docstring below for more details.
 
     """
 
@@ -1286,24 +1316,59 @@ def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
     if (not nuclide.is_valid) or nuclide.is_stable:
         return decay_default_func(nuclide_name)
 
+    if fiss_prod:
+        assert ('sf',) in nuclide.decay_modes, f"Cannot include fission product on non-SF-ing nuclide, {nuclide}"
+        fission_yields = FissionYields(nuclide.name, None, independent_bool=True)
+        fission_yields.threshold(fiss_prod_thresh)
+    else:
+        fission_yields = None
+
+    assert isinstance(init_quantity, (float, int, type(None))), "`init_quantity` must be a float or int"
+    assert isinstance(init_rate, (float, int, type(None))), "`init_rate` must be a float or int"
+    assert not init_quantity is init_rate is None, "Only one of the two init args can be used"
+    if init_rate is not None:
+        init_quantity = init_rate/nuclide.decay_rate.n
+
     column_labels = [nuclide_name]  # Nuclide names corresponding to lambda_matrix.
     lambda_matrix = [[-nuclide.decay_rate.n]]  # Seek solutions to F'[t] == lambda_matrix.F[t]
 
+    completed = set()
+
     def loop(parent_nuclide: Nuclide, decay_modes):
-        if not len(decay_modes):  # stable nuclide. Terminate recursion.
+        if not len(decay_modes):  # or parent_nuclide.name in _comp:  # stable nuclide. Terminate recursion.
+            return
+
+        if parent_nuclide.name in completed:  # this decay chain has already been visited. No need to repeat.
             return
 
         # Loop through all decay channels
-        for _, modes in decay_modes.items():
-            # A given decay channels (e.g. beta -) can have multiple child nuclides, so loop through them all.
-            for mode in modes:
-                if mode.modes[-1] == 'sf':  # don't decay fission yields (for now?)
+        for mode_name_tuple, modes in decay_modes.items():
+            if not len(modes):
+                continue
+
+            if mode_name_tuple == ('sf',):
+                if fiss_prod:
+                    fiss_branching = modes[0].branching_ratio
+
+                    modes = []  # new modes that mimics structure of typical decay but for all fission products.
+
+                    for fp_name, y in fission_yields.yields.items():
+                        _mode = type('', (), {})()
+                        _mode.parent_name = parent_nuclide.name
+                        _mode.daughter_name = fp_name
+                        _mode.branching_ratio = y*fiss_branching.n
+                        modes.append(_mode)
+                else:
                     continue
 
-                # index of row/column for parent nuclide in lambda matrix.
+            # A given decay channels (e.g. beta- -> gs or 1st excited state, also fission) can have multiple
+            # child nuclides, so loop through them all.
+            for mode in modes:
+
                 parent_index = column_labels.index(mode.parent_name)
 
                 child_nuclide = Nuclide.from_symbol(mode.daughter_name)
+
                 # index of row/column for child nuclide in lambda matrix.
                 child_lambda = child_nuclide.decay_rate.n
 
@@ -1324,8 +1389,16 @@ def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
 
                     lambda_matrix.append(child_row)  # finally add new row to matrix.
 
-                child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n
-                loop(child_nuclide, child_nuclide.decay_modes)  # recursively loop through daughters
+                # Do not use += below. The parent feeding rate is a constant no matter how many times the same
+                # parent/daughter combo is encountered.
+                child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n  # parent feeding term
+
+                if (max_half_life is not None) and child_nuclide.half_life.n > max_half_life:
+                    continue  # don't worry about daughter bc nucleus decays too slow according to `max_half_life`
+                else:
+                    loop(child_nuclide, child_nuclide.decay_modes)  # recursively loop through all daughters
+
+        completed.add(parent_nuclide.name)  # Add parent to list of completed decay chains to avoid repeats
 
     loop(nuclide, nuclide.decay_modes)  # initialize recursion.
 
@@ -1335,7 +1408,7 @@ def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
 
     eig_vecs = eig_vecs.T
 
-    b = [init_term] + [0.]*(len(eig_vals) - 1)
+    b = [init_quantity] + [0.] * (len(eig_vals) - 1)
 
     if driving_term != 0:
         # coefficients of the particular solution (which will be added to homo. sol.)
@@ -1345,16 +1418,20 @@ def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
 
     coeffs = np.linalg.solve(eig_vecs.T, b - particular_coeffs)  # solve for initial conditions
 
-    def func(ts, scale=1, decay_rate=False, threshold=None, plot=False) -> Dict[str, np.ndarray]:
+    def return_func(ts, scale=1, decay_rate=False, threshold=None, plot=False) -> Dict[str, np.ndarray]:
         """
         Evaluates the diff. eq. solution for all daughter nuclides at the provided times (`ts`).
         Can determine, as a function of time, the quantity of all decay daughters or the decay rate.
         This is controlled by the `decay_rate` argument.
         Args:
             ts: Times at which to evaluate the specified quantity
+
             scale: Scalar to be applied to the yield of all daughters.
-            decay_rate: If True, return decays per second instead of fraction remaining.
+
+            decay_rate: If True, return decays per second instead of fraction remaining. I.e. return y[i]*lambda_{i}
+
             threshold: Fraction of the total integrated yield below which solution arent included. None includes all.
+
             plot: Plot for debugging.
 
         Returns: dict of the form, e.g.:
@@ -1405,7 +1482,7 @@ def decay_nuclide(nuclide_name: str, init_term=1., driving_term=0.):
 
         return out
 
-    return func
+    return return_func
 
 
 class Nuclide:
@@ -1561,20 +1638,7 @@ class Nuclide:
         return out
 
     def decay_chain_gamma_lines(self, __branching__ratio__=1) -> List[GammaLine]:
-        raise NotImplementedError("Needs re-worked!")
-        out = []
-        decay_modes: List[DecayMode] = []
-        for ms in self.decay_modes.values():
-            decay_modes.extend(ms)
-        for m in decay_modes:
-            eff_intensity_factor = __branching__ratio__*m.branching_ratio
-            daughter_n = Nuclide.from_symbol(m.daughter_name)
-            for g in daughter_n.decay_gamma_lines:
-                new_gamma = g.__copy__()
-                new_gamma.intensity *= eff_intensity_factor
-                out.append(new_gamma)
-            out.extend(daughter_n.decay_chain_gamma_lines(eff_intensity_factor))
-        return out
+        raise NotImplementedError("")
 
     @property
     def decay_branching_ratios(self) -> Dict[Tuple[str], UFloat]:
@@ -1997,57 +2061,6 @@ class Nuclide:
 
         return out
 
-    # def __get_sf_yield__(self, independent_bool) -> Dict[str, UFloat]:
-    #     sub_dir = ('independent' if independent_bool else 'cumulative')
-    #     f_path = SF_YIELD_PICKLE_DIR/sub_dir/'{}.marshal'.format(self.name)
-    #     assert f_path.exists(), 'No SF fissionXS yield data for {}'.format(self.name)
-    #     with open(f_path, 'rb') as f:
-    #         yield_data: yield_data_type = marshal.load(f)
-    #     result = {}
-    #     for n_name, data in yield_data[0.].items():
-    #         result[n_name]: UFloat = ufloat(data['yield'], data['yield_err'])
-    #     return result
-
-    # def independent_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def cumulative_gamma_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def independent_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def cumulative_proton_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def independent_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def cumulative_neutron_fission_yield(self, ergs=None, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def independent_sf_fission_yield(self, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par='gamma', energies=ergs, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
-    # def cumulative_sf_fission_yield(self, data_source=None) -> FissionYields:
-    #     y = FissionYields(target=self.name, inducing_par=None, library=data_source,
-    #                       independent_bool=True)
-    #     return y
-    #
     def get_incident_proton_parents(self, data_source=None, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
         return self.__get_parents__('proton', a_z_hl_cut, is_stable_only, data_source)
 
@@ -2525,8 +2538,8 @@ if __name__ == "__main__":
     times = np.linspace(0, Nuclide.from_symbol('U235').half_life.n*3, 30)
     # f = decay_nuclide('U235')
     # print(f(times))
-    f0 = decay_nuclide('U235', init_term=10)
-    f1 = decay_nuclide('U235', init_term=10)
+    f0 = decay_nuclide('U235', init_quantity=10)
+    f1 = decay_nuclide('U235', init_quantity=10)
     y0 = f0(times)
     y1 = f1(times)
     fig, (ax0, ax1) = plt.subplots(1, 2)

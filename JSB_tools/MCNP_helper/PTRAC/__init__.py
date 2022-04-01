@@ -108,7 +108,7 @@ class _Header:
         ids = []
         #  (bug fix) Replaced line below with regex that terminates header at correct position more generally
         # ids = list(map(int, " ".join([file.readline() for i in range(3)]).split()))
-        while True:  # (Bug fix Jan/2022)
+        while True:  # (Bug fix Jan/Germany2022)
             pos = file.tell()
             line = file.readline()
             if re.match('^( {0,7}[0-9]{1,2})+$', line):

@@ -163,13 +163,9 @@ class F4Tally(Tally):
                 outs[num] = result
         return outs
 
-    # @classmethod
-    # def build(cls, tally_number, cell, tally_name=None):
-    #     out = cls.__new__(cls)
-    #     out.cell
-
     #  todo: Verify summing methods.
     def __init__(self, tally_number_or_name=None, outp=None, __copy__tally__=None):
+        self.energy_bins = None
         if __copy__tally__ is not None:
             assert isinstance(__copy__tally__, F4Tally)
             self.__flux__ = __copy__tally__.__flux__
@@ -217,27 +213,6 @@ class F4Tally(Tally):
                         'Names found:\n{1}' \
                         .format(self.tally_name, names_found)
 
-            # if self.tally_number is None:
-            #     tally_name_match = re.compile(
-            #         r' *f(?P<tally_num>[0-9]*[48]):(?P<particle>.) +(?P<cell>[0-9]+) *\$.*name: *(?P<name>[\w -_]*\w) *$')
-            #     for card in outp.input_deck:
-            #         if _m := tally_name_match.match(card):
-            #             name = _m.group('name')
-            #             names_found.append(name)
-            #
-            #             if name == self.tally_name:
-            #                 self.tally_number = _m.group('tally_num')
-            #                 found_tally = True
-            #
-            #                 break
-            #     else:
-            #         assert False, '\nCould not find tally_n with name "{0}"\nExample of using a name tag to access tally_n:' \
-            #                       '\nF84:p 13 $ name:<tally_name_here>\nThe key usage syntax is in the comment. The text ' \
-            #                       'after the string "name:" is the name tag (names are case insensitive)\n' \
-            #                       'Names found:\n{1}' \
-            #             .format(self.tally_name, names_found)
-
-            # set name to tally_n number if name not specified
             if self.tally_name is None:
                 self.tally_name = str(self.tally_number)
 
@@ -504,6 +479,8 @@ class F4Tally(Tally):
         return copied_tally
 
     def plot(self, ax=None, track_length=True, title=None, label=None, norm=1, ylabel=None):
+        assert self.energy_bins is not None, 'Tally has no energy bins. Cannot plot.'
+
         if ax is not None:
             if ax is plt:
                 ax = ax.gca()
