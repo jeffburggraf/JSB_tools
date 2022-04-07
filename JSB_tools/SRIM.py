@@ -1,31 +1,30 @@
 """
-This file contains an implementation to automatically running a SRIM simulation and save the results to a pickle file.
-Saved results are retrieved by SRIMTable class.
+This file implements automatic execution of SRIM simulations and saves the results to a pickle file.
+Saved results can be retrieved by the SRIMTable class which has a few useful functions.
 
-Pickle file has two dumps:
-    1. list of energies
-    2. a list of dicts of data for each entry
-The dicts have the following format:
-    {"nuclear": nuclear, "electric": elec, 'range': range_, 'lon_strag': lon_strag,
-                     'lat_strag': lat_strag}
+In order to use SRIM you must be on a Windows machine. Installation instructions:
+    1. Download SRIM from internet (file will be named e.g. SRIM-2013-Pro.e)
+      rename SRIM-2013-Pro.e to SRIM-2013-Pro.exe and move it to JSB_tools/SRIM-2013. Double click to extract.
+    4. A bunch of new stuff will appear, among them a directory named 'SRIM-Setup'. Go inside this directory and
+        right click '_SRIM-Setup (Right-Click)'. Follow the prompts.
+    6. Be done. Things should work now if you have the needed packages installed.
 
-Examples:
+Examples of usage:
 
-    from JSB_tools.MCNP_helper.materials import _IdealGas
+    from JSB_tools.MCNP_helper.materials import IdealGasProperties
 
     # Run SRIM for 1:1 atom ratio of Argon + He at 1.5 bar pressure
 
-    g = _IdealGasProperties(['He', 'Ar'])
+    g = IdealGasProperties(['He', 'Ar'])
 
     density = g.get_density_from_atom_fractions([1, 1], pressure=1.5, )
 
     run_srim(target_atoms=['He', 'Ar'],fractions=[1,1], density=density, projectile='Xe139', max_erg=120, gas=True)
 
-
-    # Now, the results can from now on be accessed by
+    # The results can from now on be accessed by doing
     data = find_SRIM_run(target_atoms=['He', 'Ar'], fractions=[1,1], density=density, projectile='Xe139', gas=True)
 
-    # Plot, if you want
+    # And now plot, if you want
     data.plot_dedx()
 
 
@@ -456,11 +455,14 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, s
 
     for s, frac in zip(target_atoms, fractions):
         layer_arg[s] = {"stoich": frac}
+
     gas = int(gas)
     layer = Layer(layer_arg, density, 1000, phase=int(gas))
     ion = Ion(proj_symbol, max_erg, proj_mass)
+
     sr = SR(layer, ion, output_type=5)
     sr.run(srim_directory=srim_dir)
+
     fname = _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTPUT=save_SR_OUTPUT)
 
     return _SRIMTable(target_atoms=target_atoms, fractions=fractions, density=density, projectile=projectile,
@@ -468,5 +470,20 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, s
 
 
 if __name__ == '__main__':
-    _SRIMTable(['He'], [1], 1.2, 'Xe139', 1)
-    from JSB_tools.MCNP_helper.materials import _IdealGasProperties
+    from JSB_tools.MCNP_helper.materials import IdealGasProperties
+
+    # Run SRIM for 1:1 atom ratio of Argon + He at 1.5 bar pressure
+
+    g = IdealGasProperties(['He', 'Ar'])
+
+    density = g.get_density_from_atom_fractions([1, 1], pressure=1.5, )
+
+    run_srim(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', max_erg=120, gas=True)
+
+    # Now, the results can from now on be accessed by
+    data = find_SRIM_run(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', gas=True)
+
+    # Plot, if you want
+    data.plot_dedx()
+
+    plt.show()
