@@ -51,7 +51,7 @@ class ChemicalFormula:
         self.total_grams_peer_mole = np.sum(self.atom_numbers*self.atomic_weights)
 
 
-class _IdealGasProperties:
+class IdealGasProperties:
     R = 8.3144626181
 
     def __init__(self, list_of_chemicals: List[str]):
@@ -94,7 +94,7 @@ class _IdealGasProperties:
         mass_ratios = np.array(mass_ratios)
         assert len(mass_ratios) == len(self.total_grams_per_mole_list)
         norm = sum(mass_ratios)
-        p_over_r_t = pressure/(_IdealGasProperties.R * temperature)
+        p_over_r_t = pressure/(IdealGasProperties.R * temperature)
         _x = np.sum((mass_ratios/norm)/self.total_grams_per_mole_list)
         out = 1E-6*p_over_r_t/_x
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
@@ -108,7 +108,7 @@ class _IdealGasProperties:
         atom_fractions = np.array(atom_fractions)
         assert len(atom_fractions) == len(self.total_grams_per_mole_list)
         mean_g_per_mole = np.average(self.total_grams_per_mole_list, weights=atom_fractions)
-        p_over_r_t = pressure/(_IdealGasProperties.R * temperature)
+        p_over_r_t = pressure/(IdealGasProperties.R * temperature)
         out = 1E-6*p_over_r_t*mean_g_per_mole  # 1E-6 converts from g/m3 to g/cm3
         fmt = '{' + ':.{}E'.format(n_sig_digits) + '}'
         out = float(fmt.format(out))
@@ -270,7 +270,7 @@ class Material:
             ):
         # Todo: Use N(2) or N_2 to specify number of N atoms. Thus, allowing isotope specification normally.
 
-        g = _IdealGasProperties(list_of_chemicals)
+        g = IdealGasProperties(list_of_chemicals)
         if len(list_of_chemicals) == 1:
             is_weight_fraction = True
             fractions = [1]
@@ -533,7 +533,7 @@ class Air(Material):
             assert temperature is pressure is None, "`density` was specified. `pressure` and `temperature` must be None"
 
         else:
-            g = _IdealGasProperties(elements)
+            g = IdealGasProperties(elements)
             density = g.get_density_from_atom_fractions(atom_fractions=fractions,
                                  temperature=temperature, temp_units=temp_units, pressure=pressure,
                                  pressure_units=pressure_units,  n_sig_digits=n_sig_digits)
