@@ -131,6 +131,12 @@ def get_most_abundant_isotope(symbol):
 class Material:
     all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
+    def __del__(self):
+        try:
+            del Material.all_materials[self.mat_number]
+        except KeyError:
+            pass
+
     @property
     def _get_elements_and_fractions(self) -> Tuple[List[str], List[float]]:
         """
@@ -195,11 +201,13 @@ class Material:
         self.is_gas = False
         self.is_mcnp = is_mcnp
 
-    def set_srim_dedx(self, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx', scaling=None):
+    def set_srim_dedx(self, particles: List[str] = None, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx', scaling=None):
         """
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
         Todo: Implement  plotting De/dx after it is set by this method.
         Args:
+            particles: Which particle(s) to include? None will do all available. Otherwise, raise error if all particles
+                data aren't available
             dedx_path: Path where PHITS looks for user supplied stopping powers
             scaling: A function or a constant. If a constant, scale sopping powers by this value.
                 If function, scale the stopping powers by f(e)
@@ -225,6 +233,14 @@ class Material:
         lines = ['unit = 1']
         srim_outputs = find_all_SRIM_runs(target_atoms=elements, fractions=fractions, density=self.density,
                                           gas=self.is_gas)
+
+        if particles is not None:
+            particles = list(map(str.lower, particles))
+
+            assert all([p in srim_outputs for p in particles]), f"Particle(s) " \
+                                                                f"{[p for p in particles if p not in srim_outputs]} " \
+                                                                f"not available!"
+            srim_outputs = {k: srim_outputs[k] for k in particles}
 
         for proj, table in srim_outputs.items():
             lines.append(f"kf = {Nuclide.from_symbol(proj).phits_kfcode()}")

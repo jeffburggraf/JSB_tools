@@ -52,10 +52,9 @@ class TabPlot:
         import numpy as np
         from matplotlib import pyplot as plt
 
-        f = TabPlot()
-
         x = np.linspace(0, np.pi * 2, 1000)
-        # fig = plt.figure()
+
+        f = TabPlot()
 
         for i in range(1, 20):
             ax = f.new_ax(i)
@@ -68,7 +67,10 @@ class TabPlot:
         plt.show()
 
     """
+    _instnaces = []
+
     def __init__(self, *args, **kwargs):
+        TabPlot._instnaces.append(self)
         self.fig = plt.figure(*args, **kwargs)
         self._vis_flag = True
         self.button_axs = []
@@ -96,16 +98,37 @@ class TabPlot:
                 else:
                     [ax.set_visible(0) for ax in axs]
             self.fig.canvas.draw_idle()
+            self.fig.suptitle(self.button_labels[i])
 
         return set_vis
 
-    def new_ax(self, button_label, nrows=1, ncols=1, *args, **kwargs) -> Axes:
+    def new_ax(self, button_label, nrows=1, ncols=1, subplot_kw=None, *args, **kwargs) -> Axes:
+        """
+
+        Args:
+            button_label:
+            nrows:
+            ncols:
+            subplot_kw: kwargs dict to be passed to subplots, e.g. like doing fig.add_subplot(**subplot_kw)
+            *args:
+            **kwargs:
+
+        Returns:
+
+        """
+        if subplot_kw is None:
+            subplot_kw = {}
+
+        # subplot_kw=dict(projection='polar')
         button_label = f"{button_label: <4}"
         self.button_labels.append(button_label)
 
-        axs = self.fig.subplots(nrows=nrows, ncols=ncols, *args, **kwargs)
+        axs = self.fig.subplots(nrows=nrows, ncols=ncols, subplot_kw=subplot_kw, *args, **kwargs)
         if not hasattr(axs, '__iter__'):
-            axs = [axs]
+            axs = np.array([axs])
+        else:
+            axs = axs.flatten()
+
         self.plt_axs.append(axs)
 
         b_unit = 0.1/4
@@ -116,7 +139,9 @@ class TabPlot:
 
         self.prev_x = button_x + button_width
 
-        button_ax = plt.axes([button_x % 1, button_y, button_width, 0.075])
+        if not plt.gcf() is self.fig:
+            plt.figure(self.fig.number)
+        button_ax = plt.axes([button_x % 1, button_y, button_width, 0.075], projection='rectilinear')
 
         button = Button(button_ax, button_label)
 
@@ -135,6 +160,10 @@ class TabPlot:
 
         return axs if len(axs) > 1 else axs[0]
 
+    def legend(self):
+        for axs in self.plt_axs:
+            for ax in axs:
+                ax.legend()
 
 def _float(x):
     if x is None:
@@ -753,8 +782,12 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         return tuple(out)
 
 
-def mpl_hist_from_data(bin_edges, data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
+def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
                        return_line_color=False, **mpl_kwargs):
+
+    if isinstance(bin_edges, int):
+        bin_edges = np.linspace(min(data), max(data), bin_edges + 1)
+
     y, _ = np.histogram(data, bins=bin_edges, weights=weights)
     yerr = np.sqrt(y)
     return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
@@ -956,7 +989,7 @@ class FileManager:
                 # the FileManager instantiation.
 
                 In another script, say, that analyses the outp files, one could do the following (almost identical to
-                the rotine for initially creating the FIleManeger.
+                the routine for initially creating the FIleManeger.
                 cwd = Path(__file__).parent  # top directory of the simulations.
                 f_man = FileManager(cwd, recreate=False)  # NOTE THAT IS False
 
@@ -984,23 +1017,24 @@ class FileManager:
         self.__file_lookup_data: Dict[Path, dict] = {}
 
         # path to file that stores association information
-        self.__save_path = self.root_directory / "__file_lookup__.pickle"
+        self._save_path = self.root_directory / "__file_lookup__.pickle"
+
+        if not recreate:
+            try:
+                with open(self._save_path, 'rb') as f:
+                    self.__file_lookup_data: Dict[Path, Dict] = pickle.load(f)
+            except (EOFError, FileNotFoundError) as e:
+                recreate = True
 
         if recreate:
             self.__file_lookup_data: Dict[Path, Dict] = {}
-            self.__save_path.unlink(missing_ok=True)
-        else:
-            try:
-                with open(self.__save_path, 'rb') as f:
-                    self.__file_lookup_data: Dict[Path, Dict] = pickle.load(f)
-            except (EOFError, FileNotFoundError) as e:
-                raise Exception(f"No FileManager at {self.root_directory}. "
-                                f"Maybe you meant to set `recreate` arg to True") from e
+            self._save_path.unlink(missing_ok=True)
 
         register(self.__at_exit__)
 
     def __save_lookup_data__(self):
-        with open(self.__save_path, 'wb') as f:
+
+        with open(self._save_path, 'wb') as f:
             pickle.dump(self.__file_lookup_data, f)
 
     @staticmethod
@@ -1068,22 +1102,34 @@ class FileManager:
 
         if not missing_ok:
             assert abs_path.exists(), f'The path, "{abs_path}", does not exist. Use missing_ok=True to bypass this error'
+
+        for path, attribs in self.__file_lookup_data.items():
+            if lookup_attributes == attribs:
+                if not (path.relative_to(self._save_path.parent) == rel_path_or_abs_path \
+                        or path == rel_path_or_abs_path):
+                    print()
+                assert path.relative_to(self._save_path.parent) == rel_path_or_abs_path \
+                       or path == rel_path_or_abs_path, \
+                    f'FileManger requires a unique set of attributes for each file added.\n'\
+                    f'"{lookup_attributes}" has already been used.'
+                # return
+                #         f'"{lookup_attributes}" has already been used.'
         # assert not abs_path.is_dir(), f'The path, "{abs_path}", is a directory.'
-
-        if abs_path in self.__file_lookup_data:
-            if lookup_attributes in self.__file_lookup_data.values():  # path and attrib identical. May overwrite
-                # if overwrite_ok:  # overwrite
-                #     warnings.warn(f"Overwriting FileManager reference to {abs_path}")
-                if not overwrite_ok:
-                    assert False, f"Cannot overwrite reference {abs_path}. Set parameter `overwrite_ok` to True"
-            else:
-                warnings.warn(f"Path {abs_path} used twice. Overwriting!")
-
-        else:
-            # if paths aren't identical, no identical attribs are allowed.
-            assert lookup_attributes not in self.__file_lookup_data.values(), \
-                f'FileManger requires a unique set of attributes for each file added.\n' \
-                f'"{lookup_attributes}" has already been used.'
+        #
+        # if abs_path in self.__file_lookup_data:
+        #     if lookup_attributes in self.__file_lookup_data.values():  # path and attrib identical. May overwrite
+        #         # if overwrite_ok:  # overwrite
+        #         #     warnings.warn(f"Overwriting FileManager reference to {abs_path}")
+        #         if not overwrite_ok:
+        #             assert False, f"Cannot overwrite reference {abs_path}. Set parameter `overwrite_ok` to True"
+        #     else:
+        #         warnings.warn(f"Path {abs_path} used twice. Overwriting!")
+        #
+        # else:
+        #     # if paths aren't identical, no identical attribs are allowed.
+        #     assert lookup_attributes not in self.__file_lookup_data.values(), \
+        #         f'FileManger requires a unique set of attributes for each file added.\n' \
+        #         f'"{lookup_attributes}" has already been used.'
 
         self.__file_lookup_data[abs_path] = lookup_attributes
         self.__save_lookup_data__()
@@ -1091,7 +1137,7 @@ class FileManager:
 
     def find_path(self, missing_ok=False, **lookup_attributes) -> Union[None, Path]:
         """
-        Return the path to a file who's keys/values **exactly** match `lookup_kwargs`. There can only be one. If non
+        Return the path to a file who's keys/values **exactly** match `lookup_kwargs`. There can only be one.
         Args:
             missing_ok: whether to raise an error if file not found
             **lookup_attributes:
@@ -1099,6 +1145,7 @@ class FileManager:
         Returns:
 
         """
+        assert isinstance(missing_ok, int), f'Invalid `missing_ok` arg:\n\t"{missing_ok}"'
         for path, attribs in self.__file_lookup_data.items():
             if lookup_attributes == attribs:
                 return path
@@ -1157,7 +1204,7 @@ class FileManager:
             if test_match(lookup_kwargs, attribs):
                 matches[path] = {k: v for k, v in attribs.items()}
         if len(matches) == 0:
-            warnings.warn(f"No files fiund containing the following attribs: {lookup_attributes}")
+            warnings.warn(f"No files found containing the following attribs: {lookup_attributes}")
         return matches
 
     def find_tree(self, tree_name="tree", **lookup_attributes) -> ROOT.TTree:
@@ -1237,7 +1284,8 @@ class FileManager:
             return pickle.load(f)
 
     def __at_exit__(self):
-        self.__save_lookup_data__()
+        pass
+        # self.__save_lookup_data__()
 
     # def __del__(self):
     #     self.__at_exit__()
@@ -1257,7 +1305,7 @@ class FileManager:
         outs[-1] = outs[-1][:-1]
         outs.append(outs[0] + '\n')
         out = "\n".join(outs)
-        out = f"Files in FileManeger at '{self.__save_path}:'\n" + out
+        out = f"Files in FileManeger at '{self._save_path}:'\n" + out
         return out
         # return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
 
@@ -1265,7 +1313,7 @@ class FileManager:
         for path in self.__file_lookup_data.keys():
             path = Path(path)
             path.unlink(missing_ok=True)
-        self.__save_path.unlink(missing_ok=True)
+        self._save_path.unlink(missing_ok=True)
 
     def __iadd__(self, other: FileManager):
         for path, attribs in other.all_files.items():
@@ -1315,10 +1363,12 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 if __name__ == '__main__':
 
-    f = TabPlot()
+    import numpy as np
+    from matplotlib import pyplot as plt
 
     x = np.linspace(0, np.pi * 2, 1000)
-    # fig = plt.figure()
+
+    f = TabPlot()
 
     for i in range(1, 20):
         ax = f.new_ax(i)

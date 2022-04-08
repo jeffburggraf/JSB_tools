@@ -18,6 +18,13 @@ class MCNPNumberMapping(dict):
         super(MCNPNumberMapping, self).__init__()  # initialize empty dict
         self.auto_picked_numbers = []  # numbers that have been chosen automatically.
 
+    def __delitem__(self, key):
+        super(MCNPNumberMapping, self).__delitem__(key)
+        try:
+            self.auto_picked_numbers.remove(key)
+        except ValueError:
+            pass
+
     def number_getter(self, item):
         if self.class_name == 'Cell':
             return getattr(item, 'cell_number')
@@ -219,6 +226,12 @@ class GeomSpecMixin:
             self.__cell_number = cell_number
         else:
             self.__cell_number = self.cell_number
+
+    def __del__(self):
+        try:
+            super(GeomSpecMixin, self).__del__()
+        except AttributeError:
+            pass
 
     def __invert__(self):
         assert self.__cell_number is not None, 'Compliment operator, "~", can only be used on cell instances.'

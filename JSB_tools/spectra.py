@@ -135,24 +135,30 @@ class EfficiencyCalMixin:
         """
         # Precedence is self.eff_path, then self.path.
 
-        if self.eff_path is None:
+        if self.eff_path is not None:
+            path = self.eff_path
+        else:
             if self.path is None:
                 raise FileNotFoundError("Cannot unpickle efficiency bc self.path and self.eff_path is None and "
                                         "`other_path` was not supplied.")
             else:
-                path = self.path
-                eff_dir = path.parent / 'cal_files'
+                # path = self.path
+                eff_dir = self.path.parent / 'cal_files'
                 if not eff_dir.exists():
                     eff_dir.mkdir(exist_ok=True)
-                return eff_dir / path.with_suffix('.eff').name
-        else:
-            path = self.eff_path
+                return eff_dir / self.path.with_suffix('.eff').name
 
         return path.with_suffix('.eff')
 
     def unpickle_eff(self, path=None):
         """
         Unpickle from auto-determined path. If no file exists, set attribs to defaults.
+
+        Priority:
+            1. path argument
+            2. Try unpickling self.eff_path
+            3. Auto set self.eff_path from self.path
+            4. raise error
         Returns:
 
         """
@@ -189,13 +195,14 @@ class EfficiencyCalMixin:
         if self.eff_model is not None:
             assert isinstance(self.eff_model, lmfit.model.ModelResult), \
                 "self.model_result must be an instance of lmfit.model.ModelResult"
-        if path is None:
-            path = self.__eff_path__()
-        else:
+        if path is not None:
             path = Path(path).with_suffix(".eff")
+        else:
+            path = self.__eff_path__()
 
         d = {'_effs': self._effs if self.eff_model is None else None, 'eff_model': self.eff_model,
              'eff_model_scale': self.eff_model_scale}
+
         with open(path, 'wb') as f:
             pickle.dump(d, f)
 
@@ -1047,7 +1054,7 @@ class ListSpectra(EfficiencyCalMixin):
             with open(meta_data_path, 'wb') as f:
                 pickle.dump(meta_data, f)
 
-        if pickle_eff:
+        if pickle_eff and not (self.effs is self.eff_model is None):
             self.pickle_eff()
 
     @classmethod

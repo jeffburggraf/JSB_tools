@@ -21,6 +21,16 @@ Base class definitions for geometry primitives defined in primitives.py
 class Surface(GeomSpecMixin, metaclass=ABCMeta):
     all_surfs = MCNPNumberMapping('Surface', 1)
 
+    def __del__(self):
+        try:
+            del Surface.all_surfs[self.surface_number]
+        except KeyError:
+            pass
+        try:
+            super(Surface, self).__del__()
+        except AttributeError:
+            pass
+
     @staticmethod
     def global_zmin():
         """
@@ -67,7 +77,7 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
                  surface_name: Union[str, None] = None,
                  surface_comment: Union[str, None] = None):
         self.__name__ = surface_name
-        self.surface_number = surface_number
+        self.surface_number: int = surface_number
         self.surface_comment = surface_comment
         Surface.all_surfs[self.surface_number] = self
         self.surface = self
@@ -140,6 +150,17 @@ class Cell(GeomSpecMixin):
         like_but: Create a new cell using MCNP's LIKE BUT feature.
     """
     all_cells: Dict[int, Cell] = MCNPNumberMapping('Cell', 10)
+
+    def __del__(self):
+        try:
+            del Cell.all_cells[self.cell_number]
+        except KeyError:
+            pass
+        try:
+            super(Cell, self).__del__()
+        except AttributeError:
+            pass
+
 
     @classmethod
     def find_cell(cls, cell_name):
@@ -230,16 +251,16 @@ class Cell(GeomSpecMixin):
         self.trcl = trcl
         if 'from_outp' not in kwargs:
             self.__from_outp__ = False  # For cells reconstructed from MCNP outp
-            Cell.all_cells[cell_number] = self
+            Cell.all_cells[self.cell_number] = self
         else:
             self.__from_outp__ = True
         GeomSpecMixin.__init__(self)
         self.__like_but_kwargs__ = {}
         self.__like_but_number__ = None
 
-        if self.importance is None and not self.__from_outp__:
-            warn(f'Importance of cell {self.cell_name if self.cell_name is not None else self.cell_number}'
-                 f' is not specified')
+        # if self.importance is None and not self.__from_outp__:
+        #     warn(f'Importance of cell {self.cell_name if self.cell_name is not None else self.cell_number}'
+        #          f' is not specified')
 
         self.enabled = True
 

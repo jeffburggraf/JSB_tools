@@ -87,6 +87,9 @@ class SphereCell(Cell, SphereSurface):
         super(Cell, self).__init__(radius=radius, x=x, y=y, z=z, surf_name=surf_name, surf_num=surf_num,
                                    comment=comment)
 
+    # def __del__(self):
+    #     assert False
+
 
 class CuboidSurface(Surface):
     def __init__(self, x0, x1, y0, y1, z0, z1=None, dz=None, surf_name=None, surf_num=None, comment=None):
@@ -310,21 +313,21 @@ class RightCylinderSurface(Surface):
     def z1(self):
         return self.z0 + self.dz
 
-    def set_dz(self, other, fix_max=False):
-        """
-
-        Args:
-            other:
-            fix_max: If True, move min to alter self.dz, else, move max instead
-
-        Returns:
-
-        """
-        if fix_max:
-            self.z0 = self.z1 - other
-            self.dz = other
-        else:
-            self.dz = other
+    # def set_dz(self, other, fix_max=False):
+    #     """
+    #
+    #     Args:
+    #         other:
+    #         fix_max: If True, move min to alter self.dz, else, move max instead
+    #
+    #     Returns:
+    #
+    #     """
+    #     if fix_max:
+    #         self.z0 = self.z1 - other
+    #         self.dz = other
+    #     else:
+    #         self.dz = other
 
     @property
     def xmax(self):

@@ -25,7 +25,7 @@ __all__ = ["phits_to_root"]
 
 class PHITSTTreeHelper:
     """
-    A wrapper for a PHITS ROOT tree. Everything done in this class can be done manually, but this mkaes it smoother by,
+    A wrapper for a PHITS ROOT tree. Everything done in this class can be done manually, but this makas it smoother by,
     e.g., adding autocomplete, the ability to look up a nuclide that's being tracked, etc.
     """
     nuclides = {}
