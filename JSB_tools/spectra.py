@@ -13,6 +13,8 @@ from matplotlib import pyplot as plt
 from numpy.core._exceptions import UFuncTypeError
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
+
+import JSB_tools
 from JSB_tools import mpl_hist, calc_background, rolling_median, _float, discrete_interpolated_median, shade_plot
 from JSB_tools import convolve_gauss, calc_background, InteractivePlot
 from copy import deepcopy
@@ -494,33 +496,50 @@ class ListSpectra(EfficiencyCalMixin):
                             scale: Union[float, Callable, np.ndarray] = 1.,
                             nominal_values=True,
                             convolve: Union[float, int] = None,
-                            debug_plot: Union[bool, str] = False):
+                            debug_plot: Union[bool, str] = False,
+                            debug_title:str=None):
         """
         Get the time dependence around erg +/- signal_window_kev/2. Baseline is estimated and subtracted.
         Estimation of baseline is done by taking the median rate ( with an energy of `energy` +/- `bg_window_kev`/2,
         excluding signal window) of events in each time bin. The median is then normalized to the width of the signal
         window (in KeV), and finally subtracted from the time dependence of events in the signal window.
+
         Args:
-            energy:
-            bins: Str/int for np.histogram or list of bin edges.
+            energy: Energy in keV at which time dependence will be analysed
+
+            bins: Time bins. Will be used for: np.histogram(bins=bins).
+
             signal_window_kev: Width around `energy` that will be considered the signal.
+
             bg_window_kev: Size of the window used for baseline estimation.
+
             bg_offsets: Offset the baseline window from the center (default will avoid signal window by distance of
                 half `signal_window_kev`)
+
             make_rate: Makes units in Hz instead of counts.
+
             eff_corr: If True, account for efficiency
+
             scale: User supplied float or array of floats (len(bins) - 1) used to scale rates.
                 If a Callable, the bins wil be passed to the supplied function which must return array of normalization
                 values of same length as bins.
+
             nominal_values: If False, return unp.uarray (i.e. include Poissonian errors).
+
             convolve: If not None, perform gaussian convolution with sigma according to this value
                 (sigma units are array indicies).
+
             debug_plot: If False, do nothing.
                         If True, plot signal and background (energy vs counts) for every time bin.
                         If "simple", plot one plot for all bins.
 
+            debug_title: Title for debug figure.
+
         Returns: Tuple[signal window rate, baseline rate estimation, bins used]
         """
+        if isinstance(energy, UFloat):
+            energy = energy.n
+
         if bg_offsets is None:
             bg_offsets = [2 * signal_window_kev] * 2
         elif isinstance(bg_offsets, Iterable):
@@ -626,19 +645,22 @@ class ListSpectra(EfficiencyCalMixin):
                 shade_plot(ax, sig_window_bounds, color='blue', label='Sig. window')
                 ax.legend()
             else:
-                axs = None
+                tab_plot = JSB_tools.TabPlot()
+                tab_plot.fig.suptitle(self.path.name if debug_title is None else debug_title)
                 for bin_index, (b1, b2) in enumerate(zip(time_bins[:-1], time_bins[1:])):
                     plot_legend = False
-                    if bin_index % 4 == 0:
-                        fig, axs = plt.subplots(2, 2, figsize=(12, 5))
-                        fig.suptitle(self.path.name)
-                        axs = axs.flatten()
-                        plt.subplots_adjust(hspace=0.4, wspace=0.1, left=0.04, right=0.97)
-                        plot_legend = True
+                    # if bin_index % 4 == 0:
+                    #     fig, axs = plt.subplots(2, 2, figsize=(12, 5))
+                    #     fig.suptitle(self.path.name)
+                    #     axs = axs.flatten()
+                    #     plt.subplots_adjust(hspace=0.4, wspace=0.1, left=0.04, right=0.97)
+                    #     plot_legend = True
 
                     lines = []
                     legends = []
-                    ax = axs[bin_index % 4]
+                    # ax = axs[bin_index % 4]
+                    button_label = f"{b1:.1f}-{b2:.1f} s"
+                    ax = tab_plot.new_ax(button_label=button_label)
 
                     ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0] - signal_window_kev,
                                                    bg_window_right_bounds[-1] + signal_window_kev,
@@ -922,16 +944,15 @@ class ListSpectra(EfficiencyCalMixin):
         Returns:
 
         """
-        title = ''
-        if self.path is not None:
-            title += self.path.name
 
         if ax is None:
             fig = plt.figure()
             ax = plt.gca()
         else:
             fig = plt.gcf()
-        fig.suptitle(title)
+
+        if fig._suptitle is None:
+            fig.suptitle(self.path.name)
 
         bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max, eff_corr=eff_corr,
                                                  make_density=make_density,

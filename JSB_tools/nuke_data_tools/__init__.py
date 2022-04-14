@@ -956,7 +956,9 @@ class FissionYields:
 
     def weight_by_erg(self, weights):
         """
-        Weight all yields (this change is persistent) by a value for each energy. e.g., a projectile energy distribution..
+        Weight all yields (modifies self) by a value for each energy. e.g., a projectile energy distribution.
+        Replace each yield with weights*yields.
+
         Args:
             weights: Array with same length of self.energies
 
@@ -988,7 +990,7 @@ class FissionYields:
         self.yields = {k: self.yields[k] for k in __keys[::-1]}
         self.weights = self.weights*weights
 
-        return self.yields
+        return None
 
     def plot_weights(self, ax=None):
         if not self._is_weighted:
