@@ -2211,6 +2211,15 @@ class InducedParent(Nuclide):
         return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
 
+class NuclearLibraries:
+    # list of nuclear library sources for each incident particle. The order in which a given data source is
+    # first used (in endf_to_pickle.py) determines the order in which they appear in `libraries`,
+    # which in turn determines priority.
+    xs_libraries = {'proton': ['endf', 'padf'],
+                    'gamma': ['endf', 'tendl'],
+                    'neutron': ['endf']}
+
+
 class ActivationReactionContainer:
     """
     Used for storing particle-induced data in pickle file. Imported in endf_to_pickle.py, and used in this module
@@ -2232,12 +2241,7 @@ class ActivationReactionContainer:
          'gamma': GAMMA_PICKLE_DIR,
          'neutron': NEUTRON_PICKLE_DIR}
 
-    # list of nuclear library sources for each incident particle. The order in which a given data source is
-    # first used (in endf_to_pickle.py) determines the order in which they appear in `libraries`,
-    # which in turn determines priority.
-    libraries = {'proton': ['endf', 'padf'],
-                 'gamma': ['endf', 'tendl'],
-                 'neutron': ['endf']}
+    libraries = NuclearLibraries.xs_libraries
 
     for __proj, __list_of_libraries in libraries.items():
         all_instances[__proj] = {k: {} for k in __list_of_libraries}

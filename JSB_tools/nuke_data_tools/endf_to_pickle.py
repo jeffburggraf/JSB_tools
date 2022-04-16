@@ -235,18 +235,23 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
         if match := jeff_decay_file_match.match(file_name):
             s = match.groups()[0]
             a = int(match.groups()[1])
+
             m = match.groups()[2]
             m = {'': 0, 'm': 1, 'n': 2, 'o': 3}[m]
+
             if m != 0:
                 nuclide_name = '{}{}_m{}'.format(s, a, m)
             else:
                 nuclide_name = '{}{}'.format(s, a)
+
             if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
                 continue
+
             print('Reading JEFF decay data from {}'.format(jeff_file_path.name))
 
             e = Evaluation(jeff_file_path)
             d = Decay(e)
+
             misc_evaluation_data['excitation_energy'][nuclide_name] = e.target['excitation_energy']*1E-3  #eV -> keV
 
             if nuclide_name in openmc_decays:
@@ -257,6 +262,7 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
     for parent_nuclide_name, openmc_dict in openmc_decays.items():
         jeff_score = decay_evaluation_score(openmc_dict['jeff'])
         endf_score = decay_evaluation_score(openmc_dict['endf'])
+
         if jeff_score > endf_score:
             openmc_decay = openmc_dict['jeff']
         else:
@@ -269,6 +275,7 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
         else:
             parent_nuclide = Nuclide(parent_nuclide_name, __internal__=True)
             NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
+
         for attr in misc_evaluation_data:
             try:
                 v = misc_evaluation_data[attr][parent_nuclide_name]
@@ -277,6 +284,7 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
                 continue
 
         daughter_names = [mode.daughter for mode in openmc_decay.modes]
+
         for daughter_nuclide_name in daughter_names:
             # if (nuclides_to_process is not None) and (daughter_nuclide_name not in nuclides_to_process):
             #     continue
@@ -301,9 +309,11 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
 
         with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'wb') as f:
             data = {}
+
             for name, nuclide in NUCLIDE_INSTANCES.items():
                 key = nuclide.A, nuclide.Z, nuclide.half_life
                 data[key] = name
+
             pickle.dump(data, f)
 
         # data structure of d: {g_erg: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...])}
@@ -735,9 +745,9 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
-    pickle_decay_data(pickle_data=False)
+    # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
-    # pickle_proton_activation_data()
+    pickle_proton_activation_data()
     # pickle_gamma_fission_xs_data()
     # pickle_neutron_activation_data()
 
