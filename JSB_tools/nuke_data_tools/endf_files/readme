@@ -1,0 +1,7 @@
+Place nuclear data libraries here.
+
+The data will be fetched in endf_to_pickle.py . If the names of the library folders after downloaded and extraction change
+    over time, then see global_directories.py and make sure the names changes are reflected in the section indicated by
+    "specification of paths to nuclear libraries".
+
+Also see global_directories.py for links to where to download the nuclear libraries.

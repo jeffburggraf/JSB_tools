@@ -21,10 +21,15 @@ parent_data_dir = pwd / 'endf_files'  # ENDF file directory
 # 'general decay data' in the list.
 #  Second set of decay files (JEFF) can be found at  https://www.nndc.bnl.gov/endf/b8.0/download.html
 #  See endf_files/decay/readme.md for more information.
+
+# =====================================================================================================
+# ===============================Begin specification of paths to nuclear libraries ====================
+# =====================================================================================================
 decay_data_dir = parent_data_dir / 'decay'
 
 # Download Proton Activation Data File from: https://www-nds.iaea.org/padf/
 proton_padf_data_dir = parent_data_dir / 'PADF_2007'
+
 
 #  Down load the data for the below at: https://www.nndc.bnl.gov/endf/b8.0/download.html
 proton_enfd_b_data_dir = parent_data_dir / 'ENDF-B-VIII.0_protons'
@@ -47,3 +52,7 @@ proton_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1p'
 gamma_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1g'
 alpha_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1a'
 deuterium_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1d'
+
+# =====================================================================================================
+# ===============================End specification of paths to nuclear libraries ====================
+# =====================================================================================================

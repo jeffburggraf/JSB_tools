@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import pickle
+import warnings
 
 import matplotlib.pyplot as plt
 from openmc.data.endf import Evaluation
@@ -21,7 +22,7 @@ import numpy as np
 from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
     photonuclear_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
     proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, photonuclear_tendl_dir,\
-    neutron_fission_yield_data_dir_ukfy
+    neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir
 
 from JSB_tools import ProgressReport
 cwd = Path(__file__).parent
@@ -456,34 +457,51 @@ def pickle_gamma_fission_xs_data():
 
 def pickle_proton_activation_data():
     assert PROTON_PICKLE_DIR.exists()
-    for path in Path(proton_padf_data_dir).iterdir():
-        f_name = path.name
-        _m = re.match("([0-9]{4,6})(?:M([0-9]))?", f_name)
-        if _m:
-            zaid = int(_m.groups()[0])
-            iso = _m.groups()[1]
-            if iso is not None:
-                iso = f"_m{int(iso)}"
-            else:
-                iso = ''
 
-            z = zaid // 1000
-            a = zaid % 1000
-            nuclide_name = f"{ATOMIC_SYMBOL[z]}{a}{iso}"
-            ActivationReactionContainer.from_endf(path, nuclide_name, 'proton', 'padf')
+    for path in Path(tendl_2019_proton_dir).iterdir():
+        if path.is_dir() and re.match("[A-Z][a-z]{0,2}", path.name):
+            for path in path.iterdir():
+                if m := re.match("([A-Z][a-z]{0,2}[0-9]{3}[m-z]?)", path.name):
+                    if path.name == 'U235':
+                        path = (path/'lib'/'endf'/f'p-{m.groups()[0]}').with_suffix('.tendl')
+                        if not path.exists():
+                            warnings.warn(f"TENDL path missing: {path}")
+                            continue
+                        try:
+                            ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
+                        except ValueError as e:
+                            warnings.warn(f"ValueError on TENDL: {path}:\n{e}")
 
-    ActivationReactionContainer.pickle_all('proton', 'padf')
+    ActivationReactionContainer.pickle_all('proton', 'tendl')
 
-    for path in Path(proton_enfd_b_data_dir).iterdir():
-        f_name = path.name
-        _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
-        if _m:
-            s = _m.groups()[1]
-            a = int(_m.groups()[2])
-            nuclide_name = f"{s}{a}"
-            ActivationReactionContainer.from_endf(path, nuclide_name, 'proton', 'endf')
+    # for path in Path(proton_padf_data_dir).iterdir():
+    #     f_name = path.name
+    #     _m = re.match("([0-9]{4,6})(?:M([0-9]))?", f_name)
+    #     if _m:
+    #         # zaid = int(_m.groups()[0])
+    #         # iso = _m.groups()[1]
+    #         # if iso is not None:
+    #         #     iso = f"_m{int(iso)}"
+    #         # else:
+    #         #     iso = ''
+    #         #
+    #         # z = zaid // 1000
+    #         # a = zaid % 1000
+    #         # nuclide_name = f"{ATOMIC_SYMBOL[z]}{a}{iso}"
+    #         ActivationReactionContainer.from_endf(path, 'proton', 'padf')
+    #
+    # ActivationReactionContainer.pickle_all('proton', 'padf')
 
-    ActivationReactionContainer.pickle_all('proton', 'endf')
+    # for path in Path(proton_enfd_b_data_dir).iterdir():
+    #     f_name = path.name
+    #     _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
+    #     if _m:
+    #         # s = _m.groups()[1]
+    #         # a = int(_m.groups()[2])
+    #         # nuclide_name = f"{s}{a}"
+    #         ActivationReactionContainer.from_endf(path, 'proton', 'endf')
+    #
+    # ActivationReactionContainer.pickle_all('proton', 'endf')
 
 
 def pickle_neutron_activation_data():
@@ -515,16 +533,16 @@ def pickle_gamma_activation_data():
 
     for file_path in photonuclear_tendl_dir.iterdir():
         if m := re.match("g-([A-Z][a-z]*)([0-9]+)([m-z]{0,1})\.tendl", file_path.name):
-            a = int(m.groups()[1])
-            s = m.groups()[0]
-            iso = m.groups()[2]
+            # a = int(m.groups()[1])
+            # s = m.groups()[0]
+            # iso = m.groups()[2]
+            #
+            # if len(iso):
+            #     iso = f"_m{'mnopqrstuvwxyz'.index(iso) + 1}"
 
-            if len(iso):
-                iso = f"_m{'mnopqrstuvwxyz'.index(iso) + 1}"
+            # nuclide_name = f'{s}{a}{iso}'
 
-            nuclide_name = f'{s}{a}{iso}'
-
-            ActivationReactionContainer.from_endf(file_path, nuclide_name, 'gamma', 'tendl')
+            ActivationReactionContainer.from_endf(file_path, 'gamma', 'tendl')
 
         i += 1
         p.log(i)
@@ -642,21 +660,21 @@ def pickle_fission_product_yields():
                 Helper(neutron_fission_yield_data_dir_gef,
                        neutron_yield_marshal_path_gef,
                        'GEFY_([0-9]+)_([0-9]+)_n.dat'),
-               # Helper(neutron_fission_yield_data_dir_endf,
-               #        neutron_yield_marshal_path_endf,
-               #        'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
-               # Helper(neutron_fission_yield_data_dir_ukfy,
-               #        neutron_yield_marshal_path_ukfy,
-               #        ukfy_file2symbol),
-               # Helper(sf_yield_data_dir,
-               #        sf_yield_marshal_path_gef,
-               #        'GEFY_([0-9]+)_([0-9]+)_s.dat'),
-               # Helper(proton_fiss_yield_data_dir_ukfy,
-               #        proton_yield_marshal_path_ukfy,
-               #        ukfy_file2symbol),
-               # Helper(gamma_fiss_yield_data_dir_ukfy,
-               #        gamma_yield_marshal_path_ukfy,
-               #        ukfy_file2symbol)
+               Helper(neutron_fission_yield_data_dir_endf,
+                      neutron_yield_marshal_path_endf,
+                      'nfy-([0-9]+)_[a-zA-Z]+_([0-9]+)(?:m([0-9]))*'),
+               Helper(neutron_fission_yield_data_dir_ukfy,
+                      neutron_yield_marshal_path_ukfy,
+                      ukfy_file2symbol),
+               Helper(sf_yield_data_dir,
+                      sf_yield_marshal_path_gef,
+                      'GEFY_([0-9]+)_([0-9]+)_s.dat'),
+               Helper(proton_fiss_yield_data_dir_ukfy,
+                      proton_yield_marshal_path_ukfy,
+                      ukfy_file2symbol),
+               Helper(gamma_fiss_yield_data_dir_ukfy,
+                      gamma_yield_marshal_path_ukfy,
+                      ukfy_file2symbol)
                ]
     #
     for helper in helpers:

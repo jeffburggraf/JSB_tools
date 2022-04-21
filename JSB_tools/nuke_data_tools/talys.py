@@ -12,7 +12,7 @@ talys_dir = Path(__file__).parent/'data'/'talys'
 tally_executable = '/Users/burggraf1/Talys/talys'
 
 
-def run(target, projectile, min_erg=0.1, max_erg=120.1, erg_step=0.5,
+def run(target, projectile, min_erg=0, max_erg=120, erg_step=None,
         fission_yields=False, outdiscrete=False, maxlevelstar=30, **kwargs):
     """
     Args:
@@ -32,7 +32,13 @@ def run(target, projectile, min_erg=0.1, max_erg=120.1, erg_step=0.5,
     a_symbol = m.groups()[0]
     mass = int(m.groups()[1])
     lines = [f'projectile {projectile}', f'element {a_symbol}',
-             f'mass {mass}', f'energy {min_erg} {max_erg} {erg_step}']
+             f'mass {mass}']
+
+    if erg_step is None:
+        lines.append(f'energy {projectile}{min_erg}-{max_erg}.grid')
+    else:
+        lines.append(f'energy {min_erg} {max_erg} {erg_step}')
+
 
     kwargs['maxlevelstar'] = maxlevelstar
 
@@ -56,6 +62,14 @@ def run(target, projectile, min_erg=0.1, max_erg=120.1, erg_step=0.5,
     cmd = f'cd {data_path};{tally_executable} < {f_name} > output'
 
     out = system(cmd)
+
+    try:
+        with open(data_path/'output') as f:
+            line = f.readline()
+            if "TALYS-error" in line:
+                print(line + "\n".join(f.readlines()))
+    except FileNotFoundError:
+        raise FileNotFoundError("Output file not found. Something went wrong!")
 
     return out
 
@@ -107,5 +121,5 @@ if __name__ == '__main__':
     target = 'U235'
     projectile = 'n'
 
-    run(target, projectile, 0.5, 15, outdiscrete=True, fission_yields=False, filediscrete=30, maxlevelstar=30)
+    run(target, projectile, outdiscrete=True, fission_yields=False, max_erg=25,  filediscrete=30, maxlevelstar=30, fission='n')
     # pickle_result(*args)

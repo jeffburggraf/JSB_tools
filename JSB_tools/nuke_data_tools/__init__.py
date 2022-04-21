@@ -2126,6 +2126,45 @@ class Nuclide:
 
         return out
 
+    def inelastic_xs(self, projectile, data_source=None):
+        return self.__get_misc_xs__('inelastic_xs', projectile, data_source)
+
+    def elastic_xs(self, projectile, data_source=None):
+        return self.__get_misc_xs__('elastic_xs', projectile, data_source)
+
+    def total_xs(self, projectile, data_source=None):
+        return self.__get_misc_xs__('total_xs', projectile, data_source)
+
+    def __get_misc_xs__(self, attrib, projectile, data_source=None) -> CrossSection1D:
+        """
+        Loads ActivationReactionContainer and grabs cross-section attribute according to `attrib`.
+        Args:
+            attrib: inelastic_xs, total_xs, etc.
+            projectile: proton, neutron, etc.
+            data_source: endf, padf, etc. None will return first found.
+
+        Returns:
+
+        """
+        assert projectile in ActivationReactionContainer.libraries, f'No data for projectile, "{projectile}"'
+        out = None
+
+        if data_source is None:
+            data_sources = ActivationReactionContainer.libraries[projectile]
+        else:
+            data_sources = [data_source]
+
+        for data_source in data_sources:
+            try:
+                reaction = ActivationReactionContainer.load(self.name, projectile, data_source=data_source)
+            except FileNotFoundError:
+                continue
+
+            out = getattr(reaction, attrib)
+            break
+
+        return out
+
     def is_effectively_stable(self, threshold_in_years: int=100) -> bool:
         """
         Is this nuclide effectively stable?
@@ -2215,7 +2254,7 @@ class NuclearLibraries:
     # list of nuclear library sources for each incident particle. The order in which a given data source is
     # first used (in endf_to_pickle.py) determines the order in which they appear in `libraries`,
     # which in turn determines priority.
-    xs_libraries = {'proton': ['endf', 'padf'],
+    xs_libraries = {'proton': ['endf', 'tendl', 'padf'],
                     'gamma': ['endf', 'tendl'],
                     'neutron': ['endf']}
 
@@ -2262,6 +2301,14 @@ class ActivationReactionContainer:
         self.nuclide_name = nuclide_name
         self.product_nuclide_names_xss: Dict[str, CrossSection1D] = {}
         self.parent_nuclide_names: List[str] = []
+
+        self.elastic_xs: Union[CrossSection1D, None] = None
+        self.inelastic_xs: Union[CrossSection1D, None] = None
+        self.total_xs: Union[CrossSection1D, None] = None
+
+        self._evaluation: Union[Evaluation, None] = None  # Only set when instance is created by from_endf() factory.
+
+        self._available_mts: Union[None, set] = None  # MT values in ENDF file. Not all are pickled, however (yet). Todo?
 
         ActivationReactionContainer.all_instances[projectile][data_source][nuclide_name] = self
 
@@ -2321,7 +2368,10 @@ class ActivationReactionContainer:
         elif data_source == 'all':
             reaction = None
             for library in cls.libraries[projectile]:
-                r = cls.from_pickle(nuclide_name, projectile, library)
+                try:
+                    r = cls.from_pickle(nuclide_name, projectile, library)
+                except FileNotFoundError:
+                    continue
                 if reaction is None:  # reaction is the obj that will be returned (after possible additions below)
                     reaction = r
                 else:
@@ -2335,7 +2385,7 @@ class ActivationReactionContainer:
             assert False, f'`data_source, "{data_source}" not found for projectile "{projectile}". ' \
                           f'Available data libraries are:\n\t{cls.libraries[projectile]}\n, or, you can specify "all"'
 
-        for _other_reaction in reactions:
+        for _other_reaction in reactions:  #
             for name, xs in _other_reaction.product_nuclide_names_xss.items():
                 if name not in reaction.product_nuclide_names_xss:
                     reaction.product_nuclide_names_xss[name] = xs
@@ -2365,7 +2415,8 @@ class ActivationReactionContainer:
                 with open(str(pickle_path), "rb") as f:
                     existing_instance = CustomUnpickler(f).load()
             except FileNotFoundError:  # no existing pickle file. Raise error
-                raise FileNotFoundError(f'No {projectile} activation data for {nuclide_name}')
+                raise FileNotFoundError(f'No {projectile} activation data for {nuclide_name} and data source '
+                                        f'"{data_source}"')
             all_instances[nuclide_name] = existing_instance
         return existing_instance
 
@@ -2397,22 +2448,66 @@ class ActivationReactionContainer:
 
         return 'X'  # X for something
 
+    def set_misc_xs(self):
+        """
+        Write non_elastic, elastic, and total if available.
+        Returns:
+        """
+
+        assert isinstance(self._evaluation, Evaluation)
+
+        def get_xy(mt):
+            r = Reaction.from_endf(self._evaluation, mt)
+            xs = r.xs["0K"]  # cross-sections at zero Kelvin
+            return xs.x * 1E-6, xs.y
+
+        if self.projectile == 'neutron':
+            non_elastic = 4
+        else:
+            non_elastic = 3
+
+        if non_elastic in self._available_mts:
+            x, y = get_xy(non_elastic)
+            fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
+            self.inelastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+
+        if 2 in self._available_mts:
+            x, y = get_xy(2)
+            fig_label = f"{self.nuclide_name}({self._get_projectile_short}, elastic)"
+            self.elastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+
+        if 1 in self._available_mts:
+            x, y = get_xy(1)
+            fig_label = f"{self.nuclide_name}({self._get_projectile_short}, total)"
+            self.total_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+
+    @property
+    def _get_projectile_short(self):
+        try:
+            return {'proton': 'p', 'neutron': 'n', 'gamma': 'g', 'electron': 'e', 'alpha': 'a'}[self.projectile]
+        except KeyError:
+            assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
+
     @classmethod
-    def from_endf(cls, endf_path, nuclide_name, projectile, data_source: str):
+    def from_endf(cls, endf_path, projectile, data_source: str):
         """
         Build the instance from ENDF file using openmc. Instance is saved to ActivationReactionContainer.all_instances
         Args:
             endf_path: Path to relevant target nuclide endf file
-            nuclide_name
-            projectile:
-            data_source: Source of data, e.g. 'ENDF', or 'TENDL'. Default 'None'.
+            projectile: incident particle
+            data_source: Source of data, e.g. 'ENDF', or 'TENDL'. Default 'None'. Determines the name of directory of
+                pickled data.
 
         Returns: None
 
         """
         endf_path = Path(endf_path)
-        assert endf_path.exists()
-        print(f'Reading data from {data_source} for {projectile}s on {nuclide_name}')
+        assert endf_path.exists(), endf_path
+
+        e = Evaluation(endf_path)
+        nuclide_name = e.gnd_name
+
+        print(f'Read data from {data_source} for {projectile}s on {nuclide_name}')
 
         all_instances = ActivationReactionContainer.all_instances[projectile][data_source]
 
@@ -2421,8 +2516,14 @@ class ActivationReactionContainer:
         except KeyError:
             self = ActivationReactionContainer(nuclide_name, projectile, data_source)
 
-        e = Evaluation(endf_path)
+        self._evaluation = e
+        self._available_mts = set([x[1] for x in self._evaluation.reaction_list])
+
+        self.set_misc_xs()
+
         openmc_reaction = Reaction.from_endf(e, 5)
+
+        par_id = self._get_projectile_short
 
         for openmc_product in openmc_reaction.products:
             activation_product_name = openmc_product.particle
@@ -2437,11 +2538,6 @@ class ActivationReactionContainer:
             if activation_product_name == "neutron":
                 activation_product_name = "Nn1"
 
-            try:
-                par_id = {'proton': 'p', 'neutron': 'n', 'gamma': 'g', 'electron': 'e'}[self.projectile]
-            except KeyError:
-                assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
-
             _product_label = cls.__get_product_name__(nuclide_name, activation_product_name, projectile)
 
             xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){activation_product_name}"
@@ -2450,14 +2546,15 @@ class ActivationReactionContainer:
             y_tot = openmc_reaction.xs['0K'].y
 
             try:
-                x = openmc_product.yield_.x / 1E6
+                x_yield = openmc_product.yield_.x / 1E6
             except AttributeError:
                 continue
 
-            tot_xs = np.interp(x, x_tot, y_tot)
+            # interp to yield since yield will include <= energy range of tot xs.
+            tot_xs = np.interp(x_yield, x_tot, y_tot)
 
             try:
-                xs = CrossSection1D(x, openmc_product.yield_.y*tot_xs, xs_fig_label,
+                xs = CrossSection1D(x_yield, openmc_product.yield_.y*tot_xs, xs_fig_label,
                                     self.projectile,  self.data_source)
             except AttributeError:  # no data. Move on
                 continue
