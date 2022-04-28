@@ -22,7 +22,7 @@ import numpy as np
 from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
     photonuclear_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
     proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, photonuclear_tendl_dir,\
-    neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir
+    neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir, neutron_tendl_data_dir
 
 from JSB_tools import ProgressReport
 cwd = Path(__file__).parent
@@ -456,23 +456,23 @@ def pickle_gamma_fission_xs_data():
 
 
 def pickle_proton_activation_data():
-    assert PROTON_PICKLE_DIR.exists()
-
-    for path in Path(tendl_2019_proton_dir).iterdir():
-        if path.is_dir() and re.match("[A-Z][a-z]{0,2}", path.name):
-            for path in path.iterdir():
-                if m := re.match("([A-Z][a-z]{0,2}[0-9]{3}[m-z]?)", path.name):
-                    if path.name == 'U235':
-                        path = (path/'lib'/'endf'/f'p-{m.groups()[0]}').with_suffix('.tendl')
-                        if not path.exists():
-                            warnings.warn(f"TENDL path missing: {path}")
-                            continue
-                        try:
-                            ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
-                        except ValueError as e:
-                            warnings.warn(f"ValueError on TENDL: {path}:\n{e}")
-
-    ActivationReactionContainer.pickle_all('proton', 'tendl')
+    # assert PROTON_PICKLE_DIR.exists()
+    #
+    # for path in Path(tendl_2019_proton_dir).iterdir():
+    #     if path.is_dir() and re.match("[A-Z][a-z]{0,2}", path.name):
+    #         for path in path.iterdir():
+    #             if m := re.match("([A-Z][a-z]{0,2}[0-9]{3}[m-z]?)", path.name):
+    #                 if path.name == 'U235':
+    #                     path = (path/'lib'/'endf'/f'p-{m.groups()[0]}').with_suffix('.tendl')
+    #                     if not path.exists():
+    #                         warnings.warn(f"TENDL path missing: {path}")
+    #                         continue
+    #                     try:
+    #                         ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
+    #                     except ValueError as e:
+    #                         warnings.warn(f"ValueError on TENDL: {path}:\n{e}")
+    #
+    # ActivationReactionContainer.pickle_all('proton', 'tendl')
 
     # for path in Path(proton_padf_data_dir).iterdir():
     #     f_name = path.name
@@ -492,27 +492,37 @@ def pickle_proton_activation_data():
     #
     # ActivationReactionContainer.pickle_all('proton', 'padf')
 
-    # for path in Path(proton_enfd_b_data_dir).iterdir():
-    #     f_name = path.name
-    #     _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
-    #     if _m:
-    #         # s = _m.groups()[1]
-    #         # a = int(_m.groups()[2])
-    #         # nuclide_name = f"{s}{a}"
-    #         ActivationReactionContainer.from_endf(path, 'proton', 'endf')
-    #
-    # ActivationReactionContainer.pickle_all('proton', 'endf')
+    for path in Path(proton_enfd_b_data_dir).iterdir():
+        f_name = path.name
+        _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
+        if _m:
+            # s = _m.groups()[1]
+            # a = int(_m.groups()[2])
+            # nuclide_name = f"{s}{a}"
+            ActivationReactionContainer.from_endf(path, 'proton', 'endf')
+
+    ActivationReactionContainer.pickle_all('proton', 'endf')
 
 
 def pickle_neutron_activation_data():
 
-    for file_path in neutron_enfd_b_data_dir.iterdir():
-        _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
+    # for file_path in neutron_enfd_b_data_dir.iterdir():
+    #     _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
+    #     if _m:
+    #         # a = int(_m.groups()[2])
+    #         # symbol = _m.groups()[1]
+    #         # nuclide_name = '{0}{1}'.format(symbol, a)
+    #         ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
+    #
+    # ActivationReactionContainer.pickle_all('neutron')
+
+    for file_path in neutron_tendl_data_dir.iterdir():
+        _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc', file_path.name)
         if _m:
-            a = int(_m.groups()[2])
-            symbol = _m.groups()[1]
-            nuclide_name = '{0}{1}'.format(symbol, a)
-            ActivationReactionContainer.from_endf(file_path, nuclide_name, 'neutron', 'endf')
+            # a = int(_m.groups()[2])
+            # symbol = _m.groups()[1]
+            # nuclide_name = '{0}{1}'.format(symbol, a)
+            ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
 
     ActivationReactionContainer.pickle_all('neutron')
 
@@ -524,10 +534,10 @@ def pickle_gamma_activation_data():
         # _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)  # Old, ENDF III
         _m = re.match(r'g_(?P<Z>[0-9]+)-(?P<S>[A-Z][a-z]{0,2})-(?P<A>[0-9]+)_[0-9]+.+endf', file_path.name)
         if _m:
-            a = int(_m['A'])
-            symbol = _m['S']
-            nuclide_name = '{0}{1}'.format(symbol, a)
-            ActivationReactionContainer.from_endf(file_path, nuclide_name, 'gamma', 'endf')
+            # a = int(_m['A'])
+            # symbol = _m['S']
+            # nuclide_name = '{0}{1}'.format(symbol, a)
+            ActivationReactionContainer.from_endf(file_path, 'gamma', 'endf')
         i += 1
         p.log(i)
 
@@ -765,7 +775,7 @@ if __name__ == '__main__':
     pass
     # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
-    pickle_proton_activation_data()
+    # pickle_proton_activation_data()
     # pickle_gamma_fission_xs_data()
-    # pickle_neutron_activation_data()
+    pickle_neutron_activation_data()
 

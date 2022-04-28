@@ -52,6 +52,7 @@ proton_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1p'
 gamma_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1g'
 alpha_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1a'
 deuterium_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1d'
+neutron_tendl_data_dir = parent_data_dir/'TENDL2021-NEUTRONS/gendf-1102'
 
 # =====================================================================================================
 # ===============================End specification of paths to nuclear libraries ====================

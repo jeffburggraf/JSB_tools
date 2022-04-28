@@ -17,8 +17,8 @@ from functools import cached_property
 from scipy.interpolate import interp1d
 from uncertainties import nominal_value
 from datetime import datetime, timedelta
-from JSB_tools.nuke_data_tools.talys import talys_dir, run, pickle_result
-import JSB_tools.nuke_data_tools.talys as talys
+# from JSB_tools.nuke_data_tools.talys import talys_dir, run, pickle_result
+# import JSB_tools.nuke_data_tools.talys as talys
 
 
 def openmc_not_installed_warning():
@@ -56,7 +56,7 @@ NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for pe
 PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fissionXS xs. lodaed only when needed.
 PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fissionXS xs. lodaed only when needed.
 
-NUCLIDE_NAME_MATCH = re.compile("([A-Za-z]{1,2})([0-9]{1,3})(?:_m([0-9]+))?")  # Nuclide name in GND naming convention
+NUCLIDE_NAME_MATCH = re.compile("(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_m(?P<iso>[0-9]+))?")  # Nuclide name in GND naming convention
 
 # global variable for the bin-width of xs interpolation
 XS_BIN_WIDTH_INTERPOLATION = 0.1
@@ -162,31 +162,31 @@ def human_readable_half_life(hl, include_errors):
     return out
 
 
-def talys_calculation(target, projectile, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-    fname = f'{target}-{projectile}'
-
-    path = talys_dir/fname/'data.pickle'
-    out = {}
-    if not path.exists():
-        talys.run(target=target, projectile=projectile)
-        talys.pickle_result(target=target, projectile=projectile)
-
-    with open(path, 'rb') as f:
-        data = pickle.load(f)
-        ergs = pickle.load(f)
-    parent_nuclide = Nuclide.from_symbol(target)
-
-    for k, v in data.items():
-        out_name = ActivationReactionContainer.__get_product_name__(target, k, projectile)
-        d = InducedDaughter(Nuclide.from_symbol(k), parent_nuclide, projectile)
-        if not __nuclide_cut__(a_z_hl_cut, d.A, d.Z, d.half_life, is_stable_only):
-            continue
-        out[k] = d
-        xs = CrossSection1D(ergs, v, incident_particle=projectile,
-                            fig_label=f"{target}({projectile}, {out_name}){d.name}",
-                            data_source='TALYS')
-        out[k].xs = xs
-    return out
+# def talys_calculation(target, projectile, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+#     fname = f'{target}-{projectile}'
+#
+#     path = talys_dir/fname/'data.pickle'
+#     out = {}
+#     if not path.exists():
+#         talys.run(target=target, projectile=projectile)
+#         talys.pickle_result(target=target, projectile=projectile)
+#
+#     with open(path, 'rb') as f:
+#         data = pickle.load(f)
+#         ergs = pickle.load(f)
+#     parent_nuclide = Nuclide.from_symbol(target)
+#
+#     for k, v in data.items():
+#         out_name = ActivationReactionContainer.__get_product_name__(target, k, projectile)
+#         d = InducedDaughter(Nuclide.from_symbol(k), parent_nuclide, projectile)
+#         if not __nuclide_cut__(a_z_hl_cut, d.A, d.Z, d.half_life, is_stable_only):
+#             continue
+#         out[k] = d
+#         xs = CrossSection1D(ergs, v, incident_particle=projectile,
+#                             fig_label=f"{target}({projectile}, {out_name}){d.name}",
+#                             data_source='TALYS')
+#         out[k].xs = xs
+#     return out
 
 
 # Needed because classes in this __init__ file will not be in scope of __main__ as required for unpickling
@@ -1014,7 +1014,8 @@ class FissionYields:
 
 class CrossSection1D:
     def __init__(self, ergs: List[float], xss: List[Union[UFloat, float]],
-                 fig_label: str = None, incident_particle: str = 'particle', data_source=''):
+                 fig_label: str = None, incident_particle: str = 'particle', data_source='',
+                 **misc_data):
         """
         A container for energy dependent 1-D cross-section
         Args:
@@ -1022,12 +1023,41 @@ class CrossSection1D:
             xss: Cross sections corresponding to energies.
             fig_label: Figure label.
             incident_particle:
+
         """
         self.__ergs__ = np.array(ergs)
         self.__xss__ = np.array(xss)
         self.__fig_label__ = fig_label
         self.__incident_particle__ = incident_particle
         self.data_source = data_source
+        self.misc_data = misc_data
+
+    def cut(self, erg_min=None, erg_max=None):
+        if erg_min is None:
+            erg_min = self.ergs[0]
+
+        if erg_max is None:
+            erg_max = self.ergs[-1]
+
+        sel = np.where((self.ergs <= erg_max) & (self.ergs >= erg_min))
+
+        self.__ergs__ = self.__ergs__[sel]
+
+        self.__xss__ = self.__xss__[sel]
+        try:
+            del self.xss
+        except AttributeError:
+            pass
+        try:
+            del self.ergs
+        except AttributeError:
+            pass
+
+        return self
+
+    @property
+    def nominal_xs(self):
+        return unp.nominal_values(self.xss)
 
     @cached_property
     def xss(self):
@@ -1035,7 +1065,8 @@ class CrossSection1D:
 
     @cached_property
     def ergs(self):
-        return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
+        return self.__ergs__
+        # return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
 
     def threshold_erg(self, thresh_barn=50E-3):
         if max(self.xss) < thresh_barn:
@@ -1072,14 +1103,7 @@ class CrossSection1D:
         elif ax is plt:
             ax = plt.gca()
             ax.set_title('')
-        else:
-            ax.set_title('')  # ya
-        # if ax.get_title() == '':
-        #     if fig_title is not None:
-        #         ax.set_title(fig_title)
-        #     else:
-        #         if self.__fig_label__ is not None:
-        #             ax.set_title(self.__fig_label__)
+
         if erg_max is None:
             erg_max = self.__ergs__[-1]
         if erg_min is None:
@@ -1094,7 +1118,7 @@ class CrossSection1D:
                 src = 'No src data'
             label = f"{self.__fig_label__} ({src})"
 
-        ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label)
+        ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label, **mpl_kwargs)
 
         y_label = "Cross-section [{}]".format(units)
         x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
@@ -1105,7 +1129,8 @@ class CrossSection1D:
         else:
             ax.set_xlabel(x_label)
             ax.set_ylabel(y_label)
-        ax.legend()
+        if label != '':
+            ax.legend()
         return ax
 
     @property
@@ -1215,7 +1240,7 @@ def get_z_a_m_from_name(name: str) -> Dict[str, int]:
     return {'Z': Z, "A": A, "M": isometric_state}
 
 
-def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only) -> bool:
+def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=False, m=0) -> bool:
     """
     Does a nuclide with a given z, a, and time_in_seconds (half life) make fit the criteria given by `a_z_hl_cut`?
 
@@ -1226,8 +1251,9 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
         z: atomic number
         hl: half life in seconds
         is_stable_only: does the half life have to be effectively infinity?
+        m: Excited level.
 
-    Returns:
+    Returns: bool
 
     """
     makes_cut = True
@@ -1245,7 +1271,7 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only)
             makes_cut = False
         else:
             try:
-                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z})
+                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z, 'm': m})
                 assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
             except NameError as e:
                 invalid_name = str(e).split("'")[1]
@@ -1580,6 +1606,11 @@ class Nuclide:
 
         self.__decay_mode_for_print__ = None
 
+    def adopted_levels(self):
+        from nudel.nudel import Nuclide as NudelNuclide
+        n = NudelNuclide(self.A, self.Z)
+        return n.adopted_levels.levels
+
     def potential_coincidence_summing(self):
         outs = []
         gamma_ergs = np.array([g.erg for g in self.decay_gamma_lines])
@@ -1771,10 +1802,10 @@ class Nuclide:
 
     @property
     def isometric_state(self) -> int:
-        """Meta stable excited state, starting with "0" as the ground state."""
+        """Meta stable excited state, starting with 0 as the ground state."""
         if not hasattr(self, '__Z_A_iso_state__'):
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
-        return self.__Z_A_iso_state__['M']
+        return int(self.__Z_A_iso_state__['M'])
 
     @property
     def A(self) -> int:
@@ -1985,9 +2016,8 @@ class Nuclide:
                     instance.is_valid = True
 
                 else:
-                    warn("Cannot find data for Nuclide `{0}`. Data for this nuclide is set to defaults: None, nan, ect."
-                         .format(symbol))
-                    # raise ValueError
+                    # warn("Cannot find data for Nuclide `{0}`. Data for this nuclide is set to defaults: None, nan, ect."
+                    #      .format(symbol))
                     instance = Nuclide(symbol,  __internal__=True, half_life=ufloat(np.nan, np.nan))
                     instance.is_valid = False
 
@@ -2063,7 +2093,19 @@ class Nuclide:
 
         return out
 
+    def get_incident_particle_daughters(self, particle, data_source=None, a_z_hl_cut='', is_stable_only=False) \
+            -> Dict[str, InducedDaughter]:
+        f = getattr(self, f"get_incident_{particle}_daughters")
+        return f(data_source=data_source, a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only)
+
     def get_incident_proton_parents(self, data_source=None, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+        """
+        See __get_daughters__
+        :param data_source:
+        :param a_z_hl_cut:
+        :param is_stable_only:
+        :return:
+        """
         return self.__get_parents__('proton', a_z_hl_cut, is_stable_only, data_source)
 
     def get_incident_proton_daughters(self, data_source=None, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
@@ -2088,9 +2130,11 @@ class Nuclide:
         pickle file for the given reaction.
         Args:
             projectile: eg 'proton', 'photon', 'neutron'
-            a_z_hl_cut:
+            a_z_hl_cut: string to be evaluated as python. Variables are
             is_stable_only:
-            data_source: None uses ONLY default library. 'all' uses all of them, where higher priority libraries take precedence.
+            data_source: None uses ONLY the default library.
+                         'all' uses all of them, where higher priority libraries take precedence.
+                         'endf' uses ENDF, 'talys' uses TALYS, etc.
 
         Returns:
 
@@ -2101,8 +2145,8 @@ class Nuclide:
 
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
-            a, z, hl = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life
-            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
+            a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, daughter_nuclide.isometric_state
+            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only, m):
                 daughter = InducedDaughter(daughter_nuclide, self, projectile)
                 daughter.xs = xs
                 out[daughter_name] = daughter
@@ -2118,8 +2162,8 @@ class Nuclide:
         parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
 
         for parent_nuclide in parent_nuclides:
-            a, z, hl = parent_nuclide.A, parent_nuclide.Z, parent_nuclide.half_life
-            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
+            a, z, hl, m = parent_nuclide.A, parent_nuclide.Z, parent_nuclide.half_life, parent_nuclide.isometric_state
+            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only, m):
                 parent = InducedParent(self, parent_nuclide, inducing_particle=projectile)
                 parent.xs = ActivationReactionContainer.fetch_xs(parent_nuclide.name, self.name, projectile)
                 out[parent.name] = parent
@@ -2256,7 +2300,7 @@ class NuclearLibraries:
     # which in turn determines priority.
     xs_libraries = {'proton': ['endf', 'tendl', 'padf'],
                     'gamma': ['endf', 'tendl'],
-                    'neutron': ['endf']}
+                    'neutron': ['endf', 'tendl']}
 
 
 class ActivationReactionContainer:
@@ -2509,7 +2553,11 @@ class ActivationReactionContainer:
 
         print(f'Read data from {data_source} for {projectile}s on {nuclide_name}')
 
-        all_instances = ActivationReactionContainer.all_instances[projectile][data_source]
+        try:
+            all_instances = ActivationReactionContainer.all_instances[projectile][data_source]
+        except KeyError:
+            raise KeyError("Need to add particle/data_source to NuclearLibraries stucture. "
+                           "(search for NuclearLibraries)")
 
         try:
             self = all_instances[nuclide_name]
