@@ -15,7 +15,7 @@ talys_dir = Path(__file__).parent/'data'/'talys'
 tally_executable = '/Users/burggraf1/Talys/talys'
 
 
-def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
+def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
         fission_yields=False, maxlevelstar=10, maxlevelsres=10, auto_run=True, runnum=0,
         verbose=True,
         **kwargs):
@@ -36,7 +36,6 @@ def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
 
     """
 
-
     m = re.match("([A-Z][a-z]{0,2})-?([0-9]{1,3})(?:_m([0-9]+))?", target_nuclide)
     assert m
     a_symbol = m.groups()[0]
@@ -52,6 +51,8 @@ def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
         f_name = f"{a_symbol}{mass}-{projectile}"
 
     if erg_step is None:
+        assert isinstance(min_erg, int), "When using default energy grid, min/max must be int"
+        assert isinstance(max_erg, int), "When using default energy grid, min/max must be int"
         out_kwargs['energy'] = f'{projectile}{min_erg}-{max_erg}.grid'
     else:
         out_kwargs['energy'] = f'energy {min_erg} {max_erg} {erg_step}'
@@ -104,7 +105,7 @@ def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
                     if "TALYS-error" in line:
                         _flag = None  # will not print till end
                     if _flag is None:
-                        print(line)
+                        raise ValueError(line)
                     else:  # _flag is not None
                         _flag += 1
                         if _flag > 10:  # give up, not an error file
@@ -200,7 +201,15 @@ class ReadResult:
         projectile = self._get_par(projectile)
         directory = Path(__file__).parent/'data'/'talys'/f'{nuclide_name}-{projectile}'/f'{runnum}'
         self.directory = Path(directory)
-        self.files = list(self.directory.iterdir())
+        try:
+            self.files = list(self.directory.iterdir())
+        except FileNotFoundError:
+            options = []
+            if directory.parent.exists():
+                dirs = [f.name for f in directory.parent.iterdir() if re.match("[0-9]+", f.name)]
+                options = dirs
+            raise FileNotFoundError(f"No Talys run for {projectile} on {nuclide_name}, runnum {runnum}. "
+                                    f"Runnum options are {options}")
 
         self.runnum = runnum
 
@@ -230,7 +239,10 @@ class ReadResult:
             f_name = 'fission.tot'
             fig_label = f"{self.nuclide_name}({self.projectile}, F)"
         else:
-            raise NotImplemented
+
+            n = Nuclide.from_symbol(res)
+            f_name = f'rp{n.Z:0>3}{n.A:0>3}.fis'
+            fig_label = f"{self.nuclide_name}({self.projectile}, ({n.name})F)"
 
         with open(self.directory/f_name) as f:
             ergs, xss = self._read_file_simple(f)
@@ -238,6 +250,9 @@ class ReadResult:
         out = CrossSection1D(ergs, xss, fig_label, self.projectile, 'TALYS')
 
         return out
+
+    def __repr__(self):
+        return " | ".join(f"{k} = {v}" for k, v in self.input_kwargs.items())
 
     @staticmethod
     def _read_file_simple(buffer, erg_index=0, xs_index=1):
@@ -408,7 +423,7 @@ class ReadResult:
                              data_source='TALYS', q_value=q_value, threshold=threshold)
         return out
 
-    def residue_production(self, res: str, filename_in_label=False):
+    def residue_production(self, res: str, filename_in_label=False, label=None):
         """
         Total cross-section for production of a residue nucleus.
 
@@ -453,7 +468,7 @@ class ReadResult:
                     if match := re.match(r'# Q-value +=([-0-9.E+]+)', line):
                         q_value = float(match.groups()[0])
                     elif match := re.match('#.+ ([0-9.]+) MeV', line):
-                        level_erg = float(match.groups()[0])
+                        level_erg = 1E3 * float(match.groups()[0])
 
                 else:
                     if m is None:
@@ -464,13 +479,15 @@ class ReadResult:
                     ergs.append(erg)
                     xss.append(xs*1E-3)
 
-        fig_label = f'{self.nuclide_name}({self.projectile},X){res}'
+        if label is None:
+            fig_label = f'{self.nuclide_name}({self.projectile},X){res}'
+            if level_erg != 0:
+                fig_label += f" {level_erg:.3e} keV"
 
-        if level_erg != 0:
-            fig_label += f" {level_erg*1E3:.3e} keV"
-
-        if filename_in_label:
-            fig_label += f'; {f_name}'
+            if filename_in_label:
+                fig_label += f'; {f_name}'
+        else:
+            fig_label = label
 
         out = CrossSection1D(ergs, xss, fig_label=fig_label,
                              incident_particle=self.projectile,
@@ -500,7 +517,7 @@ class ReadResult:
         options = list(sorted(options))
         return options
 
-    def gamma_production_xs(self, init_level, final_level, nucleus=None):
+    def gamma_production_xs(self, init_level, final_level, nucleus=None, label=None):
         if nucleus is None:
             nucleus = self.nuclide_name
 
@@ -532,10 +549,13 @@ class ReadResult:
                 xs *= 1E-3
                 ergs.append(erg)
                 xss.append(xs)
+        if label is None:
+            leg_label = fr"{self.nuclide_name}: L{init_level} $\rightarrow$ L{final_level} $\gamma$ at {gamma_erg:.1f} keV"
+        else:
+            leg_label = label
 
         out = CrossSection1D(ergs, xss,
-                             fig_label=fr"{self.nuclide_name}: L{init_level} $\rightarrow$ L{final_level} $\gamma$ at "
-                                       fr"{gamma_erg:.1f} keV",
+                             fig_label=leg_label,
                              incident_particle=self._get_par(self.projectile))
         return out
 
@@ -576,13 +596,13 @@ if __name__ == '__main__':
     # plt.show()
 
     # args = ('N14', 'g')
-    target = 'U235'
+    target = 'Th232'
     projectile = 'n'
     runnum = None  # None for main folder name
     max_erg = 35
 
-    run('Pb208', "n", max_erg=20, isomer=1E-4, maxz=0, channels=True, filechannels=True, fileresidual=True,
-        outgamdis=True)
+    run('U235', "p", max_erg=25, min_erg=1, isomer=1E-12, fileresidual=True, maxlevelstar=100,
+        maxlevelsres=100, runnum=0)
     # run(target, projectile, auto_run=True, max_erg=max_erg,
     #     maxlevelstar=30, maxlevelsres=30, fission='n', runnum=runnum, fileresidual='y',
     #     outlevels='y', isomer=1E-12, maxZ=2, maxN=2, outgamdis='y')

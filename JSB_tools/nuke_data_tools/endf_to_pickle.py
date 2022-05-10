@@ -431,28 +431,79 @@ def pickle_proton_fission_xs_data():
                 pickle.dump(data, f)
 
 
-def pickle_gamma_fission_xs_data():
-    photo_fission_data = {}
-    for file in photonuclear_endf_dir.iterdir():
-        _m = re.match(r'g_([0-9]{1,3})-([A-Za-z]+)-([0-9]{0,3})_[0-9]+\.endf', file.name)
-        if _m:
-            a = _m.groups()[2]
-            symbol = _m.groups()[1]
-            nuclide_name = '{0}{1}'.format(symbol, a)
-            ev = Evaluation(file)
-            xs = Reaction.from_endf(ev, 18).xs
-            if len(xs):
-                fission_xs = list(Reaction.from_endf(ev, 18).xs.values())[0]
-                xs_fig_label = '{0}{1}(G,F)'.format(nuclide_name, a)
-                xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, xs_fig_label, 'gamma')
-                photo_fission_data[nuclide_name] = xs
-            else:
-                continue
+def pickle_gamma_neutron_fission_xs_data():
 
-    for nuclide_name, xs in photo_fission_data.items():
-        assert (GAMMA_PICKLE_DIR / 'fissionXS').exists()
-        with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
-            pickle.dump(xs, f)
+    loop_data = {'neutron': {"src_path": neutron_enfd_b_data_dir,
+                             "match": re.compile(r"n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf"),
+                             "data": {},
+                             'save_dir': NEUTRON_PICKLE_DIR},
+
+                 'gamma': {"src_path": photonuclear_endf_dir,
+                           "match": re.compile(r"g_([0-9]{1,3})-([A-Za-z]+)-([0-9]{0,3})_[0-9]+\.endf"),
+                           "data": {},
+                           "save_dir": GAMMA_PICKLE_DIR}
+                 }
+
+    for par, data in loop_data.items():
+        result_dict = data['data']
+        save_dir = data['save_dir']
+
+        for filepath in data['src_path'].iterdir():
+            if data['match'].match(filepath.name):
+                ev = Evaluation(filepath)
+                nuclide_name = ev.gnd_name
+                try:
+                    xs = Reaction.from_endf(ev, 18).xs
+                except KeyError:  # OpenMC bug for some neutron ENDF files
+                    continue
+                if len(xs):
+                    fission_xs = list(Reaction.from_endf(ev, 18).xs.values())[0]
+                    xs_fig_label = f'{nuclide_name}({par[0].upper()},F)'
+                    xs = CrossSection1D(fission_xs.x / 1E6, fission_xs.y, xs_fig_label, par)
+                    result_dict[nuclide_name] = xs
+
+        for nuclide_name, xs in result_dict.items():
+            assert (save_dir / 'fissionXS').exists()
+            with open(save_dir / 'fissionXS' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
+                pickle.dump(xs, f)
+    #
+    # for file in neutron_enfd_b_data_dir.iterdir():
+    #     _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file.name)
+    #     if _m:
+    #         ev = Evaluation(file)
+    #         nuclide_name = ev.gnd_name
+    #         xs = Reaction.from_endf(ev, 18).xs
+    #
+    #         if len(xs):
+    #             fission_xs = list(Reaction.from_endf(ev, 18).xs.values())[0]
+    #             xs_fig_label = '{0}(G,F)'.format(nuclide_name)
+    #             xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, xs_fig_label, 'neutron')
+    #             neutron_fission_data[nuclide_name] = xs
+    #
+    # photo_fission_data = {}
+    # for file in photonuclear_endf_dir.iterdir():
+    #     _m = re.match(r'g_([0-9]{1,3})-([A-Za-z]+)-([0-9]{0,3})_[0-9]+\.endf', file.name)
+    #     if _m:
+    #         ev = Evaluation(file)
+    #         nuclide_name = ev.gnd_name
+    #         xs = Reaction.from_endf(ev, 18).xs
+            # a = _m.groups()[2]
+            # symbol = _m.groups()[1]
+            # nuclide_name = '{0}{1}'.format(symbol, a)
+            # ev = Evaluation(file)
+            # xs = Reaction.from_endf(ev, 18).xs
+    #         if len(xs):
+    #             fission_xs = list(Reaction.from_endf(ev, 18).xs.values())[0]
+    #             xs_fig_label = '{0}(G,F)'.format(nuclide_name)
+    #             xs = CrossSection1D(fission_xs.x/1E6, fission_xs.y, xs_fig_label, 'gamma')
+    #             photo_fission_data[nuclide_name] = xs
+    #         else:
+    #             continue
+    #
+    # for nuclide_name, xs in photo_fission_data.items():
+    #     assert (GAMMA_PICKLE_DIR / 'fissionXS').exists()
+    #     with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{0}.pickle'.format(nuclide_name), 'wb') as f:
+    #         pickle.dump(xs, f)
 
 
 def pickle_proton_activation_data():
@@ -506,25 +557,20 @@ def pickle_proton_activation_data():
 
 def pickle_neutron_activation_data():
 
-    # for file_path in neutron_enfd_b_data_dir.iterdir():
-    #     _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
-    #     if _m:
-    #         # a = int(_m.groups()[2])
-    #         # symbol = _m.groups()[1]
-    #         # nuclide_name = '{0}{1}'.format(symbol, a)
-    #         ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
-    #
-    # ActivationReactionContainer.pickle_all('neutron')
-
-    for file_path in neutron_tendl_data_dir.iterdir():
-        _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc', file_path.name)
+    for file_path in neutron_enfd_b_data_dir.iterdir():
+        _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
         if _m:
-            # a = int(_m.groups()[2])
-            # symbol = _m.groups()[1]
-            # nuclide_name = '{0}{1}'.format(symbol, a)
-            ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
+            ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
 
     ActivationReactionContainer.pickle_all('neutron')
+
+    # for file_path in neutron_tendl_data_dir.iterdir():
+    #     _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc', file_path.name)
+    #     if _m:
+    #
+    #         ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
+    #
+    # ActivationReactionContainer.pickle_all('neutron')
 
 
 def pickle_gamma_activation_data():
@@ -776,6 +822,6 @@ if __name__ == '__main__':
     # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
     # pickle_proton_activation_data()
-    # pickle_gamma_fission_xs_data()
+    # pickle_gamma_neutron_fission_xs_data()
     pickle_neutron_activation_data()
-
+# pickle_gamma_fission_xs_data

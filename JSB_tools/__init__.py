@@ -93,19 +93,19 @@ class TabPlot:
 
     def __init__(self, *fig_args, **fig_kwargs):
         TabPlot._instnaces.append(self)
+
         self.fig = plt.figure(*fig_args, **fig_kwargs)
+
         self._vis_flag = True
-        self.button_axs = []
+
         self.plt_axs = []
-        self.button_labels = []
+
         self.suptitles = []
 
         self.button_funcs = []
-
+        self.button_axs = [[]]  # list of lists for each row of buttons
+        self.button_labels = []
         self.buttons = []
-        self.prev_x = 0
-
-    units_per_letter = 0.1/4
 
     @property
     def button_len(self):
@@ -119,21 +119,21 @@ class TabPlot:
                 Callback func
 
         """
-        i = len(self.plt_axs) - 1
+        index = len(self.plt_axs) - 1
 
         def set_vis(event):
             for axs_group in self.plt_axs:
-                if axs_group is self.plt_axs[i]:
+                if axs_group is self.plt_axs[index]:
                     [ax.set_visible(1) for ax in axs_group]
                 else:
                     [ax.set_visible(0) for ax in axs_group]
 
             self.fig.canvas.draw_idle()
 
-            if self.suptitles[i] is not None:
-                title = self.suptitles[i]
+            if self.suptitles[index] is not None:
+                title = self.suptitles[index]
             else:
-                title = self.button_labels[i]
+                title = self.button_labels[index]
             self.fig.suptitle(title)
             # if len(axs) > 1:
             #     self.fig.suptitle(self.button_labels[i])
@@ -173,41 +173,55 @@ class TabPlot:
 
         if not hasattr(axs, '__iter__'):
             axs = np.array([axs])
-        # else:
-        #     axs = axs.flatten()
+
         axs_flat = axs.flatten()
 
         self.plt_axs.append(axs_flat)
 
-        b_unit = 0.1/4
+        b_unit = 0.1/5  # width of one character
 
-        button_x = self.prev_x + b_unit
-        button_width = len(button_label)*b_unit
-        button_y = + 0.1*(button_x//1)
+        try:
+            prev_x = self.button_axs[-1][-1].get_position().x1
+        except IndexError:
+            prev_x = 0
 
-        self.prev_x = button_x + button_width
+        button_x = prev_x + b_unit
+        button_width = len(button_label) * b_unit
+
+        if button_x + button_width > 0.95:
+            button_x = b_unit
+            for row_index, b_axs in enumerate(self.button_axs):
+                for b_ax in b_axs:
+                    old_pos = list(b_ax.get_position().bounds)
+                    new_y = 0.1*(len(self.button_axs) - row_index)
+                    old_pos[1] = new_y
+                    b_ax.set_position(old_pos)
+
+            self.button_axs.append([])
 
         if not plt.gcf() is self.fig:
             plt.figure(self.fig.number)
 
-        button_ax = plt.axes([button_x % 1, button_y, button_width, 0.075], projection='rectilinear')
+        # [left, bottom, width, height]
+        button_ax = plt.axes([button_x, 0, button_width, 0.075], projection='rectilinear')
+        self.button_axs[-1].append(button_ax)
 
         button = Button(button_ax, button_label)
-
-        self.fig.subplots_adjust(bottom=button_y + 0.075 + 0.1)
-
         self.buttons.append(button)
 
-        button.on_clicked(self.get_button_func())
+        self.button_funcs.append(self.get_button_func())
+        button.on_clicked(self.button_funcs[-1])
+
+        self.fig.subplots_adjust(bottom=self.button_axs[0][0].get_position().y1 + 0.1)
 
         if self._vis_flag:
             self._vis_flag = False
             if suptitle is not None:
                 self.fig.suptitle(suptitle)
+            else:
+                self.fig.suptitle(button_label)
         else:
             [ax.set_visible(0) for ax in axs_flat]
-
-        self.button_axs.append(button_ax)
 
         return axs if len(axs_flat) > 1 else axs[0]
 
@@ -765,7 +779,7 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
 
 
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_line_color=False, return_line=False, **mpl_kwargs):
+             return_handle=False, **mpl_kwargs):
     """
 
     Args:
@@ -777,56 +791,65 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         fig_kwargs: kwargs for mpl.figure
         title:
         poisson_errors: If True and yerr is not provided, assume Poissonian errors.
-        return_line_color: If True, return mpl color of line.
+        return_handle: Return the handle for custom legend creation. Form is tuple([handle1, handle2]).
+            To make legend with marker and all, do e.g. fig.legend(handles, labels), where each element in handles is
+            that which is returned due to this argument being True.
         **mpl_kwargs:
 
     Returns:
 
     """
     if not len(bin_edges) == len(y) + 1:
-        raise ValueError(f'`bin_edges` must be of length: len(y) + 1, not {len(bin_edges)} for bins and {len(y)} for y ')
+        raise ValueError(f'`bin_edges` must be of length: len(y) + 1, '
+                         f'not {len(bin_edges)} for bins and {len(y)} for y ')
+
     if fig_kwargs is None:
         fig_kwargs = {}
+
     if ax is None:
         plt.figure(**fig_kwargs)
         ax = plt.gca()
+
     if isinstance(y[0], UFloat):
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
     else:
         if not isinstance(y, np.ndarray):
             y = np.array(y)
+
     if yerr is None and poisson_errors:
         yerr = np.sqrt(np.where(y < 0, 0, y))
 
     if title is not None:
         ax.set_title(title)
 
+    assert y.ndim == 1, f"`y` must be a one dimensional array, not shape of {y.shape}"
+
     bin_centers = [(bin_edges[i + 1] + bin_edges[i]) / 2 for i in range(len(bin_edges) - 1)]
     yp = np.concatenate([y, [y[-1]]])
-    invalid_plt_kwargs = ['elinewidth', 'capsize', 'barsabove', 'lolims', 'uplims', 'errorevery', 'capthick', 'marker',
-                          'ds']
-    plt_kwargs = {k: v for k, v in mpl_kwargs.items() if k not in invalid_plt_kwargs}
 
-    lines = ax.plot(bin_edges, yp, label=label, ds='steps-post', marker='None', **plt_kwargs)
+    capsize = mpl_kwargs.pop('capsize', None)
 
-    c = lines[0].get_color()
-    mpl_kwargs['c'] = c
-    mpl_kwargs.pop('ls', None)
-    mpl_kwargs.pop('color', None)
+    handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post', **mpl_kwargs)
 
-    marker = mpl_kwargs.pop('marker', 'None')
-    lines.append(ax.errorbar(bin_centers, y, yerr,
-                             ls='None', marker=marker, **mpl_kwargs))
+    handle1[0].set_marker(None)
+
+    if "c" in mpl_kwargs:
+        pass
+    elif 'color' in mpl_kwargs:
+        pass
+    else:  # color was from color cycle. Fetch from handle.
+        mpl_kwargs['color'] = handle1[0].get_color()
+
+    handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, **mpl_kwargs)  # draw error_bars and markers.
+
     if label is not None:
         ax.legend()
 
     out = [ax]
 
-    if return_line:
-        out += [lines]
-    if return_line_color:
-        out += [c]
+    if return_handle:
+        out += [(handle1, handle2)]
 
     if len(out) == 1:
         return ax
@@ -835,10 +858,46 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
 
 def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
-                       return_line_color=False, **mpl_kwargs):
+                       return_line_color=False, log_space=False, **mpl_kwargs):
+    """
+    Plots a histogram from raw data.
 
-    if isinstance(bin_edges, int):
-        bin_edges = np.linspace(min(data), max(data), bin_edges + 1)
+    Args:
+        bin_edges: List or int.
+        data: 1D list of data points.
+        weights: Weights to each value in data.
+        ax:
+        label:
+        fig_kwargs:
+        title:
+        return_line_color:
+        log_space: If True, bin_edges must be an int and bins will be constant width in log space
+        **mpl_kwargs:
+
+    Returns:
+
+    """
+    if isinstance(data[0], UFloat):
+        data = unp.nominal_values(data)
+
+    if not isinstance(data, np.ndarray):
+        data = np.array(data)
+
+    if not np.isfinite(data.max() + data.min()):
+        data = data[np.where(np.isfinite(data))]
+
+    if log_space:
+        assert isinstance(bin_edges, int), "`bin_edges` must be an int to use log spaced bins."
+        if data.min() <= 0:
+            data = data[np.where(data > 0)]
+
+        _min = np.log10(min(data))
+        _max = np.log10(max(data))
+
+        bin_edges = np.logspace(_min, _max, bin_edges + 1)
+    else:
+        if isinstance(bin_edges, int):
+            bin_edges = np.linspace(min(data), max(data), bin_edges + 1)
 
     y, _ = np.histogram(data, bins=bin_edges, weights=weights)
     yerr = np.sqrt(y)

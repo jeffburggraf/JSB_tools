@@ -54,9 +54,9 @@ __speed_of_light__ = 299792458   # c in m/s
 
 NUCLIDE_INSTANCES = {}  # Dict of all Nuclide class objects created. Used for performance enhancements and for pickling
 PROTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fissionXS xs. lodaed only when needed.
-PHOTON_INDUCED_FISSION_XS1D = {}  # all available proton induced fissionXS xs. lodaed only when needed.
+PHOTON_INDUCED_FISSION_XS1D = {}  # all available gamma induced fissionXS xs. lodaed only when needed.
+NEUTRON_INDUCED_FISSION_XS1D = {}  # all available neutron induced fissionXS xs. lodaed only when needed.
 
-NUCLIDE_NAME_MATCH = re.compile("(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_m(?P<iso>[0-9]+))?")  # Nuclide name in GND naming convention
 
 # global variable for the bin-width of xs interpolation
 XS_BIN_WIDTH_INTERPOLATION = 0.1
@@ -695,7 +695,7 @@ class FissionYields:
         Args:
             target: Fission target nucleus
             inducing_par: None for SF. Or, e.g., 'proton', 'neutron', 'gamma'
-            energies: If None, use energies from the data file.
+            energies: If None, use energies from the data file (in MeV).
             library: Fission yield library. See FissionYields.FISSION_YIELD_SUBDIRS for available yield libraries.
             independent_bool:
         """
@@ -1116,7 +1116,7 @@ class CrossSection1D:
                 src = self.data_source.lower() if isinstance(self.data_source, str) else ""
             except AttributeError:
                 src = 'No src data'
-            label = f"{self.__fig_label__} ({src})"
+            label = f"{self.__fig_label__}" + (f"({src})" if src else "")
 
         ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label, **mpl_kwargs)
 
@@ -1219,7 +1219,7 @@ def get_z_a_m_from_name(name: str) -> Dict[str, int]:
     Returns:
 
     """
-    _m = NUCLIDE_NAME_MATCH.match(name)
+    _m = Nuclide.NUCLIDE_NAME_MATCH.match(name)
 
     assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
                "e.g. Cl38_m1, n1, Ar40".format(name)
@@ -1569,6 +1569,9 @@ class Nuclide:
         Notes
         -----
         """
+    NUCLIDE_NAME_MATCH = re.compile(
+        "(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_m(?P<iso>[0-9]+))?")  # Nuclide name in GND naming convention
+
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
         assert '__internal__' in kwargs, '\nTo generate a Nuclide instance, use the following syntax:\n\t' \
@@ -1861,6 +1864,24 @@ class Nuclide:
 
         return PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
 
+    @property
+    def neutron_induced_fiss_xs(self) -> CrossSection1D:
+        """
+        Get the neutron induced fissionXS cross section for this nuclide.
+        Raise error if no data available.
+        Returns:
+
+        """
+        simple_nuclide_name = self.atomic_symbol + str(self.A)
+        if simple_nuclide_name not in PHOTON_INDUCED_FISSION_XS1D:
+            try:
+                with open(NEUTRON_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
+                    NEUTRON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
+            except FileNotFoundError:
+                assert False, 'No photon induced fissionXS data for {0}.'
+
+        return NEUTRON_INDUCED_FISSION_XS1D[simple_nuclide_name]
+
     def rest_energy(self, units='MeV'):  # in J or MeV
         units = units.lower()
         ev = 1.0/1.602176634E-19
@@ -1998,14 +2019,14 @@ class Nuclide:
         elif symbol.lower() == 'proton':
             symbol = 'H1'
 
-        _m = NUCLIDE_NAME_MATCH.match(symbol)
+        _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
 
         assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
                    "e.g. Cl38_m1, n1, Ar40".format(symbol)
 
         if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
             symbol = _m.groups()[0] + _m.groups()[1]
-            _m = NUCLIDE_NAME_MATCH.match(symbol)
+            _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
 
         pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
 
@@ -2171,6 +2192,7 @@ class Nuclide:
         return out
 
     def inelastic_xs(self, projectile, data_source=None):
+        warnings.warn("See U235 neutron inelastic vs fission xs. Doesn't make sense bc F is > inel. Something is wrong. ")
         return self.__get_misc_xs__('inelastic_xs', projectile, data_source)
 
     def elastic_xs(self, projectile, data_source=None):
@@ -2505,14 +2527,27 @@ class ActivationReactionContainer:
             xs = r.xs["0K"]  # cross-sections at zero Kelvin
             return xs.x * 1E-6, xs.y
 
-        if self.projectile == 'neutron':
-            non_elastic = 4
-        else:
-            non_elastic = 3
+        non_elastic = 3
 
-        if non_elastic in self._available_mts:
-            x, y = get_xy(non_elastic)
-            fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
+        fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
+
+        x, y = None, None
+        if self.projectile == 'neutron':
+            xtot, ytot = get_xy(1)
+            xel, yel = get_xy(2)
+
+            x = xel
+            if not (xel[0] > xtot[0] and xel[-1] < xtot[-1]):
+                x = xtot
+                yel = np.interp(x, xel, yel)
+            else:
+                ytot = np.interp(x, xtot, ytot)
+            y = ytot - yel
+        else:
+            if non_elastic in self._available_mts:
+                x, y = get_xy(non_elastic)
+
+        if x is not None:
             self.inelastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
 
         if 2 in self._available_mts:
