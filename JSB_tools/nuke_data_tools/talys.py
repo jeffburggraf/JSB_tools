@@ -1,14 +1,16 @@
 import pickle
 import re
+import time
+import warnings
 from pathlib import Path
 import subprocess
+import platform
 from typing import Union, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from os import system
 from JSB_tools.nuke_data_tools import CrossSection1D, Nuclide
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
-import subprocess
 
 talys_dir = Path(__file__).parent/'data'/'talys'
 
@@ -17,7 +19,7 @@ tally_executable = '/Users/burggraf1/Talys/talys'
 
 def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
         fission_yields=False, maxlevelstar=10, maxlevelsres=10, auto_run=True, runnum=0,
-        verbose=True,
+        verbose=True, parallel=False,
         **kwargs):
     """
     Args:
@@ -32,13 +34,18 @@ def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
         auto_run: If False, won't run Talys, but will still prepare input file.
         runnum: Input file is created in within talys/{target}-{projectile}/runnum.
         verbose: If True, print run config to stdout
+        parallel: Open terminal and run TALYS in a new process. Used to run multiple calculations at once.
     Returns:
 
     """
 
     m = re.match("([A-Z][a-z]{0,2})-?([0-9]{1,3})(?:_m([0-9]+))?", target_nuclide)
-    assert m
+    assert m, f"Invalid nuclide, {target_nuclide}"
+
     a_symbol = m.groups()[0]
+    assert a_symbol != 'H', "Proton is not a nucleus!"
+    assert a_symbol != 'He', "TALYS won't run calculations for He nuclei!"
+
     mass = int(m.groups()[1])
 
     out_kwargs = {'projectile': projectile, 'element': a_symbol, 'mass': mass}
@@ -92,13 +99,31 @@ def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
         f.write('\n'.join(lines))
 
     cmd = f'cd {data_path};{tally_executable} < {f_name} > output'
-    # cmds = [f'cd {data_path}', f'{tally_executable} < {f_name} > output']
+
+    if parallel:
+        if platform.system() == "Darwin":
+            cmd = "osascript -e 'tell app \"Terminal\"\ndo script \"{0};exit\"\nend " \
+                      "tell'\n".format(cmd)
+
+        elif platform.system() == "Linux":
+            cmd = "gnome-terminal -x sh -c '{0};'\n".format(cmd)
+        else:
+            raise SystemError(f"Bad platform, {platform.system()}")
 
     if auto_run:
-        # process = subprocess.Popen(cmds) #, stdout=PIPE, stderr=PIPE)
-        # stdout, stderr = process.communicate()
-        out = system(cmd)
+        if not parallel:
+            out = system(cmd)
+        else:
+            out = None
+            subprocess.Popen(cmd, cwd=data_path, shell=True)
+            time.sleep(1.5)
         try:
+            for i in range(12):  # wait up to 12 secs for output file to be created
+                if (data_path/'output').exists():
+                    break
+                print(f"Waiting for creation of {data_path.relative_to(data_path.parent.parent.parent)}/output")
+                time.sleep(1)
+
             with open(data_path / 'output') as f:
                 _flag = 0  # 3 make None to begin printing
                 while line := f.readline():
@@ -127,7 +152,11 @@ def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
                 pickle.dump(meta_data, f)
 
         except FileNotFoundError:
-            raise
+            if not parallel:
+                raise
+            else:
+                warnings.warn(f"No output file created (yet?) for {data_path.parent.parent}")
+            # pass
     else:
         out = None
 
@@ -322,6 +351,9 @@ class ReadResult:
                     m = match.groups()[2]
 
                     if m is not None:
+                        m = int(m)
+
+                    if m is not None:
                         out += f'_m{m}'
 
                 if cut():
@@ -427,25 +459,33 @@ class ReadResult:
         """
         Total cross-section for production of a residue nucleus.
 
+        Extra information is stored in the returned CrossSection1D instance's `misc_data` attribute
+            q_value
+            level_erg
+            branching_ratios=brs
+
         Args:
             res: string, e.g. 'U235_m1' or 'U235'
             filename_in_label: Include filename in legend label.
 
         Notes:
             Using "U235: as an example...
-            If Talys calculates production of isomers, then res="U235" gives to the sum of all U235 nuclei regardless
-                of isomeric state. On the other hand, "U235_m0" will give production yield of ground state specifically.
+            If TALYS calculates production of isomers, then providing res="U235" will give the total yield of all U235
+            nuclei, regardless of isomeric state. On the other hand, "U235_m0" will give production yield directly to
+            ground state exclusively.
             The production cross-section of a given excitation level includes feeding from higher levels.
                 However, if a level is considered an isomer according to the isomer keyword, than it will not feed
-                lower levels. Thus, changing the isomer keyword in Talys input may affect the results for any "U235_mi".
+                lower levels. Thus, changing the isomer keyword in TALYS input may affect the results for a given
+                isomer.
 
         Returns: CrossSection1D
 
         """
-        match = re.match("([A-Z][a-z]{0,2})-?([0-9]{1,3})(?:_m([0-9]+))?", res)
-        symbol = match.groups()[0]
-        a = match.groups()[1]
-        m = match.groups()[2]
+        # match = re.match("([A-Z][a-z]{0,2})-?([0-9]{1,3})(?:_m([0-9]+))?", res)
+        match = Nuclide.NUCLIDE_NAME_MATCH.match(res)
+        symbol = match.group("s")
+        a = match.group('A')
+        m = match.group('iso')
         z = ATOMIC_NUMBER[symbol]
         # res_nuclide_name = f"{symbol}{a}"
 
@@ -457,7 +497,7 @@ class ReadResult:
             m = int(m)
             f_name += f'.L{m:0>2}'
 
-        ergs, xss = [], []
+        ergs, xss, brs = [], [], []
 
         q_value = None
         level_erg = 0
@@ -473,11 +513,15 @@ class ReadResult:
                 else:
                     if m is None:
                         erg, xs = map(float, line.split())
+                        br = None
                     else:
-                        erg, xs, _ = map(float, line.split())  # branching ratio is given in this case
+                        erg, xs, br = map(float, line.split())  # branching ratio is given in this case
 
                     ergs.append(erg)
                     xss.append(xs*1E-3)
+
+                    if br is not None:
+                        brs.append(br)
 
         if label is None:
             fig_label = f'{self.nuclide_name}({self.projectile},X){res}'
@@ -491,7 +535,7 @@ class ReadResult:
 
         out = CrossSection1D(ergs, xss, fig_label=fig_label,
                              incident_particle=self.projectile,
-                             q_value=q_value, level_erg=level_erg)
+                             q_value=q_value, level_erg=level_erg, branching_ratios=brs)
         return out
 
     def all_gamma_transitions(self, nucleus=None):
@@ -601,8 +645,12 @@ if __name__ == '__main__':
     runnum = None  # None for main folder name
     max_erg = 35
 
-    run('U235', "p", max_erg=25, min_erg=1, isomer=1E-12, fileresidual=True, maxlevelstar=100,
-        maxlevelsres=100, runnum=0)
+    run('Ni58', "n", max_erg=25, min_erg=1, isomer=40E-12, fileresidual=True, maxlevelstar=100,
+        maxlevelsres=100, runnum=0, parallel=True, maxN=4, maxZ=4)
+
+    # run('Ni58', "n", max_erg=25, min_erg=1, isomer=40E-12, fileresidual=True, maxlevelstar=100,
+    #     maxlevelsres=100, runnum=0, parallel=True, maxN=4, maxZ=4)
+
     # run(target, projectile, auto_run=True, max_erg=max_erg,
     #     maxlevelstar=30, maxlevelsres=30, fission='n', runnum=runnum, fileresidual='y',
     #     outlevels='y', isomer=1E-12, maxZ=2, maxN=2, outgamdis='y')

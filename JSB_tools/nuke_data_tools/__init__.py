@@ -1014,7 +1014,7 @@ class FissionYields:
 
 class CrossSection1D:
     def __init__(self, ergs: List[float], xss: List[Union[UFloat, float]],
-                 fig_label: str = None, incident_particle: str = 'particle', data_source='',
+                 fig_label: str = None, incident_particle: str = 'particle', data_source='', mt_value=None,
                  **misc_data):
         """
         A container for energy dependent 1-D cross-section
@@ -1031,6 +1031,7 @@ class CrossSection1D:
         self.__incident_particle__ = incident_particle
         self.data_source = data_source
         self.misc_data = misc_data
+        self.mt_value = mt_value
 
     def cut(self, erg_min=None, erg_max=None):
         if erg_min is None:
@@ -1089,7 +1090,11 @@ class CrossSection1D:
         return CrossSection1D(erg, xs)
 
     def interp(self, new_energies) -> np.ndarray:
-        return np.interp(new_energies, self.ergs, self.xss)
+        out = np.interp(new_energies, self.ergs, self.xss)
+        if len(out) == 1:
+            return out[0]
+
+        return out
 
     def plot(self, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, **mpl_kwargs):
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
@@ -1610,9 +1615,8 @@ class Nuclide:
         self.__decay_mode_for_print__ = None
 
     def adopted_levels(self):
-        from nudel.nudel import Nuclide as NudelNuclide
-        n = NudelNuclide(self.A, self.Z)
-        return n.adopted_levels.levels
+        from nudel import LevelScheme
+        return LevelScheme(f"{self.atomic_symbol}{self.A}")
 
     def potential_coincidence_summing(self):
         outs = []
@@ -1792,6 +1796,25 @@ class Nuclide:
 
         return ax
 
+    @staticmethod
+    def get_s_a_m_from_string(s) -> Tuple[str, int, int]:
+        """
+        Get Z, A, and isomeric state from string.
+        e.g.
+            z_a_m_from_string('U235_m1') -> (92, 135, 1)
+        Args:
+            s:
+
+        Returns:
+
+        """
+        m = Nuclide.NUCLIDE_NAME_MATCH.match(s)
+        if not m:
+            raise ValueError(f'Invalid nuclide name, "{s}"')
+        iso = int(m.group('iso')) if m.group('iso') is not None else 0
+
+        return m.group('s'), int(m.group('A')), iso
+
     @property
     def Z(self) -> int:
         """Returns: Proton number"""
@@ -1921,6 +1944,60 @@ class Nuclide:
             except KeyError:
                 pass
         return 0
+
+    @staticmethod
+    def get_all_isotopes(atomic_symbol: str, stable_only=True) -> List[str]:
+        """
+        Returns list of strings of all isotopes with atomic number according to `atomic_symbol` argument.
+        Args:
+            atomic_symbol:
+            stable_only: If True, only return stable isotopes.
+        Returns:
+
+        """
+        outs = []
+        for f in DECAY_PICKLE_DIR.iterdir():
+            if m := re.match(r"(.+)\.pickle", f.name):
+                symbol = m.groups()[0]
+                m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
+                if not m:
+                    continue
+                s = m.group('s')
+
+                if s == atomic_symbol:
+                    A = m.group('A')
+                    if stable_only:
+                        n = Nuclide.from_symbol(symbol)
+                        if n.half_life is None:
+                            continue
+                        if not n.half_life > (1E2*365*24*60**2):
+                            continue
+                    outs.append(f"{s}{A}")
+        return outs
+
+    @staticmethod
+    def natural_abundance(symbol) -> float:
+        try:
+            return NATURAL_ABUNDANCE[symbol]
+        except KeyError:
+            return 0.
+
+    @staticmethod
+    def max_abundance_nucleus(atomic_symbol) -> Tuple[float, str]:
+        abundance = None
+        out = None
+
+        for s in Nuclide.get_all_isotopes(atomic_symbol):
+            try:
+                a = NATURAL_ABUNDANCE[s]
+            except KeyError:
+                continue
+
+            if abundance is None or a > abundance:
+                abundance = a
+                out = s
+
+        return abundance, out
 
     @property
     def atomic_symbol(self) -> Union[str, None]:

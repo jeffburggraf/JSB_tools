@@ -23,8 +23,9 @@ from global_directories import parent_data_dir, decay_data_dir, proton_padf_data
     photonuclear_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
     proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, photonuclear_tendl_dir,\
     neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir, neutron_tendl_data_dir
-
-from JSB_tools import ProgressReport
+from uncertainties import UFloat
+import uncertainties.unumpy as unp
+from JSB_tools import ProgressReport, TabPlot
 cwd = Path(__file__).parent
 
 # parent_data_dir = cwd / 'endf_files'
@@ -817,11 +818,149 @@ def debug_nuclide(n: str, library="ENDF"):
     # print(d.spectra)
 
 
+def find_xs(r, product):
+    ergs = r.xs['0K'].x * 1E-6
+    xs = r.xs['0K'].y
+
+    for prod in r.products:
+        if prod.particle == product:
+            break
+    else:
+        raise FileNotFoundError(f"No product {product} for MT {r.mt}")
+
+    yield_y = prod.yield_.y
+    yield_x = prod.yield_.x * 1E-6
+
+    yield_y = np.interp(ergs, yield_x, yield_y)
+    prod_xs = xs * yield_y
+
+    return {'ergs': ergs, "xss": prod_xs, "mt": r.mt}
+
+
+def get_other_cross_sections(e: Evaluation, projectile, debug=False):
+    """
+
+    Notes:
+        MT 4: If r.product is same as target, this is production of ground state (i.e. same Z, A)
+                If ZZAAA_e_1 is the product, then first level
+        MT 51: Different from ZZAAA_e_1 in MT=4 in that this is direct inelastic scattering (e.g. like setting isomer to ~0 in TALYS)
+
+    Args:
+        e:
+        projectile:
+
+    Returns:
+
+    """
+    target = e.gnd_name
+    s, a, m = Nuclide.get_s_a_m_from_string(target)
+    z = ATOMIC_NUMBER[s]
+
+    def to_string(z_, a_, m_=None):
+        return f"{ATOMIC_SYMBOL[z_]}{a_}" + ("" if (m_ is None or m_ == 0) else f"_m{m_}")
+
+    outs = {}
+    i = 0
+    for mf, mt, _, _ in e.reaction_list:
+        if mf == 3:
+            if debug:
+                print(f"MT = {mt}")
+
+            r = Reaction.from_endf(e, mt)
+
+            ergs = r.xs['0K'].x * 1E-6
+            xs = r.xs['0K'].y
+
+            for prod in r.products:
+                if Nuclide.NUCLIDE_NAME_MATCH.match(prod.particle):
+                    if prod.particle == target:  # Not sure how to interpret this, so ignore.
+                        continue
+                    if '_e' in prod.particle:  # Handle this in a special case
+                        continue
+                    yield_y = prod.yield_.y
+                    yield_x = prod.yield_.x * 1E-6
+
+                    yield_y = np.interp(ergs, yield_x, yield_y)
+                    prod_xs = xs*yield_y
+
+                    if prod.particle in outs:
+                        print("fuck!", prod)
+
+                    outs[prod.particle] = {'ergs': ergs, "xss": prod_xs, "mt": mt}
+
+                    # if i%10 == 0:
+                    #     tab = TabPlot()
+
+                    xs_data = outs[prod.particle]
+                    # ax = tab.new_ax(f"{prod.particle} (MT {xs_data['mt']})")
+                    # ax.plot(xs_data["ergs"], xs_data["xss"])
+
+                    # i += 1
+
+                    # plt.plot(ergs, xs, label=prod)
+                    # plt.title(f"MT = {mt}")
+                    # plt.legend()
+                    # plt.show()
+
+                    if debug:
+                        print(f"\t{prod} [included]")
+                else:
+                    if debug:
+                        print(f"\t{prod} [ignored]")
+                # break
+
+    if projectile == 'neutron':
+        r = Reaction.from_endf(e, 102)
+        try:
+            outs[to_string(z, a + 1, m)] = find_xs(r, 'photon')
+        except FileNotFoundError:
+            pass
+
+        r = Reaction.from_endf(e, 4)
+        for prod in r.products:
+            if m := re.match(".+_e([0-9]+)", prod.particle):
+                iso = int(m.groups()[0])
+                outs[to_string(z, a, iso)] = find_xs(r, prod.particle)
+
+    if debug:
+        tab = None
+        i = 0
+
+        for prod, xs_data in outs.items():
+            if i%10 == 0:
+                tab = TabPlot()
+            ax = tab.new_ax(f"{prod} (MT {xs_data['mt']})")
+            ax.plot(xs_data["ergs"], xs_data["xss"])
+
+            i += 1
+#
+
 if __name__ == '__main__':
-    pass
+    # path = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/ENDF-B-VIII.0_neutrons/n-092_U_235.endf'
+    path = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/ENDF-B-VIII.0_gammas/g-092_U_238.endf'
+    e = Evaluation(path)
+    get_other_cross_sections(e, 'proton', True)
+    # r = Reaction.from_endf(e, 5)
+
+
+    # x, y, = get_xs(e, 51,)
+    # plt.plot(x, y, label='51')
+    #
+    # x, y, = get_xs(e, 4, "U235_m1")
+    # plt.plot(x, y, label='4 m1')
+    #
+    # x, y, = get_xs(e, 4, "U235")
+    # plt.plot(x, y, label='4 U235')
+    #
+    # x, y, = get_xs(e, 91, "U235")
+    # plt.plot(x, y, label='91 U235')
+    #
+    # plt.legend()
+    plt.show()
+    print()
     # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
     # pickle_proton_activation_data()
     # pickle_gamma_neutron_fission_xs_data()
-    pickle_neutron_activation_data()
+    # pickle_neutron_activation_data()
 # pickle_gamma_fission_xs_data

@@ -519,6 +519,7 @@ class InputDeck:
         if self.is_mcnp:
             self.__split_new_lines__()
             self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
+
         if self.gen_run_script is True:
             self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs)
             if self.sch_cmd:

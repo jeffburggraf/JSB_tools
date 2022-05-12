@@ -189,6 +189,8 @@ class TabPlot:
         button_width = len(button_label) * b_unit
 
         if button_x + button_width > 0.95:
+            if len(self.button_axs[-1]) == 0:  # first button of row is too long!
+                assert False, f"Button label too long!, '{button_label}'"
             button_x = b_unit
             for row_index, b_axs in enumerate(self.button_axs):
                 for b_ax in b_axs:
