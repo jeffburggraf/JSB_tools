@@ -20,9 +20,9 @@ from uncertainties import ufloat
 from numbers import Number
 import numpy as np
 from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
-    photonuclear_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
-    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, photonuclear_tendl_dir,\
-    neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir, neutron_tendl_data_dir
+    gamma_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
+    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, gamma_tendl_dir,\
+    neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir, neutron_tendl_data_dir, proton_tendl_data_dir
 from uncertainties import UFloat
 import uncertainties.unumpy as unp
 from JSB_tools import ProgressReport, TabPlot
@@ -309,14 +309,7 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
                 print("Writing decay data for {0}".format(nuclide_name))
                 pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
 
-        with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'wb') as f:
-            data = {}
 
-            for name, nuclide in NUCLIDE_INSTANCES.items():
-                key = nuclide.A, nuclide.Z, nuclide.half_life
-                data[key] = name
-
-            pickle.dump(data, f)
 
         # data structure of d: {g_erg: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...])}
 
@@ -346,45 +339,19 @@ def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
                 marshal.dump(d, f)
 
 
-# modularize the patch work of reading PADF and ENDF-B-VIII.0_protons data.
-class ProtonENDFFile:
-    def __init__(self, padf_directory, endf_b_directory):
-        self.nuclide_name_and_file_path = {}
+def quick_nuclide_lookup():
 
-        for path in Path(padf_directory).iterdir():
-            f_name = path.name
-            _m = re.match("([0-9]{4,6})(?:M([0-9]))?", f_name)
-            if _m:
-                zaid = int(_m.groups()[0])
-                if _m.groups()[1] is not None:
-                    isometric_state = int(_m.groups()[1])
-                else:
-                    isometric_state = 0
-                z = zaid // 1000
-                a = zaid % 1000
-                nuclide_name = self.get_name_from_z_a_m(z, a, isometric_state)
-                self.nuclide_name_and_file_path[nuclide_name] = path
+    with open(DECAY_PICKLE_DIR / 'quick_nuclide_lookup.pickle', 'wb') as f:
+        data = {}
 
-        for path in Path(endf_b_directory).iterdir():
-            f_name = path.name
-            _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
-            if _m:
-                z = _m.groups()[0]
-                a = _m.groups()[2]
-                nuclide_name = self.get_name_from_z_a_m(z, a, 0)
-                self.nuclide_name_and_file_path[nuclide_name] = path
+        for path in DECAY_PICKLE_DIR.iterdir():
+            if path.is_file():
+                if Nuclide.NUCLIDE_NAME_MATCH.match(path.name):
+                    nuclide = Nuclide.from_symbol(path.stem)
+                    key = nuclide.A, nuclide.Z, nuclide.half_life, nuclide.isometric_state
+                    data[key] = nuclide.name
 
-    @staticmethod
-    def get_name_from_z_a_m(z, a, m):
-        z, a, m = map(int, [z, a, m])
-        if z == 0:
-            symbol = "Nn"
-        else:
-            symbol = ATOMIC_SYMBOL[z]
-        symbol += str(a)
-        if m != 0:
-            symbol += "_m{0}".format(m)
-        return symbol
+        pickle.dump(data, f)
 
 
 #  Special case implemented in pickle_proton_fission_xs_data() for proton induced fission cross-sections.
@@ -439,7 +406,7 @@ def pickle_gamma_neutron_fission_xs_data():
                              "data": {},
                              'save_dir': NEUTRON_PICKLE_DIR},
 
-                 'gamma': {"src_path": photonuclear_endf_dir,
+                 'gamma': {"src_path": gamma_endf_dir,
                            "match": re.compile(r"g_([0-9]{1,3})-([A-Za-z]+)-([0-9]{0,3})_[0-9]+\.endf"),
                            "data": {},
                            "save_dir": GAMMA_PICKLE_DIR}
@@ -508,52 +475,37 @@ def pickle_gamma_neutron_fission_xs_data():
 
 
 def pickle_proton_activation_data():
-    # assert PROTON_PICKLE_DIR.exists()
-    #
-    # for path in Path(tendl_2019_proton_dir).iterdir():
-    #     if path.is_dir() and re.match("[A-Z][a-z]{0,2}", path.name):
-    #         for path in path.iterdir():
-    #             if m := re.match("([A-Z][a-z]{0,2}[0-9]{3}[m-z]?)", path.name):
-    #                 if path.name == 'U235':
-    #                     path = (path/'lib'/'endf'/f'p-{m.groups()[0]}').with_suffix('.tendl')
-    #                     if not path.exists():
-    #                         warnings.warn(f"TENDL path missing: {path}")
-    #                         continue
-    #                     try:
-    #                         ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
-    #                     except ValueError as e:
-    #                         warnings.warn(f"ValueError on TENDL: {path}:\n{e}")
-    #
-    # ActivationReactionContainer.pickle_all('proton', 'tendl')
+    for path in proton_padf_data_dir.iterdir():
+        if re.match("([0-9]{2})([0-9]{3})(M[0-9])?", path.name):
+            ActivationReactionContainer.from_endf(path, 'proton', 'padf')
+    ActivationReactionContainer.pickle_all('proton', 'padf')
 
-    # for path in Path(proton_padf_data_dir).iterdir():
-    #     f_name = path.name
-    #     _m = re.match("([0-9]{4,6})(?:M([0-9]))?", f_name)
-    #     if _m:
-    #         # zaid = int(_m.groups()[0])
-    #         # iso = _m.groups()[1]
-    #         # if iso is not None:
-    #         #     iso = f"_m{int(iso)}"
-    #         # else:
-    #         #     iso = ''
-    #         #
-    #         # z = zaid // 1000
-    #         # a = zaid % 1000
-    #         # nuclide_name = f"{ATOMIC_SYMBOL[z]}{a}{iso}"
-    #         ActivationReactionContainer.from_endf(path, 'proton', 'padf')
-    #
-    # ActivationReactionContainer.pickle_all('proton', 'padf')
 
     for path in Path(proton_enfd_b_data_dir).iterdir():
         f_name = path.name
         _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
         if _m:
-            # s = _m.groups()[1]
-            # a = int(_m.groups()[2])
-            # nuclide_name = f"{s}{a}"
             ActivationReactionContainer.from_endf(path, 'proton', 'endf')
-
     ActivationReactionContainer.pickle_all('proton', 'endf')
+
+
+    for path in Path(proton_tendl_data_dir).iterdir():
+        if path.is_dir() and re.match("[A-Z][a-z]{0,2}", path.name):
+            for path in path.iterdir():
+                if re.match(r"[A-Z][a-z]{0,2}[0-9]+", path.name):
+                    nuclide_name = path.name
+                    path = path/'lib'/'endf'/f'p-{nuclide_name}.tendl'
+                    if path.exists(): #and (nuclide_name[:2] == 'Np' or nuclide_name[:1] == 'U'):
+                        try:
+                            ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
+                        except ActivationReactionContainer.EvaluationException:
+                            warn(f"openmc Evaluation Failed for {nuclide_name}")
+                            continue
+
+
+    ActivationReactionContainer.pickle_all('proton', 'tendl')
+
+
 
 
 def pickle_neutron_activation_data():
@@ -561,23 +513,24 @@ def pickle_neutron_activation_data():
     for file_path in neutron_enfd_b_data_dir.iterdir():
         _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
         if _m:
+            # if file_path.name == 'n-092_U_238.endf':
             ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
+
+    # ActivationReactionContainer.pickle_all('neutron')
+
+    for file_path in neutron_tendl_data_dir.iterdir():
+        _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc', file_path.name)
+        if _m:
+
+            ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
 
     ActivationReactionContainer.pickle_all('neutron')
 
-    # for file_path in neutron_tendl_data_dir.iterdir():
-    #     _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc', file_path.name)
-    #     if _m:
-    #
-    #         ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
-    #
-    # ActivationReactionContainer.pickle_all('neutron')
-
 
 def pickle_gamma_activation_data():
-    p = ProgressReport(len(list(photonuclear_tendl_dir.iterdir())) + len(list(photonuclear_endf_dir.iterdir())),  5)
+    p = ProgressReport(len(list(gamma_tendl_dir.iterdir())) + len(list(gamma_endf_dir.iterdir())), 5)
     i = 0
-    for file_path in photonuclear_endf_dir.iterdir():
+    for file_path in gamma_endf_dir.iterdir():
         # _m = re.match(r'g-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)  # Old, ENDF III
         _m = re.match(r'g_(?P<Z>[0-9]+)-(?P<S>[A-Z][a-z]{0,2})-(?P<A>[0-9]+)_[0-9]+.+endf', file_path.name)
         if _m:
@@ -588,7 +541,7 @@ def pickle_gamma_activation_data():
         i += 1
         p.log(i)
 
-    for file_path in photonuclear_tendl_dir.iterdir():
+    for file_path in gamma_tendl_dir.iterdir():
         if m := re.match("g-([A-Z][a-z]*)([0-9]+)([m-z]{0,1})\.tendl", file_path.name):
             # a = int(m.groups()[1])
             # s = m.groups()[0]
@@ -818,149 +771,17 @@ def debug_nuclide(n: str, library="ENDF"):
     # print(d.spectra)
 
 
-def find_xs(r, product):
-    ergs = r.xs['0K'].x * 1E-6
-    xs = r.xs['0K'].y
 
-    for prod in r.products:
-        if prod.particle == product:
-            break
-    else:
-        raise FileNotFoundError(f"No product {product} for MT {r.mt}")
-
-    yield_y = prod.yield_.y
-    yield_x = prod.yield_.x * 1E-6
-
-    yield_y = np.interp(ergs, yield_x, yield_y)
-    prod_xs = xs * yield_y
-
-    return {'ergs': ergs, "xss": prod_xs, "mt": r.mt}
-
-
-def get_other_cross_sections(e: Evaluation, projectile, debug=False):
-    """
-
-    Notes:
-        MT 4: If r.product is same as target, this is production of ground state (i.e. same Z, A)
-                If ZZAAA_e_1 is the product, then first level
-        MT 51: Different from ZZAAA_e_1 in MT=4 in that this is direct inelastic scattering (e.g. like setting isomer to ~0 in TALYS)
-
-    Args:
-        e:
-        projectile:
-
-    Returns:
-
-    """
-    target = e.gnd_name
-    s, a, m = Nuclide.get_s_a_m_from_string(target)
-    z = ATOMIC_NUMBER[s]
-
-    def to_string(z_, a_, m_=None):
-        return f"{ATOMIC_SYMBOL[z_]}{a_}" + ("" if (m_ is None or m_ == 0) else f"_m{m_}")
-
-    outs = {}
-    i = 0
-    for mf, mt, _, _ in e.reaction_list:
-        if mf == 3:
-            if debug:
-                print(f"MT = {mt}")
-
-            r = Reaction.from_endf(e, mt)
-
-            ergs = r.xs['0K'].x * 1E-6
-            xs = r.xs['0K'].y
-
-            for prod in r.products:
-                if Nuclide.NUCLIDE_NAME_MATCH.match(prod.particle):
-                    if prod.particle == target:  # Not sure how to interpret this, so ignore.
-                        continue
-                    if '_e' in prod.particle:  # Handle this in a special case
-                        continue
-                    yield_y = prod.yield_.y
-                    yield_x = prod.yield_.x * 1E-6
-
-                    yield_y = np.interp(ergs, yield_x, yield_y)
-                    prod_xs = xs*yield_y
-
-                    if prod.particle in outs:
-                        print("fuck!", prod)
-
-                    outs[prod.particle] = {'ergs': ergs, "xss": prod_xs, "mt": mt}
-
-                    # if i%10 == 0:
-                    #     tab = TabPlot()
-
-                    xs_data = outs[prod.particle]
-                    # ax = tab.new_ax(f"{prod.particle} (MT {xs_data['mt']})")
-                    # ax.plot(xs_data["ergs"], xs_data["xss"])
-
-                    # i += 1
-
-                    # plt.plot(ergs, xs, label=prod)
-                    # plt.title(f"MT = {mt}")
-                    # plt.legend()
-                    # plt.show()
-
-                    if debug:
-                        print(f"\t{prod} [included]")
-                else:
-                    if debug:
-                        print(f"\t{prod} [ignored]")
-                # break
-
-    if projectile == 'neutron':
-        r = Reaction.from_endf(e, 102)
-        try:
-            outs[to_string(z, a + 1, m)] = find_xs(r, 'photon')
-        except FileNotFoundError:
-            pass
-
-        r = Reaction.from_endf(e, 4)
-        for prod in r.products:
-            if m := re.match(".+_e([0-9]+)", prod.particle):
-                iso = int(m.groups()[0])
-                outs[to_string(z, a, iso)] = find_xs(r, prod.particle)
-
-    if debug:
-        tab = None
-        i = 0
-
-        for prod, xs_data in outs.items():
-            if i%10 == 0:
-                tab = TabPlot()
-            ax = tab.new_ax(f"{prod} (MT {xs_data['mt']})")
-            ax.plot(xs_data["ergs"], xs_data["xss"])
-
-            i += 1
 #
 
 if __name__ == '__main__':
-    # path = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/ENDF-B-VIII.0_neutrons/n-092_U_235.endf'
-    path = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/endf_files/ENDF-B-VIII.0_gammas/g-092_U_238.endf'
-    e = Evaluation(path)
-    get_other_cross_sections(e, 'proton', True)
-    # r = Reaction.from_endf(e, 5)
+    pass
+    # quick_nuclide_lookup()
+    # pickle_neutron_activation_data()
 
-
-    # x, y, = get_xs(e, 51,)
-    # plt.plot(x, y, label='51')
-    #
-    # x, y, = get_xs(e, 4, "U235_m1")
-    # plt.plot(x, y, label='4 m1')
-    #
-    # x, y, = get_xs(e, 4, "U235")
-    # plt.plot(x, y, label='4 U235')
-    #
-    # x, y, = get_xs(e, 91, "U235")
-    # plt.plot(x, y, label='91 U235')
-    #
-    # plt.legend()
-    plt.show()
-    print()
     # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
-    # pickle_proton_activation_data()
+    pickle_proton_activation_data()
     # pickle_gamma_neutron_fission_xs_data()
     # pickle_neutron_activation_data()
 # pickle_gamma_fission_xs_data

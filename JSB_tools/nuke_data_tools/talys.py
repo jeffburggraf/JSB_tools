@@ -9,17 +9,20 @@ from typing import Union, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from os import system
+from functools import cached_property
 from JSB_tools.nuke_data_tools import CrossSection1D, Nuclide
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
+from typing import Dict
 
 talys_dir = Path(__file__).parent/'data'/'talys'
+
 
 tally_executable = '/Users/burggraf1/Talys/talys'
 
 
-def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
+def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
         fission_yields=False, maxlevelstar=10, maxlevelsres=10, auto_run=True, runnum=0,
-        verbose=True, parallel=False,
+        verbose=True, parallel=False, isomer=1.,
         **kwargs):
     """
     Args:
@@ -35,6 +38,9 @@ def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
         runnum: Input file is created in within talys/{target}-{projectile}/runnum.
         verbose: If True, print run config to stdout
         parallel: Open terminal and run TALYS in a new process. Used to run multiple calculations at once.
+        isomer: The min halflife to be considered as an isomer. Consider this value when interested in residue
+            production of excited levels. Has an affect on residue cross-sections since there may be less ground-state
+            production in favor of excited levels. Setting zero causes odd behavior.
     Returns:
 
     """
@@ -50,6 +56,9 @@ def run(target_nuclide, projectile, min_erg=0., max_erg=85, erg_step=None,
 
     out_kwargs = {'projectile': projectile, 'element': a_symbol, 'mass': mass}
     iso_state = int(m.groups()[2]) if m.groups()[2] is not None else 0
+
+    if isomer != 1.:
+        out_kwargs['isomer'] = isomer
 
     if iso_state != 0:
         out_kwargs['Ltarget'] = iso_state
@@ -207,7 +216,56 @@ def pickle_result(target, projectile):
 
 
 class ReadResult:
-    particles = {'neutron': 'n', 'gamma': 'g', 'alpha': 'a', 'H3': 't', 'He3': 'h', 'H2': 'd', 'proton': 'p'}
+    particles = {'neutron': 'n',
+                 'gamma': 'g',
+                 'alpha': 'a',
+                 'H3': 't',
+                 'He3': 'h',
+                 'H2': 'd',
+                 'proton': 'p'}
+
+    @staticmethod
+    def show_available_runs(nuclide_name, projectile):
+        runs = ReadResult.find_runs(nuclide_name, projectile)
+        if len(runs) > 0:
+            print(f"Available TALYS runs for {projectile} on {nuclide_name}:")
+            print("\tRunnum    Kwargs")
+            for k, v in runs.items():
+                if 'isomer' not in v:  # default value for isomer is 1 sec
+                    v['isomer'] = 1
+                for kwarg in ['projectile', 'element', 'mass']:
+                    v.pop(kwarg)
+                print(f"\t{k:<10}{v}")
+            print("\n")
+        else:
+            print(f"No TALYS runs for {projectile} on {nuclide_name}")
+
+    @staticmethod
+    def find_runs(nuclide_name, projectile) -> Dict[int, dict]:
+        """
+        Find all runs and return a dict with value equal to arguments used for TALYS and keys runnums.
+        Args:
+            nuclide_name:
+            projectile:
+
+        Returns:
+
+        """
+        path = talys_dir/f'{nuclide_name}-{projectile}'
+        if not path.exists():
+            return {}
+
+        outs = {}
+        for n in path.iterdir():
+
+            try:
+                runnum = int(n.name)
+                r = ReadResult(nuclide_name, projectile, runnum)
+            except ValueError:
+                continue
+            outs[runnum] = r.input_kwargs
+
+        return outs
 
     @staticmethod
     def _get_par(par):
@@ -230,15 +288,19 @@ class ReadResult:
         projectile = self._get_par(projectile)
         directory = Path(__file__).parent/'data'/'talys'/f'{nuclide_name}-{projectile}'/f'{runnum}'
         self.directory = Path(directory)
+
         try:
             self.files = list(self.directory.iterdir())
         except FileNotFoundError:
-            options = []
             if directory.parent.exists():
-                dirs = [f.name for f in directory.parent.iterdir() if re.match("[0-9]+", f.name)]
-                options = dirs
-            raise FileNotFoundError(f"No Talys run for {projectile} on {nuclide_name}, runnum {runnum}. "
-                                    f"Runnum options are {options}")
+                runnums = [int(f.name) for f in directory.parent.iterdir() if re.match("[0-9]+", f.name)]
+                if len(runnums) == 1:
+                    runnum = runnums[0]
+                else:
+                    raise FileNotFoundError(f'No TALYS run for {projectile} on "{nuclide_name}", runnum {runnum}. '
+                                            f'"runnum" options are: {runnums}')
+            else:
+                raise FileNotFoundError(f"No Talys run for {projectile} on {nuclide_name}")
 
         self.runnum = runnum
 
@@ -253,6 +315,11 @@ class ReadResult:
             self.input_kwargs = data['kwargs']
         except (KeyError, FileNotFoundError):
             self.input_file = None
+            self.input_kwargs = None
+
+    @cached_property
+    def nuclide(self):
+        return Nuclide.from_symbol(self.nuclide_name)
 
     def fission(self, res=None) -> CrossSection1D:
         """
@@ -361,6 +428,27 @@ class ReadResult:
 
         return list(sorted(outs))
 
+    def neutron_capture_xs(self, level=None):
+        """
+        Neutron capture cross-section.
+        Args:
+            level: Capture cross-0section to a specific excitation level. None for total xs.
+
+        Returns:
+
+        """
+        f_name = f"rp{self.nuclide.Z:0>3}{self.nuclide.A + 1:0>3}.tot"
+
+        product_name = f"{ATOMIC_SYMBOL[self.nuclide.Z]}{self.nuclide.A + 1}"
+        fig_label = f"{self.nuclide_name}(n, G){product_name}"
+
+        if level is not None:
+            fig_label += f'_l{level}'
+
+        out = CrossSection1D(*self.get_any_xs(f_name), fig_label=fig_label, incident_particle='neutron',
+                             data_source="TALYS")
+        return out
+
     def get_any_xs(self, file_name, erg_index=0, xss_index=1) -> Tuple[list, list]:
         """
         Grab a cross-section by file name.
@@ -459,17 +547,10 @@ class ReadResult:
         """
         Total cross-section for production of a residue nucleus.
 
-        Extra information is stored in the returned CrossSection1D instance's `misc_data` attribute
-            q_value
-            level_erg
-            branching_ratios=brs
+        Returns CrossSection1D object with `misc_data` attribute like the following:
+            {'q_value': q_value, 'level_erg': level_erg, 'branching_ratios': brs}
 
-        Args:
-            res: string, e.g. 'U235_m1' or 'U235'
-            filename_in_label: Include filename in legend label.
-
-        Notes:
-            Using "U235: as an example...
+        Using "U235": as an example...
             If TALYS calculates production of isomers, then providing res="U235" will give the total yield of all U235
             nuclei, regardless of isomeric state. On the other hand, "U235_m0" will give production yield directly to
             ground state exclusively.
@@ -478,16 +559,30 @@ class ReadResult:
                 lower levels. Thus, changing the isomer keyword in TALYS input may affect the results for a given
                 isomer.
 
+        Extra information is stored in the returned CrossSection1D instance's `misc_data` attribute is
+            - q_value
+            - level_erg
+            - branching_ratios=brs
+                where,
+                q_value is the change in energy
+                level_erg is the energy of the nuclear level.
+                branching_ratios is a list of fractions that the current nuclear level is produced
+                 (None for total nuclide yield).
+
+        Args:
+            res: string, e.g. 'U235_m1' or 'U235'
+            filename_in_label: Include filename in legend label.
+
+
         Returns: CrossSection1D
 
         """
-        # match = re.match("([A-Z][a-z]{0,2})-?([0-9]{1,3})(?:_m([0-9]+))?", res)
+
         match = Nuclide.NUCLIDE_NAME_MATCH.match(res)
         symbol = match.group("s")
         a = match.group('A')
         m = match.group('iso')
         z = ATOMIC_NUMBER[symbol]
-        # res_nuclide_name = f"{symbol}{a}"
 
         f_name = f"rp{z:0>3}{a:0>3}"
 
@@ -540,7 +635,7 @@ class ReadResult:
 
     def all_gamma_transitions(self, nucleus=None):
         """
-        Return all available gamma transition files.
+        Return all available gamma transition files from TALYS (the ones that end in .LxxxLyyy)
         Args:
             nucleus: Defaults to target nucleus.
 
@@ -645,8 +740,8 @@ if __name__ == '__main__':
     runnum = None  # None for main folder name
     max_erg = 35
 
-    run('Ni58', "n", max_erg=25, min_erg=1, isomer=40E-12, fileresidual=True, maxlevelstar=100,
-        maxlevelsres=100, runnum=0, parallel=True, maxN=4, maxZ=4)
+    run('Th232', "p", max_erg=100, min_erg=1, isomer=10E-12, fileresidual=True, maxlevelstar=50,
+        maxlevelsres=50, runnum=0, parallel=True, maxN=12, maxZ=3)
 
     # run('Ni58', "n", max_erg=25, min_erg=1, isomer=40E-12, fileresidual=True, maxlevelstar=100,
     #     maxlevelsres=100, runnum=0, parallel=True, maxN=4, maxZ=4)

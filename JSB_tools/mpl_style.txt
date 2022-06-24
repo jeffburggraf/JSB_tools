@@ -81,7 +81,7 @@ errorbar.capsize: 3
 ##***************************************************************************************************
 figure.figsize: 8, 6
 figure.subplot.left: 0.177
-figure.subplot.right: 0.946
+figure.subplot.right: 0.85
 figure.subplot.bottom: 0.156
 figure.subplot.top: 0.875
 

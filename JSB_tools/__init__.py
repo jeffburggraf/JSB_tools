@@ -1,14 +1,22 @@
 """
-Core functions like ROOT_Loop, as well as functions that I didn't know where else to put
+A messy collection of stuff that nuclear physicists like like to use.
+
+todo: move some of these imports into functions to speed up loading of this module
 """
 from __future__ import annotations
 import warnings
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ModuleNotFoundError:
+    go = make_subplots = ModuleNotFoundError
 from typing import List, Dict
 import numpy as np
 from itertools import islice
-from sortedcontainers import SortedDict
+try:
+    from sortedcontainers import SortedDict
+except ModuleNotFoundError:
+    SortedDict = ModuleNotFoundError
 from pathlib import Path
 from typing import Union, Sequence
 import pickle
@@ -17,19 +25,15 @@ from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 import time
-from matplotlib import pyplot as plt
-# from JSB_tools.TH1 import TH1F
 import sys
 from scipy.stats import norm
-import matplotlib as mpl
 import traceback
 from JSB_tools.nuke_data_tools import Nuclide, FissionYields, decay_nuclide
-import matplotlib.ticker as ticker
 from uncertainties import UFloat
 from scipy import ndimage
 from matplotlib.widgets import Button
-from matplotlib.figure import Axes, Figure
-
+from matplotlib.figure import Axes
+from matplotlib import pyplot as plt
 try:
     import ROOT
     root_exists = True
@@ -904,7 +908,7 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
     y, _ = np.histogram(data, bins=bin_edges, weights=weights)
     yerr = np.sqrt(y)
     return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
-                    return_line_color=return_line_color, **mpl_kwargs)
+                    **mpl_kwargs)
 
 
 def fill_between(x, y, yerr=None, ax=None, fig_kwargs=None, label=None, binsxQ=False, **mpl_kwargs):

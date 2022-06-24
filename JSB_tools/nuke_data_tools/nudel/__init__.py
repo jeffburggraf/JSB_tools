@@ -99,6 +99,10 @@ class Level:
 
 
 class LevelScheme:
+    """
+    A class for accessing nuclear level information such as half-lives, energies, decay probabilities, etc.
+
+    """
     @classmethod
     def from_a_z(cls, a, z):
         return cls(f"{ATOMIC_SYMBOL[z]}{a}")

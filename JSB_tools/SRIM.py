@@ -81,7 +81,11 @@ def existing_outputs():
     for line in lines:
         _ = line.split('__--__')
         f_name = _[-1].lstrip().rstrip()
-        params = eval(_[0])
+        try:
+            params = eval(_[0])
+        except Exception as e:
+            warnings.warn(f"Bad line in outputs.txt. Exception: {e}\nLine:\n{line}")
+            continue
         name_params[f_name] = params
 
         if (save_dir / f_name).exists():
@@ -90,10 +94,10 @@ def existing_outputs():
         else:
             re_write_file = True
 
-    if re_write_file:
+    if re_write_file or True:
         with open(save_dir / "outputs.txt", 'w') as f:
             for line in new_lines:
-                f.write(line + '\n')
+                f.write(line)
 
     return out
 

@@ -17,6 +17,7 @@ from functools import cached_property
 from scipy.interpolate import interp1d
 from uncertainties import nominal_value
 from datetime import datetime, timedelta
+# from JSB_tools import TabPlot
 # from JSB_tools.nuke_data_tools.talys import talys_dir, run, pickle_result
 # import JSB_tools.nuke_data_tools.talys as talys
 
@@ -94,7 +95,7 @@ def human_readable_half_life(hl, include_errors):
     if isinstance(hl_in_sec, float):
         hl_in_sec = ufloat(hl_in_sec, 0)
 
-    if hl_in_sec.n == np.inf or hl_in_sec.n == np.nan:
+    if np.isinf(hl_in_sec.n) or np.isnan(hl_in_sec.n):
         return str(hl_in_sec.n)
 
     if hl_in_sec < 1:
@@ -129,6 +130,10 @@ def human_readable_half_life(hl, include_errors):
     for value, unit in zip([n_seconds, n_minutes, n_hours, n_days, n_months, n_years],
                            ['seconds', 'minutes', 'hours', 'days', 'months', 'years']):
         error, value = value.std_dev, value.n
+        # try:
+        #     int(value)
+        # except:
+        #     print()
         if int(value) != 0:
             if np.isclose(error, value) and unit == 'years':
                 percent_error = 'lower bound'
@@ -1091,8 +1096,9 @@ class CrossSection1D:
 
     def interp(self, new_energies) -> np.ndarray:
         out = np.interp(new_energies, self.ergs, self.xss)
-        if len(out) == 1:
-            return out[0]
+
+        if not hasattr(new_energies, '__len__'):
+            return out
 
         return out
 
@@ -1575,7 +1581,7 @@ class Nuclide:
         -----
         """
     NUCLIDE_NAME_MATCH = re.compile(
-        "(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_m(?P<iso>[0-9]+))?")  # Nuclide name in GND naming convention
+        "(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_[me](?P<iso>[0-9]+))?")  # Nuclide name in GND naming convention
 
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
@@ -1797,23 +1803,23 @@ class Nuclide:
         return ax
 
     @staticmethod
-    def get_s_a_m_from_string(s) -> Tuple[str, int, int]:
+    def get_s_z_a_m_from_string(nuclide_name) -> Tuple[str, int, int, int]:
         """
-        Get Z, A, and isomeric state from string.
+        Get atomic_symbol, Z, A, and isomeric state (m) from nuclide name using GND convention.
         e.g.
-            z_a_m_from_string('U235_m1') -> (92, 135, 1)
+            s_z_a_m_from_string('U235_m1') -> ("U", 92, 135, 1)
         Args:
-            s:
+            nuclide_name: nuclide name
 
         Returns:
-
+            (atomic_symbol, Z, A, isomeric_state)
         """
-        m = Nuclide.NUCLIDE_NAME_MATCH.match(s)
+        m = Nuclide.NUCLIDE_NAME_MATCH.match(nuclide_name)
         if not m:
-            raise ValueError(f'Invalid nuclide name, "{s}"')
+            raise ValueError(f'Invalid nuclide name, "{nuclide_name}"')
         iso = int(m.group('iso')) if m.group('iso') is not None else 0
 
-        return m.group('s'), int(m.group('A')), iso
+        return m.group('s'), ATOMIC_NUMBER[m.group('s')], int(m.group('A')), iso
 
     @property
     def Z(self) -> int:
@@ -1917,6 +1923,48 @@ class Nuclide:
     @property
     def mass_in_mev_per_c2(self) -> float:
         return self.rest_energy('MeV')
+
+    def neutron_separation_energy(self, n_neutrons=1):
+        """
+        Min. energy required to remove n_neutrons from nucleus in MeV
+        Args:
+            n_neutrons: Number of neutrons to obe removed.
+
+        Returns:
+
+        """
+        z, a, m = get_z_a_m_from_name(self.name).values()
+        a -= n_neutrons
+
+        return (Nuclide.from_Z_A_M(z, a, m).mass_in_mev_per_c2 + n_neutrons*neutron_mass) - self.mass_in_mev_per_c2
+
+    def proton_separation_energy(self, n_protons=1):
+        """
+        Min. energy required to remove n_protons from the nucleus (in MeV)
+        Args:
+            n_protons: Number of protons to obe removed.
+
+        Returns:
+
+        """
+        z, a, m = get_z_a_m_from_name(self.name).values()
+        z -= n_protons
+        a -= n_protons
+        return (Nuclide.from_Z_A_M(z, a, m).mass_in_mev_per_c2 + n_protons * proton_mass) - self.mass_in_mev_per_c2
+
+    def alpha_separation_energy(self):
+        """
+        Min. energy required to remove He-4 from the nucleus (in MeV)
+
+        Returns:
+
+        """
+        z, a, m = get_z_a_m_from_name(self.name).values()
+        z -= 2
+        a -= 2
+
+        return (Nuclide.from_Z_A_M(z, a, m).mass_in_mev_per_c2 + Nuclide.from_symbol('He-4').mass_in_mev_per_c2) \
+                - self.mass_in_mev_per_c2
 
     @property
     def atomic_mass(self) -> float:
@@ -2191,6 +2239,14 @@ class Nuclide:
 
         return out
 
+    def neutron_capture_xs(self, data_source=None) -> CrossSection1D:
+        reses = self.get_incident_particle_daughters('neutron', data_source=data_source)
+        s = Nuclide.from_Z_A_M(self.Z, self.A + 1).name
+        try:
+            return reses[s].xs
+        except KeyError:
+            raise FileNotFoundError(f"No neutron capture cross-section for {self.name}")
+
     def get_incident_particle_daughters(self, particle, data_source=None, a_z_hl_cut='', is_stable_only=False) \
             -> Dict[str, InducedDaughter]:
         f = getattr(self, f"get_incident_{particle}_daughters")
@@ -2238,12 +2294,13 @@ class Nuclide:
 
         """
         reaction = ActivationReactionContainer.load(self.name, projectile, data_source)
-        assert isinstance(reaction, ActivationReactionContainer)
+        assert isinstance(reaction, ActivationReactionContainer), type(reaction)
         out: Dict[str, InducedDaughter] = {}
 
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             daughter_nuclide = Nuclide.from_symbol(daughter_name)
-            a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, daughter_nuclide.isometric_state
+            a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, \
+                          daughter_nuclide.isometric_state
             if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only, m):
                 daughter = InducedDaughter(daughter_nuclide, self, projectile)
                 daughter.xs = xs
@@ -2320,14 +2377,15 @@ class Nuclide:
         return self.half_life.n >= (365*24*60**2)*threshold_in_years
 
     @staticmethod
-    def get_all_nuclides(a_z_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
+    def get_all_nuclides(z_a_m_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
         """
         Returns a list of all nuclide instances subject to a criteria specified by `a_z_hl_cut`.
         Args:
-            a_z_hl_cut: Criteria (python code) to be evaluated, where the following variables may appear in the
+            z_a_m_hl_cut: Criteria (python code) to be evaluated, where the following variables may appear in the
              expression:
                 z=atomic number
                 a=mass number,
+                m=isomeric level/excited state (0 for ground state)
                 hl=half life in seconds.
                 Defaults to all known nuclides.
             is_stable_only:  Only include stable nuclides.
@@ -2336,12 +2394,12 @@ class Nuclide:
         Returns: List of all nuclide instances meeting criteria
 
         """
-        assert isinstance(a_z_hl_cut, str), 'All cuts must be a string instance.'
+        assert isinstance(z_a_m_hl_cut, str), 'All cuts must be a string instance.'
         nuclides = []
         with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'rb') as f:
             nuclides_dict = pickle.load(f)
-        for (a, z, hl), nuclide_name in nuclides_dict.items():
-            if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only):
+        for (a, z, hl, m), nuclide_name in nuclides_dict.items():
+            if __nuclide_cut__(z_a_m_hl_cut, a, z, hl, is_stable_only, m=m):
                 nuclides.append(Nuclide.from_symbol(nuclide_name))
 
         yield from nuclides
@@ -2392,6 +2450,88 @@ class InducedParent(Nuclide):
         par_symbol = self.inducing_particle[0]
         return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
+# def get_activation_products(e: Evaluation, projectile, debug=False) -> dict:
+#     """
+#     Get all activation products from ENDF Evaluation.
+#     Notes:
+#         MT 4: If r.product is same as target, this is production of ground state (i.e. same Z, A)
+#                 If ZZAAA_e_1 is the product, then first level
+#         MT 51: Different from ZZAAA_e_1 in MT=4 in that this is direct inelastic scattering (e.g. like setting isomer to ~0 in TALYS)
+#
+#     Args:
+#         e:
+#         projectile:
+#         debug:
+#
+#     Returns:dict of form {'ergs': [...], 'xss': [...], 'mt'=int}
+#
+#     """
+#     target = e.gnd_name
+#     s, z, a, m = Nuclide.get_s_z_a_m_from_string(target)
+#     # z = ATOMIC_NUMBER[s]
+#
+#     def to_string(z_, a_, m_=None):
+#         return f"{ATOMIC_SYMBOL[z_]}{a_}" + ("" if (m_ is None or m_ == 0) else f"_m{m_}")
+#
+#     outs = {}
+#
+#     for mf, mt, _, _ in e.reaction_list:
+#         if mf == 3:
+#             if debug:
+#                 print(f"MT = {mt}")
+#
+#             r = Reaction.from_endf(e, mt)
+#
+#             ergs = r.xs['0K'].x * 1E-6
+#             xs = r.xs['0K'].y
+#
+#             for prod in r.products:
+#                 if Nuclide.NUCLIDE_NAME_MATCH.match(prod.particle):
+#                     if prod.particle == target:  # Not sure how to interpret this, so ignore.
+#                         continue
+#                     if '_e' in prod.particle:  # Handle this in a special case
+#                         continue
+#                     yield_y = prod.yield_.y
+#                     yield_x = prod.yield_.x * 1E-6
+#
+#                     yield_y = np.interp(ergs, yield_x, yield_y)
+#                     prod_xs = xs * yield_y
+#
+#                     outs[prod.particle] = {'ergs': ergs, "xss": prod_xs, "mt": mt}
+#
+#                     if debug:
+#                         print(f"\t{prod} [included]")
+#                 else:
+#                     if debug:
+#                         print(f"\t{prod} [ignored]")
+#
+#     if projectile == 'neutron':
+#         r = Reaction.from_endf(e, 102)
+#         try:
+#             outs[to_string(z, a + 1, m)] = find_xs(r, 'photon')
+#         except FileNotFoundError:
+#             pass
+#
+#         r = Reaction.from_endf(e, 4)
+#         for prod in r.products:
+#             if m := re.match(".+_e([0-9]+)", prod.particle):
+#                 iso = int(m.groups()[0])
+#                 outs[to_string(z, a, iso)] = find_xs(r, prod.particle)
+#
+#     if debug:
+#         tab = None
+#         i = 0
+#
+#         for prod, xs_data in outs.items():
+#             if i % 10 == 0:
+#                 tab = TabPlot()
+#             ax = tab.new_ax(f"{prod} (MT {xs_data['mt']})")
+#             ax.plot(xs_data["ergs"], xs_data["xss"])
+#
+#             i += 1
+#
+#     return outs
+
 
 class NuclearLibraries:
     # list of nuclear library sources for each incident particle. The order in which a given data source is
@@ -2428,6 +2568,31 @@ class ActivationReactionContainer:
     for __proj, __list_of_libraries in libraries.items():
         all_instances[__proj] = {k: {} for k in __list_of_libraries}
 
+    @staticmethod
+    def list_targets(projectile, data_source):
+        """
+        List all the nuclei available for data_source (e.g. "ENDF", "TENDL")
+
+        Returns:
+
+        """
+        path_dir = ActivationReactionContainer.directories[projectile]/data_source
+        outs = []
+        zs = []
+        for path in path_dir.iterdir():
+            name = path.name[:-len(path.suffix)]
+            m = re.match("([A-Z][a-z]{0,3})[0-9]+", name)
+            if m is None:
+                continue
+            try:
+                z = ATOMIC_NUMBER[m.groups()[0]]
+            except KeyError:
+                continue
+            zs.append(z)
+            outs.append(path.name[:-len(path.suffix)])
+        outs = [outs[i] for i in np.argsort(zs)]
+        return outs
+
     def __init__(self, nuclide_name: str, projectile: str, data_source: str):
         """
 
@@ -2460,7 +2625,7 @@ class ActivationReactionContainer:
     @classmethod
     def fetch_xs(cls, parent_name, residue_name, projectile, data_source=None) -> CrossSection1D:
         """
-        Find saved CrossSection1D instance for specified reaction.
+        Find pickled CrossSection1D instance for specified reaction.
         Args:
             parent_name: Tame of target nuclide, e.g. C11
             residue_name: Name of residue nuclide, e.g. Be11
@@ -2505,11 +2670,15 @@ class ActivationReactionContainer:
 
         reactions = []
 
+        reaction = None
+
         if data_source is None:
+            return cls.from_pickle(nuclide_name, projectile, data_source=None)
+
+        elif data_source in cls.libraries[projectile]:
             return cls.from_pickle(nuclide_name, projectile, data_source=data_source)
 
         elif data_source == 'all':
-            reaction = None
             for library in cls.libraries[projectile]:
                 try:
                     r = cls.from_pickle(nuclide_name, projectile, library)
@@ -2519,16 +2688,18 @@ class ActivationReactionContainer:
                     reaction = r
                 else:
                     reactions.append(r)
-
-        elif data_source in cls.libraries[projectile]:
-            return cls.from_pickle(nuclide_name, projectile, data_source=data_source)
-
         else:
-            assert projectile in cls.libraries, f'Invalid/no data for projectile, "{projectile}"'
-            assert False, f'`data_source, "{data_source}" not found for projectile "{projectile}". ' \
-                          f'Available data libraries are:\n\t{cls.libraries[projectile]}\n, or, you can specify "all"'
+            if projectile not in cls.libraries:
+                raise ValueError(f'Invalid/no data for projectile, "{projectile}"')
+            raise FileNotFoundError(f'`data_source, "{data_source}" not found for projectile "{projectile}". '
+                                    f'Available data libraries are:\n\t{cls.libraries[projectile]}\n, '
+                                    f'or, you can specify "all"')
 
-        for _other_reaction in reactions:  #
+        # If we reach this far, then that means 'all' was specified as data source
+        if reaction is None:
+            raise FileNotFoundError(f'No data found for {projectile} on {nuclide_name}')
+
+        for _other_reaction in reactions:
             for name, xs in _other_reaction.product_nuclide_names_xss.items():
                 if name not in reaction.product_nuclide_names_xss:
                     reaction.product_nuclide_names_xss[name] = xs
@@ -2560,7 +2731,9 @@ class ActivationReactionContainer:
             except FileNotFoundError:  # no existing pickle file. Raise error
                 raise FileNotFoundError(f'No {projectile} activation data for {nuclide_name} and data source '
                                         f'"{data_source}"')
+
             all_instances[nuclide_name] = existing_instance
+
         return existing_instance
 
     @staticmethod
@@ -2609,6 +2782,7 @@ class ActivationReactionContainer:
         fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
 
         x, y = None, None
+
         if self.projectile == 'neutron':
             xtot, ytot = get_xy(1)
             xel, yel = get_xy(2)
@@ -2644,15 +2818,147 @@ class ActivationReactionContainer:
         except KeyError:
             assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
 
+    @staticmethod
+    def _find_yield(r, product):
+        out = ActivationReactionContainer._get_xs(r)
+
+        for prod in r.products:
+            if prod.particle == product:
+                break
+        else:
+            raise FileNotFoundError(f"No product {product} for MT {r.mt}")
+
+        yield_y = prod.yield_.y
+        yield_x = prod.yield_.x * 1E-6
+
+        yield_y = np.interp(out['ergs'], yield_x, yield_y)
+        out['xss'] *= yield_y
+
+        return out
+
+    @staticmethod
+    def _get_xs(r: Reaction):
+        """
+        Get cross-section from Reaction instance
+        Args:
+            r:
+
+        Returns:
+
+        """
+        try:
+            ergs = r.xs['0K'].x * 1E-6
+            xs = r.xs['0K'].y
+        except KeyError:
+            raise FileNotFoundError
+
+        return {'ergs': ergs, "xss": xs, "mt": r.mt}
+
+    @staticmethod
+    def _get_activation_products(e: Evaluation, projectile, debug=False) -> dict:
+        """
+        Get all activation products from ENDF Evaluation.
+        Notes:
+            MT 4: If r.product is same as target, this is production of ground state (i.e. same Z, A)
+                    If ZZAAA_e_1 is the product, then first level
+            MT 51: Different from ZZAAA_e_1 in MT=4 in that this is direct inelastic scattering (e.g. like setting isomer to ~0 in TALYS)
+
+        Args:
+            e:
+            projectile:
+            debug:
+
+        Returns:dict of form {'ergs': [...], 'xss': [...], 'mt'=int}
+
+        """
+        if debug:
+            from JSB_tools import TabPlot
+
+        target = e.gnd_name
+        s, z, a, m = Nuclide.get_s_z_a_m_from_string(target)
+        z = ATOMIC_NUMBER[s]
+
+        def to_string(z_, a_, m_=None):
+            return f"{ATOMIC_SYMBOL[z_]}{a_}" + ("" if (m_ is None or m_ == 0) else f"_m{m_}")
+
+        outs = {}
+
+        for mf, mt, _, _ in e.reaction_list:
+            if mf == 3:
+                if debug:
+                    print(f"MT = {mt}")
+                try:
+                    r = Reaction.from_endf(e, mt)
+                except IndexError:
+                    warn(f"openmc bug: Creating Reaction for {projectile} on {e.target['zsymam']}")
+                    continue
+
+                ergs = r.xs['0K'].x * 1E-6
+                xs = r.xs['0K'].y
+
+                for prod in r.products:
+                    if Nuclide.NUCLIDE_NAME_MATCH.match(prod.particle):
+                        if prod.particle == target:  # Not sure how to interpret this, so ignore.
+                            continue
+                        if '_e' in prod.particle:  # Handle this in a special case
+                            continue
+                        yield_y = prod.yield_.y
+                        yield_x = prod.yield_.x * 1E-6
+
+                        yield_y = np.interp(ergs, yield_x, yield_y)
+                        prod_xs = xs * yield_y
+
+                        outs[prod.particle] = {'ergs': ergs, "xss": prod_xs, "mt": mt}
+
+                        if debug:
+                            print(f"\t{prod} [included]")
+                    else:
+                        if debug:
+                            print(f"\t{prod} [ignored]")
+
+        if projectile == 'neutron':  # radiative capture
+            r = Reaction.from_endf(e, 102)
+            try:
+                outs[to_string(z, a + 1, m)] = ActivationReactionContainer._get_xs(r)
+            except FileNotFoundError:
+                pass
+
+            r = Reaction.from_endf(e, 4)
+            for prod in r.products:
+                if m := re.match(".+_e([0-9]+)", prod.particle):
+                    iso = int(m.groups()[0])
+                    outs[to_string(z, a, iso)] = ActivationReactionContainer._find_yield(r, prod.particle)
+
+        if debug:
+            tab = None
+            i = 0
+
+            for prod, xs_data in outs.items():
+                if i % 10 == 0:
+                    tab = TabPlot()
+                ax = tab.new_ax(f"{prod} (MT {xs_data['mt']})")
+                ax.plot(xs_data["ergs"], xs_data["xss"])
+
+                i += 1
+
+        return outs
+
+    class EvaluationException(Exception):
+        pass
+
     @classmethod
-    def from_endf(cls, endf_path, projectile, data_source: str):
+    def from_endf(cls, endf_path, projectile, data_source: str, debug=False):
         """
         Build the instance from ENDF file using openmc. Instance is saved to ActivationReactionContainer.all_instances
         Args:
             endf_path: Path to relevant target nuclide endf file
+
             projectile: incident particle
+
             data_source: Source of data, e.g. 'ENDF', or 'TENDL'. Default 'None'. Determines the name of directory of
                 pickled data.
+
+            debug: Plots cross-sections and prints some useful information.
 
         Returns: None
 
@@ -2660,7 +2966,11 @@ class ActivationReactionContainer:
         endf_path = Path(endf_path)
         assert endf_path.exists(), endf_path
 
-        e = Evaluation(endf_path)
+        try:
+            e = Evaluation(endf_path)
+        except (ValueError, KeyError):
+            raise ActivationReactionContainer.EvaluationException(f"Could not create Evaluation for {endf_path}")
+
         nuclide_name = e.gnd_name
 
         print(f'Read data from {data_source} for {projectile}s on {nuclide_name}')
@@ -2681,43 +2991,18 @@ class ActivationReactionContainer:
 
         self.set_misc_xs()
 
-        openmc_reaction = Reaction.from_endf(e, 5)
-
         par_id = self._get_projectile_short
 
-        for openmc_product in openmc_reaction.products:
-            activation_product_name = openmc_product.particle
+        for activation_product_name, reaction_dict in ActivationReactionContainer._get_activation_products(e, projectile, debug).items():
             if activation_product_name == nuclide_name:
                 continue
-
-            if ActivationReactionContainer.__bug_test__(openmc_reaction, openmc_product, nuclide_name, projectile):
-                print(openmc_product.yield_.y)
-
-            if activation_product_name == "photon":
-                continue
-            if activation_product_name == "neutron":
-                activation_product_name = "Nn1"
 
             _product_label = cls.__get_product_name__(nuclide_name, activation_product_name, projectile)
 
             xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){activation_product_name}"
 
-            x_tot = openmc_reaction.xs['0K'].x / 1E6
-            y_tot = openmc_reaction.xs['0K'].y
-
-            try:
-                x_yield = openmc_product.yield_.x / 1E6
-            except AttributeError:
-                continue
-
-            # interp to yield since yield will include <= energy range of tot xs.
-            tot_xs = np.interp(x_yield, x_tot, y_tot)
-
-            try:
-                xs = CrossSection1D(x_yield, openmc_product.yield_.y*tot_xs, xs_fig_label,
-                                    self.projectile,  self.data_source)
-            except AttributeError:  # no data. Move on
-                continue
+            xs = CrossSection1D(reaction_dict['ergs'], reaction_dict['xss'], xs_fig_label,
+                                self.projectile,  self.data_source, reaction_dict['mt'])
 
             self.product_nuclide_names_xss[activation_product_name] = xs
 

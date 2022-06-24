@@ -1,4 +1,6 @@
+import re
 from pathlib import Path
+from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
 
 pwd = Path(__file__).parent
 
@@ -40,8 +42,8 @@ tendl_2019_proton_dir = parent_data_dir/'TENDL2019-PROTONS'
 
 
 # download below at https://www-nds.iaea.org/photonuclear/  Replaced previous ENDF-B-VIII.0 Library.
-photonuclear_endf_dir = parent_data_dir / 'iaea-pd2019'
-photonuclear_tendl_dir = parent_data_dir / 'TENDL-g'
+gamma_endf_dir = parent_data_dir / 'iaea-pd2019'
+gamma_tendl_dir = parent_data_dir / 'TENDL-g'
 
 #  Download SF yields (gefy model) from https://www.cenbg.in2p3.fr/GEFY-GEF-based-fission-fragment,780
 sf_yield_data_dir = parent_data_dir / 'gefy81_s'
@@ -54,6 +56,35 @@ alpha_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1a'
 deuterium_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1d'
 neutron_tendl_data_dir = parent_data_dir/'TENDL2021-NEUTRONS/gendf-1102'
 
+proton_tendl_data_dir = parent_data_dir/'TENDL2019-PROTONS'
+
+def get_neutron_endf_dir(sym, a, m=0):
+    z = ATOMIC_NUMBER[sym]
+    out = f"n-{z:0>3}_{sym}_{a:0>3}"
+    if m != 0:
+        out += f'm{m}'
+    return neutron_enfd_b_data_dir/f"{out}.endf"
+
+all_dirs = {"neutron": {'endf':{'path': neutron_enfd_b_data_dir,
+                                'match': re.compile(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf'),
+                                'get': get_neutron_endf_dir},
+
+                        'tendl': {'path': neutron_tendl_data_dir,
+                                  'match': re.compile(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc')}
+                        },
+            'proton': {'endf': {'path': proton_enfd_b_data_dir,
+                                'match': re.compile("p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf")},
+                       'tendl': {'path': proton_tendl_data_dir},
+                       'padf':{'path':proton_padf_data_dir,
+                               'match':re.compile("([0-9]{2})([0-9]{3})(M[0-9])?")}
+                       },
+            'gamma': {'endf': gamma_endf_dir, 'tendl':gamma_tendl_dir}}
+
+
+
+if __name__ == '__main__':
+    p = (get_neutron_endf_dir('Co', 58, 1))
+    print(p, p.exists())
 # =====================================================================================================
 # ===============================End specification of paths to nuclear libraries ====================
 # =====================================================================================================
