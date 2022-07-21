@@ -5,6 +5,7 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
+from itertools import cycle
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -33,6 +34,7 @@ from uncertainties import UFloat
 from scipy import ndimage
 from matplotlib.widgets import Button
 from matplotlib.figure import Axes
+from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
 try:
     import ROOT
@@ -95,10 +97,10 @@ class TabPlot:
     """
     _instnaces = []
 
-    def __init__(self, *fig_args, **fig_kwargs):
+    def __init__(self, figsize=(10, 8), *fig_args, **fig_kwargs):
         TabPlot._instnaces.append(self)
 
-        self.fig = plt.figure(*fig_args, **fig_kwargs)
+        self.fig = plt.figure(figsize=figsize, *fig_args, **fig_kwargs)
 
         self._vis_flag = True
 
@@ -111,9 +113,33 @@ class TabPlot:
         self.button_labels = []
         self.buttons = []
 
+        self.index = 0
+
+        self.max_buttons_reached = False
+
+        self.fig.canvas.mpl_connect('key_press_event', self.on_press)
+
+    def __len__(self):
+        return len(self.button_labels)
+
     @property
     def button_len(self):
         return sum(map(len, self.button_labels))
+
+    def on_press(self, event):
+        sys.stdout.flush()
+        if event.key == 'right':
+            self.button_funcs[(self.index + 1)%len(self.button_funcs)](event)
+        elif event.key == 'left':
+            self.button_funcs[(self.index - 1)%len(self.button_funcs)](event)
+
+        elif event.key == 'down':
+            di = len(self.button_axs[0])
+            self.button_funcs[(self.index - di) % len(self.button_funcs)](event)
+
+        elif event.key == 'up':
+            di = len(self.button_axs[0])
+            self.button_funcs[(self.index + di) % len(self.button_funcs)](event)
 
     def get_button_func(self):
         """
@@ -132,20 +158,35 @@ class TabPlot:
                 else:
                     [ax.set_visible(0) for ax in axs_group]
 
-            self.fig.canvas.draw_idle()
-
             if self.suptitles[index] is not None:
                 title = self.suptitles[index]
             else:
                 title = self.button_labels[index]
             self.fig.suptitle(title)
-            # if len(axs) > 1:
-            #     self.fig.suptitle(self.button_labels[i])
-            # else:
-            #     if axs[0].get_title() == '':
-            #         axs[0].set_title(self.button_labels[i])
+
+            self.index = index  # save current "place" in list of plots (e.g. self.button_funcs).
+            # button = self.buttons[index]
+
+            self.fig.canvas.draw_idle()
 
         return set_vis
+
+    def add_aux_axis(self, ax):
+        """
+        Add an axis, `ax`, to the list of axis that will switch on/off with the last axis retiurn by self.
+        Args:
+            ax:
+
+        Returns:
+
+        """
+        self.plt_axs[-1] = np.concatenate([self.plt_axs[-1], [ax]])
+
+        if len(self.button_labels) == 1:
+            ax.set_visible(1)
+        else:
+            ax.set_visible(0)
+            # [ax.set_visible(0) for ax in axs_flat]
 
     def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None, *args, **kwargs) -> Axes:
         """
@@ -160,9 +201,12 @@ class TabPlot:
             *args:
             **kwargs:
 
-        Returns:
+        Returns: Single Axes instance if nrows == ncols == 1, else an array of Axes likewise to plt.subplots(...) .
 
         """
+        if self.max_buttons_reached:
+            raise OverflowError("Too many buttons! Create a new TapPlot.")
+
         if subplot_kw is None:
             subplot_kw = {}
 
@@ -218,7 +262,13 @@ class TabPlot:
         self.button_funcs.append(self.get_button_func())
         button.on_clicked(self.button_funcs[-1])
 
-        self.fig.subplots_adjust(bottom=self.button_axs[0][0].get_position().y1 + 0.1)
+        new_fig_bottom = self.button_axs[0][0].get_position().y1 + 0.1
+        fig_top = self.fig.axes[0].get_position().y1
+
+        self.fig.subplots_adjust(bottom=new_fig_bottom)
+
+        if new_fig_bottom >= 0.75*fig_top:
+            self.max_buttons_reached = True
 
         if self._vis_flag:
             self._vis_flag = False
@@ -617,6 +667,7 @@ def multi_peak_fit(bins, y, peak_centers: List[float], baseline_method='ROOT', b
 
     return fit_result
 
+
 def discrete_interpolated_median(list_, poisson_errors=False):
     """
     Median of a list of integers.
@@ -784,8 +835,56 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
     return np.convolve(a, kernel, mode=mode)
 
 
+def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
+    b_centers = 0.5*(bins[1:] + bins[:-1])
+    x = b_centers
+    if errors:
+        x = unp.uarray(x, (bins[1:] - bins[:-1])/(2*np.sqrt(3)))
+    else:
+        y = unp.nominal_values(y)
+
+    mean = sum(y*x)/sum(y)
+    std = usqrt(sum(y*(x - mean)**2)/sum(y))
+
+    cumsum = np.cumsum(unp.nominal_values(y))
+
+    percentiles_xs = []
+
+    for p in percentiles:
+        frac = unp.nominal_values(cumsum[-1]*p)
+        i = np.searchsorted(cumsum, frac, side='right') - 1
+
+        if i < 0:
+            percentiles_xs.append(x[0])
+            continue
+        elif i == len(cumsum):
+            percentiles_xs.append(x[-1])
+            continue
+
+        x0 = x[i]
+
+        y0 = cumsum[i]
+        y1 = cumsum[i + 1]
+
+        x1 = x[i + 1]
+        di = (frac - y0)/(y1 - y0)
+        dx = di*(x1 - x0)
+
+        percentiles_xs.append(x0 + dx)
+
+        count = sum(unp.nominal_values(y))
+
+        if int(count) == count:
+            count = int(count)
+
+    return {'count': count,
+            'mean': mean,
+            'std': std,
+            'percentiles': list(zip(percentiles, percentiles_xs))}
+
+
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_handle=False, **mpl_kwargs):
+             return_handle=False, stats_box=False, stats_kwargs=None, **mpl_kwargs):
     """
 
     Args:
@@ -800,6 +899,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         return_handle: Return the handle for custom legend creation. Form is tuple([handle1, handle2]).
             To make legend with marker and all, do e.g. fig.legend(handles, labels), where each element in handles is
             that which is returned due to this argument being True.
+        stats_box: If true write stats box akin to ROOT histograms.
+        stats_kwargs:
         **mpl_kwargs:
 
     Returns:
@@ -852,6 +953,23 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     if label is not None:
         ax.legend()
 
+    if stats_box:
+        stats = get_stats(bin_edges, y)
+        s = ""
+        for k, label in zip(['count', 'mean', 'std'], ['count', r'$\mu$       ', r'$\sigma$       ']):
+
+            v = f"${stats[k]:.L}$" if isinstance(stats[k], UFloat) else f"{stats[k]:.2g}"
+
+            s += f'{label}  {v}\n'
+        s += '\n'
+
+        for p, x in stats['percentiles']:
+            s += f'{int(100*p)}       {x}\n'
+
+        props = dict(boxstyle='round', facecolor='tab:grey', alpha=0.75)
+
+        ax.text(0.7, 0.8, s, transform=ax.transAxes, bbox=props)
+
     out = [ax]
 
     if return_handle:
@@ -864,7 +982,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
 
 def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
-                       return_line_color=False, log_space=False, **mpl_kwargs):
+                       return_line_color=False, log_space=False, stats_box=False, **mpl_kwargs):
     """
     Plots a histogram from raw data.
 
@@ -878,11 +996,15 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
         title:
         return_line_color:
         log_space: If True, bin_edges must be an int and bins will be constant width in log space
+        stats_box:
         **mpl_kwargs:
 
     Returns:
 
     """
+    assert hasattr(data, '__iter__'), f'Bad argument for `data`: Not an iterator. "{data}"'
+    assert len(data) > 0, f'Bad argument for `data`: Empty array'
+
     if isinstance(data[0], UFloat):
         data = unp.nominal_values(data)
 
@@ -908,7 +1030,7 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
     y, _ = np.histogram(data, bins=bin_edges, weights=weights)
     yerr = np.sqrt(y)
     return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
-                    **mpl_kwargs)
+                       stats_box=stats_box,  **mpl_kwargs)
 
 
 def fill_between(x, y, yerr=None, ax=None, fig_kwargs=None, label=None, binsxQ=False, **mpl_kwargs):
@@ -1479,22 +1601,28 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-
-    import numpy as np
-    from matplotlib import pyplot as plt
-
-    x = np.linspace(0, np.pi * 2, 1000)
-
-    f = TabPlot()
-
-    for i in range(1, 20):
-        ax = f.new_ax(i)
-        ax.plot(x, np.sin(x * i), label='label 1')
-        ax.plot(x, np.sin(x * i) ** 2, label='label 2')
-        ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
-        ax.legend()
-        ax.set_title(str(i))
-
-    plt.show()
+    for n in Nuclide.from_symbol('Y99').decay_daughters:
+        print(n)
+    #
+    # import numpy as np
+    # from matplotlib import pyplot as plt
+    #
+    # x = np.linspace(0, np.pi * 2, 1000)
+    # y, edges = np.histogram(np.random.randn(10000), 100)
+    # y = unp.uarray(y, np.sqrt(y))
+    # mpl_hist(edges, y, stats_box=True)
+    #
+    # plt.show()
+    # # f = TabPlot()
+    # #
+    # # for i in range(1, 20):
+    # #     ax = f.new_ax(i)
+    # #     ax.plot(x, np.sin(x * i), label='label 1')
+    # #     ax.plot(x, np.sin(x * i) ** 2, label='label 2')
+    # #     ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
+    # #     ax.legend()
+    # #     ax.set_title(str(i))
+    #
+    # plt.show()
 
 

@@ -660,7 +660,11 @@ class ListSpectra(EfficiencyCalMixin):
                     legends = []
                     # ax = axs[bin_index % 4]
                     button_label = f"{b1:.1f}-{b2:.1f} s"
-                    ax = tab_plot.new_ax(button_label=button_label)
+                    try:
+                        ax = tab_plot.new_ax(button_label=button_label)
+                    except OverflowError:
+                        tab_plot = JSB_tools.TabPlot()
+                        ax = tab_plot.new_ax(button_label=button_label)
 
                     ax, y = self.plot_erg_spectrum(bg_window_left_bounds[0] - signal_window_kev,
                                                    bg_window_right_bounds[-1] + signal_window_kev,

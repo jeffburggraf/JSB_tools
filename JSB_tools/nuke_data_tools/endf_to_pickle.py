@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime
 import pickle
 import warnings
-
 import matplotlib.pyplot as plt
 from openmc.data.endf import Evaluation
 from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER, FissionProductYields
@@ -510,19 +509,20 @@ def pickle_proton_activation_data():
 
 def pickle_neutron_activation_data():
 
-    for file_path in neutron_enfd_b_data_dir.iterdir():
-        _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
-        if _m:
-            # if file_path.name == 'n-092_U_238.endf':
-            ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
+    # for file_path in neutron_enfd_b_data_dir.iterdir():
+    #     _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
+    #     if _m:
+    #         # if file_path.name == 'n-092_U_238.endf':
+    #         ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
 
     # ActivationReactionContainer.pickle_all('neutron')
 
     for file_path in neutron_tendl_data_dir.iterdir():
-        _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnopg]\.asc', file_path.name)
+        _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnop]?g\.asc', file_path.name)
         if _m:
-
-            ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
+            # print(file_path)
+            if file_path.name == 'U233g.asc':
+                ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
 
     ActivationReactionContainer.pickle_all('neutron')
 
@@ -781,7 +781,8 @@ if __name__ == '__main__':
 
     # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
-    pickle_proton_activation_data()
+    # pickle_proton_activation_data()
+    pickle_neutron_activation_data()
     # pickle_gamma_neutron_fission_xs_data()
     # pickle_neutron_activation_data()
 # pickle_gamma_fission_xs_data

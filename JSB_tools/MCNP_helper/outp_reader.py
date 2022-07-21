@@ -888,6 +888,7 @@ class StoppingPowerData:
 
         Args:
             particle: Either a zaid in the form of zzaaa, i.e. str(1000*z+a), or a nuclide name, i.e. 'Xe139'.
+                Can also be 'proton' or 'electron'.
             material_element_symbols: List of elements that make up the medium using similar convention as in`particle`
                 argument. Can also use "U" instead of "U238" to automatically isotopic composition of natural U
             density: Density of medium in g/cm3.

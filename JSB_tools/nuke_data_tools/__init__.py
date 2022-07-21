@@ -30,7 +30,7 @@ try:
     from openmc.data.endf import Evaluation
     from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
     from openmc.data import Reaction, Decay, Product
-    from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO
+    from openmc.data.data import NATURAL_ABUNDANCE, atomic_mass, atomic_weight, AVOGADRO, _ATOMIC_MASS
 except ModuleNotFoundError:
     openmc_not_installed_warning()
 
@@ -68,8 +68,28 @@ additional_nuclide_data = {"In101_m1": {"half_life": ufloat(10, 5)},
                            "Rh114_m1": {"half_life": ufloat(1.85, 0.05), "__decay_daughters_str__": "Pd114"},
                            "Pr132_m1": {"half_life": ufloat(20, 5), "__decay_daughters_str__": "Ce132"}}
 
+_all_nuclides_ = None
 
-def human_readable_half_life(hl, include_errors):
+
+def nuclide_list():
+    """
+    Return all nuclides that have had their mass quantified.
+    Returns:
+
+    """
+    global _all_nuclides_
+
+    if _all_nuclides_ is None:
+        atomic_mass('H1')
+        _all_nuclides_ = [f"{x[0].upper()}{x[1:]}" for x in _ATOMIC_MASS.keys()]
+
+        [_all_nuclides_.remove(x) for x in ['C0', 'Zn0', 'Pt0', 'Os0', 'Tl0']]
+
+
+    return _all_nuclides_
+
+
+def human_readable_half_life(hl, include_errors, abrev_units=True):
     def get_error_print(e, sig_figs=None):
         if sig_figs is None:
             if 1 <= e <= 100:
@@ -87,6 +107,12 @@ def human_readable_half_life(hl, include_errors):
             fmt = "+/-{{:.{}e}}%".format(sig_figs)
             return fmt.format(e)
 
+    def process_return(_s: str):
+        if abrev_units:
+            for u, up in [('seconds', 's'), ('minutes', 'm'), ('hours', 'h'), ('days', 'd'), ('years', 'a')]:
+                _s = _s.replace(u, up)
+        return _s.rstrip().lstrip()
+
     hl_in_sec = hl
 
     if hl_in_sec is None:
@@ -96,21 +122,21 @@ def human_readable_half_life(hl, include_errors):
         hl_in_sec = ufloat(hl_in_sec, 0)
 
     if np.isinf(hl_in_sec.n) or np.isnan(hl_in_sec.n):
-        return str(hl_in_sec.n)
+        return str(hl_in_sec.n).rstrip()
 
     if hl_in_sec < 1:
         percent_error = 100 * hl_in_sec.std_dev / hl_in_sec.n
         out = "{:.2e} seconds ".format(hl_in_sec.n)
         if include_errors:
             out += " ({}) ".format(get_error_print(percent_error))
-        return out
+        return process_return(out)
 
     elif hl_in_sec < 60:
         percent_error = 100 * hl_in_sec.std_dev / hl_in_sec.n
         out = "{:.1f} seconds ".format(hl_in_sec.n)
         if include_errors:
             out += " ({}) ".format(get_error_print(percent_error))
-        return out
+        return process_return(out)
 
     seconds_in_a_minute = 60
     seconds_in_a_hour = 60 * seconds_in_a_minute
@@ -130,10 +156,7 @@ def human_readable_half_life(hl, include_errors):
     for value, unit in zip([n_seconds, n_minutes, n_hours, n_days, n_months, n_years],
                            ['seconds', 'minutes', 'hours', 'days', 'months', 'years']):
         error, value = value.std_dev, value.n
-        # try:
-        #     int(value)
-        # except:
-        #     print()
+
         if int(value) != 0:
             if np.isclose(error, value) and unit == 'years':
                 percent_error = 'lower bound'
@@ -144,10 +167,8 @@ def human_readable_half_life(hl, include_errors):
                 elif percent_error < 0.01:
                     percent_error = get_error_print(percent_error, 3)
                 elif percent_error < 0.1:
-                    # percent_error = '+/-{:.2e}%'.format(percent_error)
                     percent_error = get_error_print(percent_error, 2)
                 elif percent_error < 1:
-                    # percent_error = "+/-{:.1f}%".format(error)
                     percent_error = get_error_print(percent_error, 1)
                 else:
                     percent_error = get_error_print(percent_error, 0)
@@ -164,37 +185,9 @@ def human_readable_half_life(hl, include_errors):
     if out is None:
         assert False, 'Issue in "human_friendly_half_life'
 
-    return out
+    return process_return(out)
 
 
-# def talys_calculation(target, projectile, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
-#     fname = f'{target}-{projectile}'
-#
-#     path = talys_dir/fname/'data.pickle'
-#     out = {}
-#     if not path.exists():
-#         talys.run(target=target, projectile=projectile)
-#         talys.pickle_result(target=target, projectile=projectile)
-#
-#     with open(path, 'rb') as f:
-#         data = pickle.load(f)
-#         ergs = pickle.load(f)
-#     parent_nuclide = Nuclide.from_symbol(target)
-#
-#     for k, v in data.items():
-#         out_name = ActivationReactionContainer.__get_product_name__(target, k, projectile)
-#         d = InducedDaughter(Nuclide.from_symbol(k), parent_nuclide, projectile)
-#         if not __nuclide_cut__(a_z_hl_cut, d.A, d.Z, d.half_life, is_stable_only):
-#             continue
-#         out[k] = d
-#         xs = CrossSection1D(ergs, v, incident_particle=projectile,
-#                             fig_label=f"{target}({projectile}, {out_name}){d.name}",
-#                             data_source='TALYS')
-#         out[k].xs = xs
-#     return out
-
-
-# Needed because classes in this __init__ file will not be in scope of __main__ as required for unpickling
 class CustomUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
         if name == 'GammaLine':
@@ -225,7 +218,6 @@ class _DiscreteSpectrum:
         try:
             self.__discrete_entries__ = spectra_data["discrete"]
             for emission_data in self.__discrete_entries__:
-                # branching_ratio = nuclide.decay_branching_ratios[tuple(emission_data['from_mode'])]
                 emission_data['intensity'] = discrete_normalization*emission_data['intensity']
                 emission_data['energy'] = emission_data['energy']*1E-3
                 emission_data['from_mode'] = tuple(emission_data['from_mode'])
@@ -777,6 +769,7 @@ class FissionYields:
     def threshold(self, frac_of_max=0.02) -> List[str]:
         """
         Remove all yields that are less than frac_of_max*y_m, where y_m is the nucleus with maximum yield.
+        Modifies self.
         Args:
             frac_of_max:
 
@@ -982,17 +975,20 @@ class FissionYields:
         assert len(weights) == len(self.energies), f"Weights must be the same length of self.energies, \n" \
                                                    f"len(self.energies) :{len(self.energies)} " \
                                                    f"!= len(weights): {len(weights)}"
-        __sorter = []
-        __keys = []
-        for k, v in self.yields.items():
-            new_values = v*weights
-            n = np.sum(unp.nominal_values(new_values))
-            i = np.searchsorted(__sorter, n)
-            __sorter.insert(i, n)
-            __keys.insert(i, k)
-            self.yields[k] = new_values
+        self.yields = {k: v*weights for k, v in self.yields.items()}
+        self.yields = {k: v for k, v in sorted(self.yields.items(), key=lambda k_v: -np.sum(unp.nominal_values(k_v[1])))}
 
-        self.yields = {k: self.yields[k] for k in __keys[::-1]}
+        # __sorter = []
+        # __keys = []
+        # for k, v in self.yields.items():
+        #     new_values = v*weights
+        #     n = np.sum(unp.nominal_values(new_values))
+        #     i = np.searchsorted(__sorter, n)
+        #     __sorter.insert(i, n)
+        #     __keys.insert(i, k)
+        #     self.yields[k] = new_values
+        #
+        # self.yields = {k: self.yields[k] for k in __keys[::-1]}
         self.weights = self.weights*weights
 
         return None
@@ -1295,12 +1291,25 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=
 
 
 def decay_default_func(nuclide_name):
-    """"""
-    def func(ts, *args, **kwargs):
+    """
+    For the trivial case of stable nuclides.
+    Also used for nuclides with no data
+
+    Args:
+        nuclide_name:
+
+    Returns:
+
+    """
+    def func(ts, scale=1, decay_rate=False, *args, **kwargs):
+        if decay_rate:
+            scale = 0
+
         if hasattr(ts, '__iter__'):
-            out = {nuclide_name: np.ones_like(ts)}
+            out = {nuclide_name: scale*np.ones_like(ts)}
         else:
-            out = {nuclide_name: 1}
+            out = {nuclide_name: scale}
+
         return out
 
     return func
@@ -1408,10 +1417,10 @@ def decay_nuclide(nuclide_name: str, init_quantity=1., init_rate=None, driving_t
 
                 child_nuclide = Nuclide.from_symbol(mode.daughter_name)
 
-                # index of row/column for child nuclide in lambda matrix.
                 child_lambda = child_nuclide.decay_rate.n
 
                 try:
+                    # index of row/column for child nuclide in lambda matrix.
                     child_index = column_labels.index(mode.daughter_name)
                     child_row = lambda_matrix[child_index]
 
@@ -1422,7 +1431,7 @@ def decay_nuclide(nuclide_name: str, init_quantity=1., init_rate=None, driving_t
                     for _list in lambda_matrix:
                         _list.append(0)  # add another column to maintain an nxn matrix
 
-                    child_row = [0]*len(lambda_matrix[-1])  # create gain/loss vector for current daughter nucleus
+                    child_row = [0]*len(lambda_matrix[-1])  # create source(/sink) vector for current daughter nucleus
 
                     child_row[child_index] = -child_lambda  # Set entry for decay of child (diagonal term).
 
@@ -1497,9 +1506,9 @@ def decay_nuclide(nuclide_name: str, init_quantity=1., init_rate=None, driving_t
         yields = np.array(yields).T
 
         if not decay_rate:
-            out = {name: scale*rel_yield for name, rel_yield in zip(column_labels, yields)}
+            out = {name: scale*yield_ for name, yield_ in zip(column_labels, yields)}
         else:
-            out = {name: scale*rel_yield*rate for name, rel_yield, rate in
+            out = {name: scale*yield_*lambda_ for name, yield_, lambda_ in
                     zip(column_labels, yields, np.abs(np.diagonal(lambda_matrix)))}
 
         if not iter_flag:
@@ -1849,7 +1858,7 @@ class Nuclide:
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['A']
 
-    def human_friendly_half_life(self, include_errors: bool = True) -> str:
+    def human_friendly_half_life(self, include_errors: bool = True, abrev_units=True) -> str:
         """
         Gives the half life in units of seconds, hours, days, months, etc.
         Args:
@@ -1858,7 +1867,7 @@ class Nuclide:
         Returns:
 
         """
-        return human_readable_half_life(self.half_life, include_errors)
+        return human_readable_half_life(self.half_life, include_errors, abrev_units)
 
     @property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
@@ -1982,9 +1991,9 @@ class Nuclide:
             warn('Atomic weight for {} not found'.format(self))
             return None
 
-    @property
-    def isotopic_abundance(self) -> float:
-        _m = re.match('([A-Za-z]{1,2}[0-9]+)(?:m_[0-9]+)?', self.name)
+    @staticmethod
+    def isotopic_abundance(nuclide_name) -> float:
+        _m = re.match('([A-Za-z]{1,2}[0-9]+)(?:m_[0-9]+)?', nuclide_name)
         if _m:
             s = _m.groups()[0]
             try:
@@ -1994,34 +2003,63 @@ class Nuclide:
         return 0
 
     @staticmethod
-    def get_all_isotopes(atomic_symbol: str, stable_only=True) -> List[str]:
+    def rel_isotopic_abundance(nuclide_name) -> float:
+        tot = 0
+        for name in Nuclide.get_all_isotopes(nuclide_name, True):
+            try:
+                tot += NATURAL_ABUNDANCE[name]
+            except KeyError:
+                continue
+        try:
+            return Nuclide.isotopic_abundance(nuclide_name)/tot
+        except ZeroDivisionError:
+            return 0
+
+    @staticmethod
+    def get_all_isotopes(atomic_symbol: str, non_zero_abundance=False) -> List[str]:
         """
         Returns list of strings of all isotopes with atomic number according to `atomic_symbol` argument.
         Args:
             atomic_symbol:
-            stable_only: If True, only return stable isotopes.
+            non_zero_abundance: If True, only return nuclides that occur naturally. Otherwise, return any for which
+                atomic weight data has been tabulated..
         Returns:
 
         """
-        outs = []
-        for f in DECAY_PICKLE_DIR.iterdir():
-            if m := re.match(r"(.+)\.pickle", f.name):
-                symbol = m.groups()[0]
-                m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
-                if not m:
-                    continue
-                s = m.group('s')
+        m = re.match('([A-Z][a-z]{0,2})([0-9]*_m[0-9])?', atomic_symbol)
+        assert m, f"Invalid argument, '{atomic_symbol}'"
+        atomic_symbol = m.groups()[0]
 
-                if s == atomic_symbol:
-                    A = m.group('A')
-                    if stable_only:
-                        n = Nuclide.from_symbol(symbol)
-                        if n.half_life is None:
-                            continue
-                        if not n.half_life > (1E2*365*24*60**2):
-                            continue
-                    outs.append(f"{s}{A}")
+        l = len(atomic_symbol)
+        outs = []
+        if non_zero_abundance:
+            options = NATURAL_ABUNDANCE.keys()
+        else:
+            options = nuclide_list()
+
+        for k in options:
+            if k[:l] == atomic_symbol:
+                outs.append(k)
         return outs
+        # outs = []
+        # for f in DECAY_PICKLE_DIR.iterdir():
+        #     if m := re.match(r"(.+)\.pickle", f.name):
+        #         symbol = m.groups()[0]
+        #         m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
+        #         if not m:
+        #             continue
+        #         s = m.group('s')
+        #
+        #         if s == atomic_symbol:
+        #             A = m.group('A')
+        #             if stable_only:
+        #                 n = Nuclide.from_symbol(symbol)
+        #                 if n.half_life is None:
+        #                     continue
+        #                 if not n.half_life > (1E2*365*24*60**2):
+        #                     continue
+        #             outs.append(f"{s}{A}")
+        # return outs
 
     @staticmethod
     def natural_abundance(symbol) -> float:
@@ -2055,6 +2093,17 @@ class Nuclide:
             return _m.groups()[0]
         else:
             return None
+
+    @property
+    def latex_name(self):
+        if self.isometric_state != 0:
+            try:
+                m = 'mnop'[self.isometric_state - 1]
+            except IndexError:
+                m = f'_l{self.isometric_state}'
+        else:
+            m = ''
+        return f"$^{{{self.A}{m}}}${self.atomic_symbol}"
 
     @property
     def mcnp_zaid(self):
@@ -2176,6 +2225,9 @@ class Nuclide:
         else:
             instance = NUCLIDE_INSTANCES[symbol]
             instance.is_valid = True
+
+        if instance.name == 'n1':
+            instance.name = 'N1'
 
         return instance
 
@@ -3081,25 +3133,26 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    n = Nuclide.from_symbol("C13")
-    print(Nuclide.from_symbol('U235').decay_daughters)
-    times = np.linspace(0, Nuclide.from_symbol('U235').half_life.n*3, 30)
-    # f = decay_nuclide('U235')
-    # print(f(times))
-    f0 = decay_nuclide('U235', init_quantity=10)
-    f1 = decay_nuclide('U235', init_quantity=10)
-    y0 = f0(times)
-    y1 = f1(times)
-    fig, (ax0, ax1) = plt.subplots(1, 2)
-    for k in y0:
-        if sum(y0[k]) < 1E-7:
-            continue
-        ax0.plot(times, unp.nominal_values(y0[k]), label=k)
-        ax1.plot(times, unp.nominal_values(y1[k]), label=k)
-    ax1.legend()
-    ax0.legend()
-    #
-    plt.show()
+    print(Nuclide.NUCLIDE_NAME_MATCH.match("U238").groups('A'))
+    # n = Nuclide.from_symbol("C13")
+    # print(Nuclide.from_symbol('U235').decay_daughters)
+    # times = np.linspace(0, Nuclide.from_symbol('U235').half_life.n*3, 30)
+    # # f = decay_nuclide('U235')
+    # # print(f(times))
+    # f0 = decay_nuclide('U235', init_quantity=10)
+    # f1 = decay_nuclide('U235', init_quantity=10)
+    # y0 = f0(times)
+    # y1 = f1(times)
+    # fig, (ax0, ax1) = plt.subplots(1, 2)
+    # for k in y0:
+    #     if sum(y0[k]) < 1E-7:
+    #         continue
+    #     ax0.plot(times, unp.nominal_values(y0[k]), label=k)
+    #     ax1.plot(times, unp.nominal_values(y1[k]), label=k)
+    # ax1.legend()
+    # ax0.legend()
+    # #
+    # plt.show()
     # print()
 
     # talys_calculation('C13', 'g')

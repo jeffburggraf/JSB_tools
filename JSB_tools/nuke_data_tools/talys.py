@@ -20,14 +20,16 @@ talys_dir = Path(__file__).parent/'data'/'talys'
 tally_executable = '/Users/burggraf1/Talys/talys'
 
 
-def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
-        fission_yields=False, maxlevelstar=10, maxlevelsres=10, auto_run=True, runnum=0,
+def run(target_nuclide, projectile,  runnum=None, min_erg=0, max_erg=85, erg_step=None,
+        fission_yields=False, maxlevelstar=10, maxlevelsres=10, auto_run=True,
         verbose=True, parallel=False, isomer=1.,
         **kwargs):
     """
     Args:
         target_nuclide:
         projectile: n, p, d, t, h, a, g representing neutron, proton, deuteron, triton, 3He, alpha and gamma, respectively.
+        runnum: Input file is created in within talys/{target}-{projectile}/runnum. If None, increment, starting with 0,
+            without overwriting.
         min_erg: Min energy
         max_erg: Max energy
         erg_step: If None, use default TALYS energy grid.
@@ -35,7 +37,6 @@ def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
         maxlevelstar: The number of excited levels of target (starting from gs=0) considered in non-elastic reactions.
         maxlevelsres: The number of excited levels of residue (starting from gs=0) considered in non-elastic reactions.
         auto_run: If False, won't run Talys, but will still prepare input file.
-        runnum: Input file is created in within talys/{target}-{projectile}/runnum.
         verbose: If True, print run config to stdout
         parallel: Open terminal and run TALYS in a new process. Used to run multiple calculations at once.
         isomer: The min halflife to be considered as an isomer. Consider this value when interested in residue
@@ -96,8 +97,15 @@ def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
         lines.append(f"{k} {v}")
 
     assert projectile in ['p', 'n', 'g']
+    data_path = talys_dir/f"{f_name}"
 
-    data_path = talys_dir/f"{f_name}/{runnum}"
+    if runnum is None:
+        used_runnms = [int(x.name) for x in data_path.iterdir() if re.match('[0-9]+', x.name)]
+        runnum = 0
+        while runnum in used_runnms:
+            runnum += 1
+
+    data_path /= f'{runnum}'
 
     if verbose:
         print(f"Running Talys in {data_path}.\n\tInput keywords:\n\t{out_kwargs}")
@@ -123,14 +131,14 @@ def run(target_nuclide, projectile, min_erg=0, max_erg=85, erg_step=None,
         if not parallel:
             out = system(cmd)
         else:
-            out = None
-            subprocess.Popen(cmd, cwd=data_path, shell=True)
-            time.sleep(1.5)
+            out = subprocess.Popen(cmd, cwd=data_path, shell=True)
+            time.sleep(1)
         try:
+            print(f"Waiting for creation of {data_path.relative_to(data_path.parent.parent.parent)}/output")
             for i in range(12):  # wait up to 12 secs for output file to be created
                 if (data_path/'output').exists():
                     break
-                print(f"Waiting for creation of {data_path.relative_to(data_path.parent.parent.parent)}/output")
+                print("...")
                 time.sleep(1)
 
             with open(data_path / 'output') as f:
