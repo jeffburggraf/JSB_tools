@@ -13,7 +13,6 @@ from matplotlib import pyplot as plt
 from numpy.core._exceptions import UFuncTypeError
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
-
 import JSB_tools
 from JSB_tools import mpl_hist, calc_background, rolling_median, _float, discrete_interpolated_median, shade_plot
 from JSB_tools import convolve_gauss, calc_background, InteractivePlot
@@ -1086,6 +1085,7 @@ class ListSpectra(EfficiencyCalMixin):
     def from_pickle(cls, path: Path, ignore_missing_data=False):
         self = cls.__new__(cls)
 
+        path = Path(path)
         path = Path(path).with_suffix('.pylist')
 
         with open(path, 'rb') as f:
@@ -1184,14 +1184,41 @@ class ListSpectra(EfficiencyCalMixin):
     def __repr__(self):
         return f"ListSpectra: len={len(self.erg_centers)}; n_events:{len(self.times)}"
 
-    def __iadd__(self, other):
-        return self.__add__(other, copy=False)
+    def __iadd__(self, other, recalc_effs=True, truncate_time=False):
+        """
+        See __add__.
+        Args:
+            other:
+            recalc_effs:
+            truncate_time:
 
-    def __add__(self, other: ListSpectra, copy=True, recalc_effs=True):
+        Returns:
+
+        """
+        return self.__add__(other, copy=False, recalc_effs=recalc_effs, truncate_time=truncate_time)
+
+    def __add__(self, other: ListSpectra, copy=True, recalc_effs=True, truncate_time=False):
+        """
+
+        Args:
+            other:
+            copy:
+            recalc_effs:
+            truncate_time: If True, the duration of both spectra are trimmed to the duration of the shortest
+
+        Returns:
+
+        """
         if copy:
             self = self.copy()
 
         other.rebin(self.erg_bins)
+
+        if truncate_time:
+            i = min(len(self.times), len(other.times))
+            for thing in [self, other]:
+                thing.adc_channels = thing.adc_channels[:i]
+                thing.times = thing.times[:i]
 
         self.times, (indices_self, indices_other) = snp.merge(self.times, other.times, indices=True)
 

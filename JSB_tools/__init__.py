@@ -29,24 +29,46 @@ import time
 import sys
 from scipy.stats import norm
 import traceback
-from JSB_tools.nuke_data_tools import Nuclide, FissionYields, decay_nuclide
+from JSB_tools.nuke_data_tools import Nuclide, FissionYields, DecayNuclide
 from uncertainties import UFloat
 from scipy import ndimage
 from matplotlib.widgets import Button
 from matplotlib.figure import Axes
 from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
+from JSB_tools.rebin import rebin
 try:
     import ROOT
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
 
-__all__ = ['decay_nuclide']
+__all__ = ['DecayNuclide']
 
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
+
+
+
+
+def flatten(X):
+    """
+    Flatten iter object to be 1-dimension.
+    Args:
+        X:
+
+    Returns:
+
+    """
+    out = []
+    if hasattr(X, '__iter__'):
+        for x in X:
+            out.extend(flatten(x))
+    else:
+        return [X]
+
+    return out
 
 
 def rand_choice(bins, probs, size=1, interpolation='uniform'):
@@ -190,7 +212,7 @@ class TabPlot:
 
     def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None, *args, **kwargs) -> Axes:
         """
-
+        Raises OverflowError if too many axes have been created.
         Args:
             button_label:
             nrows:
@@ -616,7 +638,7 @@ def multi_peak_fit(bins, y, peak_centers: List[float], baseline_method='ROOT', b
     _slice = slice(int(max([0, _center - fit_window//2])), int(min([len(y)-1, _center+fit_window//2])))
     y = y[_slice]
     x = x[_slice]
-    plt.figure()
+
     density_sale = bin_widths[_slice]  # array to divide by bin widths.
     y /= density_sale  # make density
 
@@ -726,11 +748,25 @@ def rolling_median(window_width, values):
 
 
 def shade_plot(ax, window, color='blue', alpha=0.5, label=None):
+    """
+    Shades a region on the x-axis. Returns the handle for use in fig.legend([handle], ["shade"]) or similar.
+    Args:
+        ax:
+        window: Tuple.List of len(2). i.e. [x1, x2]
+        color: Color of shade.
+        alpha: Transparency.
+        label: Legend label.
+
+    Returns:
+
+    """
+    if ax is plt:
+        ax = plt.gca()
     _ylims = ax.get_ylim()
     y1, y2 = [ax.get_ylim()[0]] * 2, [ax.get_ylim()[1]] * 2
-    out = ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
+    handle = ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
     ax.set_ylim(*_ylims)
-    return out
+    return handle
 
 
 def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothening_order=5, median_window=None):
@@ -777,11 +813,25 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
         return unp.uarray(result, np.abs(rel_errors*result))
 
 
-def mpl_style(usetex=True):
+def mpl_style(usetex=True, fontscale=None):
+    """
+
+    Args:
+        usetex:
+        fontscale: 1.5 for half-width latex document.
+
+    Returns:
+
+    """
     plt.style.use(style_path)
     if not usetex:
         plt.rcParams.update({
             "text.usetex": False,})
+
+    if fontscale is not None:
+        for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
+                  'legend.title_fontsize']:
+            plt.rcParams.update({k: plt.rcParams[k]*fontscale})
 
 
 def norm2d_kernel(length_x, sigma_x, length_y=None, sigma_y=None):
@@ -904,6 +954,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         **mpl_kwargs:
 
     Returns:
+            ax if not return_handle
+            ax, [handle1, handle2] if return_handle
 
     """
     if not len(bin_edges) == len(y) + 1:
@@ -917,12 +969,18 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         plt.figure(**fig_kwargs)
         ax = plt.gca()
 
-    if isinstance(y[0], UFloat):
+    def sep_errs():
+        nonlocal yerr, y
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
+
+    if isinstance(y[0], UFloat):
+        sep_errs()
     else:
         if not isinstance(y, np.ndarray):
             y = np.array(y)
+        if y.dtype == 'O':
+            sep_errs()
 
     if yerr is None and poisson_errors:
         yerr = np.sqrt(np.where(y < 0, 0, y))
@@ -947,7 +1005,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         pass
     else:  # color was from color cycle. Fetch from handle.
         mpl_kwargs['color'] = handle1[0].get_color()
-
+    mpl_kwargs.pop('ls', None)
+    mpl_kwargs.pop('linestyle', None)
     handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, **mpl_kwargs)  # draw error_bars and markers.
 
     if label is not None:
@@ -1000,6 +1059,7 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
         **mpl_kwargs:
 
     Returns:
+        bin_values, *from mpl_hist*
 
     """
     assert hasattr(data, '__iter__'), f'Bad argument for `data`: Not an iterator. "{data}"'
@@ -1601,8 +1661,28 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    for n in Nuclide.from_symbol('Y99').decay_daughters:
-        print(n)
+    x = np.linspace(-np.pi*2, np.pi * 2, 1000)
+    plt.plot(x, np.sin(x))
+    shade_plot(plt, [-1, 1])
+
+    #
+    # f = TabPlot()
+    #
+    # for i in range(1, 20):
+    #     ax = f.new_ax(i)
+    #     y1, y2 = np.sin(x * i), np.sin(x * i) ** 2
+    #     l1 = ax.plot(x, y1, label='label 1')[0]
+    #     l2 = ax.plot(x,  y2, label='label 2')[0]
+    #     f_handle = ax.fill_between(x, y2 - y1, label=f'label 3')
+    #
+    #     ax.legend([(l1, l2)], ['wtf'], title='Independent nucleus ($t_{1/2}$ [s])')
+    #
+    #     ax.set_title(str(i))
+    #
+    #
+    # plt.show()
+    # for n in Nuclide.from_symbol('Y99').decay_daughters:
+    #     print(n)
     #
     # import numpy as np
     # from matplotlib import pyplot as plt

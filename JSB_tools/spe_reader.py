@@ -263,14 +263,18 @@ class EfficiencyCalMixin:
             eff_dir.mkdir(exist_ok=True)
         return eff_dir / path.with_suffix('.eff').name
 
-    def unpickle_eff(self):
+    def unpickle_eff(self, path=None):
         """
         Unpickle from auto-determined path. If no file exists, set attribs to defaults.
         Returns:
 
         """
+
         try:
-            path = self.__eff_path__()
+            if isinstance(path, (str, Path)):
+                path = Path(path)
+            else:
+                path = self.__eff_path__(path)
             with open(path, 'rb') as f:
                 # out = EfficiencyCalMixin.__new__(EfficiencyCalMixin)
                 d = pickle.load(f)
@@ -524,6 +528,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         self.system_start_time = datetime.strptime(self.system_start_time, SPEFile.time_format)
         self.counts.flags.writeable = False
         self._energies = None
+        self._erg_bins = None
         self.unpickle_eff()
         # if erg_cal_path is not None:
         #     self.load_erg_cal(erg_cal_path)
