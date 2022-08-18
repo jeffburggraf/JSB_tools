@@ -25,18 +25,24 @@ from atexit import register
 from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
+from matplotlib.cm import ScalarMappable
 import time
 import sys
 from scipy.stats import norm
+from matplotlib import cm
 import traceback
 from JSB_tools.nuke_data_tools import Nuclide, FissionYields, DecayNuclide
 from uncertainties import UFloat
 from scipy import ndimage
 from matplotlib.widgets import Button
-from matplotlib.figure import Axes
 from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
 from JSB_tools.rebin import rebin
+from matplotlib.axes import Axes
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.colors import Colormap
+from importlib.util import LazyLoader
+from numbers import Number
 try:
     import ROOT
     root_exists = True
@@ -50,6 +56,66 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 
+def mpl_2dhist_from_data(x_bin_edges, y_bin_edges, x_points, y_points, weights=None, ax: Axes3D = None, cmap: Colormap = None):
+    """
+
+    Args:
+        x_bin_edges:
+        y_bin_edges:
+        x_points: X values
+        y_points: Y values
+        weights:
+        ax:
+        cmap: A Colormap instance.
+
+    Returns:
+
+    """
+    if isinstance(x_bin_edges, int):
+        x_bin_edges = np.linspace(min(x_points), max(x_points), x_bin_edges)
+    if isinstance(y_bin_edges, int):
+        y_bin_edges = np.linspace(min(y_points), max(y_points), y_bin_edges)
+
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+    else:
+        fig = plt.gcf()
+
+    H, xedges, yedges = np.histogram2d(x_points, y_points, bins=(x_bin_edges, y_bin_edges), weights=weights)
+    H = H.T
+
+    xcenters = 0.5 * (xedges[1:] + xedges[:-1])
+    ycenters = 0.5 * (yedges[1:] + yedges[:-1])
+    xbwidths = xedges[1:] - xedges[:-1]
+    ybwidths = yedges[1:] - yedges[:-1]
+
+    X, Y = np.meshgrid(xcenters, ycenters)
+    XW, YW = np.meshgrid(xbwidths, ybwidths)
+
+    x_data = X.flatten()
+    y_data = Y.flatten()
+    z_data = H.flatten()
+    xw = XW.flatten()
+    yw = YW.flatten()
+
+    if cmap is None:
+        cmap = cm.get_cmap('jet')
+
+    max_height = np.max(z_data)
+    min_height = np.min(z_data)
+
+    rgba = [cmap((k - min_height) / (max_height - min_height)) for k in z_data]
+    sm = ScalarMappable(cmap=cmap, norm=plt.Normalize(min(z_data), max(z_data)))
+
+    _ = ax.bar3d(x_data,
+             y_data,
+             np.zeros(len(z_data)),
+             xw, yw, z_data, color=rgba)
+
+    cbar = plt.colorbar(sm)
+
+    return ax, x_data, y_data, z_data
 
 
 def flatten(X):
@@ -813,25 +879,56 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
         return unp.uarray(result, np.abs(rel_errors*result))
 
 
-def mpl_style(usetex=True, fontscale=None):
-    """
+class MPLStyle:
+    fig_size = (15, 10)
 
-    Args:
-        usetex:
-        fontscale: 1.5 for half-width latex document.
+    @staticmethod
+    def seaborn():
+        import seaborn as sns
+        # plt.rcParams
 
-    Returns:
+        # kwargs = {}
+        # for k, v in plt.rcParams.items():
+        #     print(k)
+        #
+        # for k, v in plt.rcParams.items():
+        #     if k[0] == '_':
+        #         continue
+        #
+        #     for name in ['backend', 'agg']:
+        #         if name in k:
+        #             break
+        #     else:
+        #         kwargs[k] = v
+        #
+        #     try:
+        #         sns.set(k=v)
+        #     except TypeError:
+        #         pass
 
-    """
-    plt.style.use(style_path)
-    if not usetex:
-        plt.rcParams.update({
-            "text.usetex": False,})
+    @staticmethod
+    def __call__(self, usetex=True, fontscale=None):
+        """
 
-    if fontscale is not None:
-        for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
-                  'legend.title_fontsize']:
-            plt.rcParams.update({k: plt.rcParams[k]*fontscale})
+            Args:
+                usetex:
+                fontscale: 1.5 for half-width latex document.
+
+            Returns:
+
+            """
+        plt.style.use(style_path)
+        if not usetex:
+            plt.rcParams.update({
+                "text.usetex": False, })
+
+        if fontscale is not None:
+            for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
+                      'legend.title_fontsize']:
+                plt.rcParams.update({k: plt.rcParams[k] * fontscale})
+
+
+mpl_style = MPLStyle
 
 
 def norm2d_kernel(length_x, sigma_x, length_y=None, sigma_y=None):
@@ -886,6 +983,22 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
 
 
 def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
+    """
+    Returns dict of stats. Inspired by ROOT's TH1F default behavior.
+    Args:
+        bins: Bin left edges
+        y: Bin values
+        errors: Bin errors
+        percentiles: Percentiles to include in return value.
+
+    Returns: dict
+        {'count': count,
+        'mean': mean,
+        'std': std,
+        'percentiles': [(percentile_1, x_value1), (percentile_2, x_value2), ...]
+        }
+
+    """
     b_centers = 0.5*(bins[1:] + bins[:-1])
     x = b_centers
     if errors:
@@ -933,8 +1046,11 @@ def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
             'percentiles': list(zip(percentiles, percentiles_xs))}
 
 
+__default_stats_kwargs = {'loc': (0.7, 0.8)}
+
+
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_handle=False, stats_box=False, stats_kwargs=None, **mpl_kwargs):
+             return_handle=False, stats_box=False, stats_kwargs=None,  **mpl_kwargs):
     """
 
     Args:
@@ -950,7 +1066,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
             To make legend with marker and all, do e.g. fig.legend(handles, labels), where each element in handles is
             that which is returned due to this argument being True.
         stats_box: If true write stats box akin to ROOT histograms.
-        stats_kwargs:
+        stats_kwargs: Default is {'loc': (0.7, 0.8)}
         **mpl_kwargs:
 
     Returns:
@@ -968,8 +1084,10 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     if ax is None:
         plt.figure(**fig_kwargs)
         ax = plt.gca()
+    else:
+        assert isinstance(ax, Axes), f"`ax` argument must be an mpl.Axes instance, not {type(ax)}"
 
-    def sep_errs():
+    def sep_errs():  # place errors in separate array (i.e. no UFloats)
         nonlocal yerr, y
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
@@ -1013,6 +1131,12 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         ax.legend()
 
     if stats_box:
+        if stats_kwargs is None:
+            stats_kwargs = __default_stats_kwargs
+        else:
+            stats_kwargs = {k: (stats_kwargs[k] if k in stats_kwargs else __default_stats_kwargs[k])
+                            for k in __default_stats_kwargs}
+
         stats = get_stats(bin_edges, y)
         s = ""
         for k, label in zip(['count', 'mean', 'std'], ['count', r'$\mu$       ', r'$\sigma$       ']):
@@ -1020,14 +1144,13 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
             v = f"${stats[k]:.L}$" if isinstance(stats[k], UFloat) else f"{stats[k]:.2g}"
 
             s += f'{label}  {v}\n'
-        s += '\n'
 
         for p, x in stats['percentiles']:
             s += f'{int(100*p)}       {x}\n'
 
         props = dict(boxstyle='round', facecolor='tab:grey', alpha=0.75)
 
-        ax.text(0.7, 0.8, s, transform=ax.transAxes, bbox=props)
+        ax.text(*stats_kwargs['loc'], s, transform=ax.transAxes, bbox=props, color=handle1[0].get_color())
 
     out = [ax]
 
@@ -1249,12 +1372,16 @@ def ROOT_loop():
 class FileManager:
     root_files: Dict[Path, ROOT.TFile] = {}
     # todo: make gui for deleting files
-    #  todo: male read only option
 
     def __init__(self, path_to_root_dir: Union[str, Path] = None, recreate=False):
         """
         Creates a human friendly link between file and a dictionary of descriptive attributes that make it easy to
             access files created in a previous script.
+
+        Note to self:
+            When using this for complex workflow of lots of inter-related files, have all associations created in a
+            single file! You will thank yourself later when de-bugging or modifying things because FileManager creation
+            and management is all in one place as opposed to spread over several files.
 
         Args:
             path_to_root_dir: Path to the top directory. None for cwd.
@@ -1313,7 +1440,7 @@ class FileManager:
             print(f'Creating directory for FileContainer:\n{self.root_directory}')
             self.root_directory.mkdir()
 
-        self._file_lookup_data: Dict[Path, dict] = {}
+        self.file_lookup_data: Dict[Path, dict] = {}
 
         # path to file that stores association information
         self._save_path = self.root_directory / "__file_lookup__.pickle"
@@ -1321,20 +1448,31 @@ class FileManager:
         if not recreate:
             try:
                 with open(self._save_path, 'rb') as f:
-                    self._file_lookup_data: Dict[Path, Dict] = pickle.load(f)
+                    self.file_lookup_data: Dict[Path, Dict] = pickle.load(f)
             except (EOFError, FileNotFoundError) as e:
                 recreate = True
 
         if recreate:
-            self._file_lookup_data: Dict[Path, Dict] = {}
+            self.file_lookup_data: Dict[Path, Dict] = {}
             self._save_path.unlink(missing_ok=True)
 
         register(self.__at_exit__)
 
+    def remove_path(self, path):
+        del self.file_lookup_data[path]
+
     def __save_lookup_data__(self):
 
         with open(self._save_path, 'wb') as f:
-            pickle.dump(self._file_lookup_data, f)
+            pickle.dump(self.file_lookup_data, f)
+
+        with open(self._save_path.parent/'__file_lookup__.txt', 'w') as f:
+            for p, d in self.file_lookup_data.items():
+                try:
+                    _p = p.relative_to(self.root_directory)
+                except ValueError:
+                    _p = p
+                f.write(f"{_p}: {d}\n")
 
     @staticmethod
     def auto_gen_path(attribs: Dict, root_path, extension='') -> Path:
@@ -1379,6 +1517,7 @@ class FileManager:
             rel_path_or_abs_path:  Either a path relative to the self.root_directory, or an absolute path rel. to
                 sys root
             missing_ok:  Raise error if missing?
+            overwrite_ok: If True, can overwrite existing entries with either the same lookup_attributes or the same path.
             **lookup_attributes: kwargs used for easy lookup later.
         :return: Returns path to file
 
@@ -1402,35 +1541,20 @@ class FileManager:
         if not missing_ok:
             assert abs_path.exists(), f'The path, "{abs_path}", does not exist. Use missing_ok=True to bypass this error'
 
-        for path, attribs in self._file_lookup_data.items():
+        remove_path = []
+        for path, attribs in self.file_lookup_data.items():
             if lookup_attributes == attribs:
-                if not (path.relative_to(self._save_path.parent) == rel_path_or_abs_path \
-                        or path == rel_path_or_abs_path):
-                    print()
-                assert path.relative_to(self._save_path.parent) == rel_path_or_abs_path \
-                       or path == rel_path_or_abs_path, \
-                    f'FileManger requires a unique set of attributes for each file added.\n'\
-                    f'"{lookup_attributes}" has already been used.'
-                # return
-                #         f'"{lookup_attributes}" has already been used.'
-        # assert not abs_path.is_dir(), f'The path, "{abs_path}", is a directory.'
-        #
-        # if abs_path in self.__file_lookup_data:
-        #     if lookup_attributes in self.__file_lookup_data.values():  # path and attrib identical. May overwrite
-        #         # if overwrite_ok:  # overwrite
-        #         #     warnings.warn(f"Overwriting FileManager reference to {abs_path}")
-        #         if not overwrite_ok:
-        #             assert False, f"Cannot overwrite reference {abs_path}. Set parameter `overwrite_ok` to True"
-        #     else:
-        #         warnings.warn(f"Path {abs_path} used twice. Overwriting!")
-        #
-        # else:
-        #     # if paths aren't identical, no identical attribs are allowed.
-        #     assert lookup_attributes not in self.__file_lookup_data.values(), \
-        #         f'FileManger requires a unique set of attributes for each file added.\n' \
-        #         f'"{lookup_attributes}" has already been used.'
+                if not overwrite_ok:
+                    assert path == abs_path, \
+                        f'FileManger requires a unique set of attributes for each file added.\n'\
+                        f'"{lookup_attributes}" has already been used.\nPass arg overwrite=True to disable this error. '
+                else:
+                    remove_path.append(path)
 
-        self._file_lookup_data[abs_path] = lookup_attributes
+        for path in remove_path:
+            del self.file_lookup_data[path]
+
+        self.file_lookup_data[abs_path] = lookup_attributes
         self.__save_lookup_data__()
         return rel_path_or_abs_path
 
@@ -1445,15 +1569,15 @@ class FileManager:
 
         """
         assert isinstance(missing_ok, int), f'Invalid `missing_ok` arg:\n\t"{missing_ok}"'
-        for path, attribs in self._file_lookup_data.items():
+        for path, attribs in self.file_lookup_data.items():
             if lookup_attributes == attribs:
                 return path
-        available_files_string = '\n'.join(map(str, self._file_lookup_data.values()))
+        available_files_string = '\n'.join(map(str, self.file_lookup_data.values()))
         if not missing_ok:
             raise FileNotFoundError(f"No file with the following matching keys/values:\n {lookup_attributes}\n"
                                     f"Currently linked files are:\n{available_files_string}")
 
-    def find_paths(self, rtol=0.01, **lookup_attributes) -> Dict[Path, dict]:
+    def find_paths(self, rtol=0.01, reject_attribs: List = None, **lookup_attributes) -> Dict[Path, dict]:
         """
         Find of all file paths for which the set of `lookup_attributes` is a subset of the files attributes.
         Return a dictionary who's keys are file paths, and values are the corresponding
@@ -1461,6 +1585,7 @@ class FileManager:
         Args:
             rtol: If a config is found where a given attrib (a float) is close to within rtol, then consider values
                 equal.
+            reject_attribs: Any files that have one of these attribs are not included in search
             **lookup_attributes: key/values
 
         Examples:
@@ -1480,7 +1605,7 @@ class FileManager:
         matches = {}
 
         if len(lookup_kwargs) == 0:
-            return self._file_lookup_data
+            return self.file_lookup_data
 
         def test_match(d_search, d_exists):
             for k in d_search.keys():
@@ -1488,9 +1613,13 @@ class FileManager:
                     return False
                 exists_value = d_exists[k]
                 search_value = d_search[k]
-                if isinstance(exists_value, (float, int)):
-                    if not np.isclose(exists_value, search_value, rtol=rtol):
+                if isinstance(exists_value, Number):
+                    if isinstance(search_value, Number):
+                        if not np.isclose(exists_value, search_value, rtol=rtol):
+                            return False
+                    else:
                         return False
+
                 elif isinstance(exists_value, dict) and isinstance(search_value, dict):
                     if not test_match(exists_value, search_value):
                         return False
@@ -1499,9 +1628,22 @@ class FileManager:
                         return False
             return True
 
-        for path, attribs in self._file_lookup_data.items():
+        for path, attribs in self.file_lookup_data.items():
+
+            _continue_flag = False
+            if reject_attribs is not None:
+
+                for r in reject_attribs:
+                    if r in attribs:
+                        _continue_flag = True
+                        break
+
+            if _continue_flag:
+                continue
+
             if test_match(lookup_kwargs, attribs):
                 matches[path] = {k: v for k, v in attribs.items()}
+
         if len(matches) == 0:
             warnings.warn(f"No files found containing the following attribs: {lookup_attributes}")
         return matches
@@ -1556,7 +1698,7 @@ class FileManager:
             i = 0
             while file_name := (self.root_directory / f"file_{i}.pickle"):
                 i += 1
-                if file_name not in self._file_lookup_data:
+                if file_name not in self.file_lookup_data:
                     break
         file_name = self.root_directory / file_name
 
@@ -1566,7 +1708,7 @@ class FileManager:
 
     @property
     def all_files(self) -> Dict[Path, Dict[str, str]]:
-        return {k: v for k, v in self._file_lookup_data.items()}
+        return {k: v for k, v in self.file_lookup_data.items()}
 
     def unpickle_data(self, **lookup_kwargs):
         """
@@ -1592,14 +1734,14 @@ class FileManager:
     @property
     def available_files(self):
         outs = []
-        for path, keys_values in self._file_lookup_data.items():
+        for path, keys_values in self.file_lookup_data.items():
 
             outs.append(f'{keys_values}   {path}  [{"exists" if path.exists() else "missing"}]')
         return '\n'.join(outs)
 
     def __repr__(self):
         outs = ['-'*80]
-        for path, keys_values in self._file_lookup_data.items():
+        for path, keys_values in self.file_lookup_data.items():
             outs.append(f"{keys_values}\n\t{path}\n")
         outs[-1] = outs[-1][:-1]
         outs.append(outs[0] + '\n')
@@ -1609,18 +1751,18 @@ class FileManager:
         # return "FileManager\nAvailable files:\nAttribs\tPaths\n{}".format(self.available_files)
 
     def clean(self):
-        for path in self._file_lookup_data.keys():
+        for path in self.file_lookup_data.keys():
             path = Path(path)
             path.unlink(missing_ok=True)
         self._save_path.unlink(missing_ok=True)
 
     def __iadd__(self, other: FileManager):
         for path, attribs in other.all_files.items():
-            if path in self._file_lookup_data:
-                assert attribs == self._file_lookup_data[path], f"Encountered two files with identical paths and " \
+            if path in self.file_lookup_data:
+                assert attribs == self.file_lookup_data[path], f"Encountered two files with identical paths and " \
                                                                  "different attribs during merge. This is not allowed.\n" \
                                                                  f"{attribs}"
-            self._file_lookup_data[path] = attribs
+            self.file_lookup_data[path] = attribs
         return self
 
 
@@ -1661,10 +1803,7 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    x = np.linspace(-np.pi*2, np.pi * 2, 1000)
-    plt.plot(x, np.sin(x))
-    shade_plot(plt, [-1, 1])
-
+   pass
     #
     # f = TabPlot()
     #

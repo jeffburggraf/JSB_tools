@@ -316,7 +316,7 @@ def find_SRIM_run(target_atoms, fractions, density, projectile: Union[str, None]
 
 
 class _SRIMTable:
-    #  TODO: MNake a common de/dx structure that is used by MCNPStoppingPower and SRIM...
+    #  TODO: Make a common de/dx structure that is used by MCNPStoppingPower and SRIM...
     #   Also somehow merge this or something into _SRIMConfig
     def __init__(self,  target_atoms, fractions, density, projectile, gas, file_name=None):
         self.target_atoms = target_atoms

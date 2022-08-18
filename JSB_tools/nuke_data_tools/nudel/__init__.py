@@ -33,24 +33,24 @@ from JSB_tools.nuke_data_tools.nudel.core import LevelRecord as _LevelRecord
 from JSB_tools.nuke_data_tools.nudel.core import GammaRecord as _GammaRecord
 from JSB_tools.nuke_data_tools.nudel.core import DecayRecord as _DecayRecord
 from JSB_tools.nuke_data_tools.nudel.core import Quantity as _Quantity
-from JSB_tools.nuke_data_tools.nudel.core import Nuclide as NudelNuclide
+from JSB_tools.nuke_data_tools.nudel.core import Nuclide as _NudelNuclide
 # from .core import (get_active_ensdf, LevelRecord, GammaRecord, DecayRecord)
 # from .core import Nuclide as NudelNuclide
-
+from JSB_tools.nuke_data_tools.nudel.util import Dimension
 from typing import List, Dict, Tuple
 
 ensdf = get_active_ensdf()
 
 
 class Level:
-    def __init__(self, nuclide_name, _n_level: _LevelRecord, level_num:int):
+    def __init__(self, nuclide_name, _n_level: _LevelRecord):
         self._n_level: _LevelRecord = _n_level
 
         self.nuclide_name = nuclide_name
         self.decays: List[_DecayRecord] = _n_level.decays
         self.energy = _n_level.energy.cast_to_unit('keV').val
 
-        self.level_num = level_num
+        self.level_index = _n_level.level_index
 
         if not np.isnan(_n_level.half_life.val):
             if re.match("[a-zA-Z]?eV", _n_level.half_life.unit.symb):
@@ -114,9 +114,9 @@ class LevelScheme:
         a = int(m.group('A'))
         z = ATOMIC_NUMBER[m.group('s')]
         self.nuclide_name = nuclide_name
-        self.nudel_nuclide = NudelNuclide(a, z)
+        self.nudel_nuclide = _NudelNuclide(a, z)
 
-        self.levels: List[Level] = [Level(nuclide_name, l, index) for index, l in enumerate(self.nudel_nuclide.adopted_levels.levels)]
+        self.levels: List[Level] = [Level(nuclide_name, l) for l in self.nudel_nuclide.adopted_levels.levels]
 
     def find_level(self, erg) -> Tuple[int, Level]:
         assert isinstance(erg, (float, int)), type(erg)
@@ -133,9 +133,50 @@ class LevelScheme:
         return i, self.levels[i]
 
 
+class Coincidence:
+    def __init__(self, nuclide_name, daughter_name=None):
+        self.nuclide = Nuclide.from_symbol(nuclide_name)
+        if daughter_name is None:
+            br = -1
+            for m in self.nuclide.decay_modes.values():
+                if m[-1].branching_ratio > br:
+                    daughter_name = m[-1].daughter_name
+                    br = m[-1].branching_ratio
+        self.levels = {l.level_index: l for l in LevelScheme(daughter_name).levels}
+        self.daughter_nuclide = Nuclide.from_symbol(daughter_name)
+
+        glines_ergs = [g.erg.n for g in self.nuclide.decay_gamma_lines]
+
+        transitions = {}  # transisions[3][1] is transitions from 3 to 1
+        for level in self.levels.values():
+            entry = {}
+            tot = sum([r.rel_intensity.val for r in level.decays])
+            if tot == 0:
+                continue
+            for r in level.decays:
+                if np.isnan(r.rel_intensity.val):
+                    continue
+                gline = self.nuclide.decay_gamma_lines[np.argmin([abs(r.energy.val - e) for e in glines_ergs])]
+                intensity = gline.intensity*(1 + (0 if np.isnan(r.conversion_coeff.val) else r.conversion_coeff.val))
+                if not np.isclose(gline.erg.n, r.energy.val):
+                    intensity = 0
+
+                entry[r.dest_level.level_index] = {'conditional_prob': r.rel_intensity.val/tot,
+                                                   'tot_intensity': intensity}
+            if len(entry):
+                transitions[level.level_index] = entry
+
+        feeding_probs = np.zeros(len(self.levels))
+
+        for i in range(len(feeding_probs))[::-1]:
+
+
+
+
+            print()
+
+
 
 if __name__ == '__main__':
 
-    s = LevelScheme('U238')
-    for kl in s.levels:
-        print(kl.pretty_half_life('s'))
+    Coincidence("Ni57")

@@ -21,13 +21,13 @@ Base class definitions for geometry primitives defined in primitives.py
 class Surface(GeomSpecMixin, metaclass=ABCMeta):
     all_surfs = MCNPNumberMapping('Surface', 1)
 
-    def __del__(self):
+    def delete(self):
         try:
             del Surface.all_surfs[self.surface_number]
         except KeyError:
             pass
         try:
-            super(Surface, self).__del__()
+            super(Surface, self).delete()
         except AttributeError:
             pass
 
@@ -151,16 +151,15 @@ class Cell(GeomSpecMixin):
     """
     all_cells: Dict[int, Cell] = MCNPNumberMapping('Cell', 10)
 
-    def __del__(self):
+    def delete(self):
         try:
             del Cell.all_cells[self.cell_number]
         except KeyError:
             pass
         try:
-            super(Cell, self).__del__()
+            super(Cell, self).delete()
         except AttributeError:
             pass
-
 
     @classmethod
     def find_cell(cls, cell_name):

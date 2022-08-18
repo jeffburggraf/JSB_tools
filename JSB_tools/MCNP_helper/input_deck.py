@@ -342,6 +342,11 @@ class InputDeck:
                 self.MCNP_EOF = len(self.inp_lines)
         register(self.__del)
 
+    @staticmethod
+    def PHITS2MCNP_plotter(directory, new_file_name, dict_of_globals):
+        i = InputDeck.mcnp_input_deck(Path(__file__).parent/'PHITS2MCNP_geometry.inp', directory)
+        i.write_inp_in_scope(dict_of_globals, new_file_name)
+
     def __split_new_lines__(self):
         title_line = self.__new_inp_lines__[0]  # Don't split the title line. MCNP sucks and won't allow it
         if len(title_line) > 79:
@@ -473,14 +478,15 @@ class InputDeck:
                     except TypeError:
                         pass
 
-    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
+    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd", overwrite_globals=None,
                            **mcnp_or_phits_kwargs) -> Path:
         """
         Creates and fills an input deck according to a dictionary of values. Usually, just use globals()
         Args:
             dict_of_globals:
-            new_file_name: name of generateed input file
+            new_file_name: name of generated input file
             script_name: Name of script to obe created that runs (all) simulation(s) automatically.
+            overwrite_globals: dictionary of variable names and values that will take precedence over globals()
             **mcnp_or_phits_kwargs: Command line args for MCNP or PHITS
 
         Returns: new_file_name
@@ -506,6 +512,10 @@ class InputDeck:
             lines = self.inp_lines[:self.MCNP_EOF]
         else:
             lines = self.inp_lines
+
+        if overwrite_globals is not None:
+            dict_of_globals = {k: (v if k not in overwrite_globals else overwrite_globals[k])
+                               for k, v in dict_of_globals.items()}
 
         for line_num, line in enumerate(lines):
             line_num += 1

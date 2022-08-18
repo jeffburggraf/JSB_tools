@@ -227,9 +227,9 @@ class GeomSpecMixin:
         else:
             self.__cell_number = self.cell_number
 
-    def __del__(self):
+    def delete(self):
         try:
-            super(GeomSpecMixin, self).__del__()
+            super(GeomSpecMixin, self).delete()
         except AttributeError:
             pass
 

@@ -819,6 +819,7 @@ class ListSpectra(EfficiencyCalMixin):
             debug_plot:
 
         Returns:
+            y if not return_bin_edges else (y, bins)
 
         """
 

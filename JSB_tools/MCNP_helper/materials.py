@@ -17,6 +17,7 @@ from typing import List
 from numbers import Number
 from typing import Tuple, List
 from inspect import signature
+from scipy.integrate import cumulative_trapezoid
 # Todo: For windows report, get rid of openmc when it isn't absolutely necessary.
 
 
@@ -131,7 +132,7 @@ def get_most_abundant_isotope(symbol):
 class Material:
     all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
-    def __del__(self):
+    def delete(self):
         try:
             del Material.all_materials[self.mat_number]
         except KeyError:
@@ -201,16 +202,52 @@ class Material:
         self.is_gas = False
         self.is_mcnp = is_mcnp
 
-    def set_srim_dedx(self, particles: List[str] = None, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx', scaling=None):
+        self.dedx_path = None
+
+    @staticmethod
+    def __get_dedx_name(mat, file_number, dedx_path):
         """
+
+        Args:
+            mat:
+            file_number:
+            dedx_path:
+
+        Returns:
+
+        """
+        if file_number is not None:
+            return f"_{mat}_{file_number}.txt"
+
+        mat = str(mat)
+        taken_numbers = []
+        for name in [p.name for p in dedx_path.iterdir() if p.name[0] == '_']:
+            if m := re.match("_([0-9]+)_([0-9]+)\.txt", name):
+                _mat, _num = (m.groups()[0], m.groups()[1])
+                if _mat == mat:
+                    taken_numbers.append(int(_num))
+        i = 0
+        while i in taken_numbers:
+            i += 1
+        return f"_{mat}_{i}.txt"
+
+    def set_srim_dedx(self, particles: List[str] = None, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx',
+                      scaling=None, file_number=None):
+        """
+        Todo: Make seperate set-dedx function.
+
         Sets the DeDx file from an SRIM output. See JSB_tools/SRIM. Only works for PHITS.
-        Todo: Implement  plotting De/dx after it is set by this method.
+        Creates a text file in PHITS DeDx dir named "_MMMM_i.txt", where MMMM is the material number and i is specified
+            by `file_number` or automatically incremented.
+
         Args:
             particles: Which particle(s) to include? None will do all available. Otherwise, raise error if all particles
                 data aren't available
             dedx_path: Path where PHITS looks for user supplied stopping powers
             scaling: A function or a constant. If a constant, scale sopping powers by this value.
                 If function, scale the stopping powers by f(e)
+            file_number: Append this digit to filename. Use None for automatic incrementing.
+
         Returns:
 
         """
@@ -246,14 +283,83 @@ class Material:
             lines.append(f"kf = {Nuclide.from_symbol(proj).phits_kfcode()}")
             for erg, dedx in zip(table.ergs, table.total_dedx):
                 lines.append(f"{erg:.3E} {scaling(erg)*dedx:.4E}")
+
         print(f"DeDx file written for {list(sorted(srim_outputs.keys()))} in material"
               f" {self.name if self.name is not None else self.mat_number}")
 
-        dedxfile = (dedx_path/str(self.mat_number)).with_suffix('.txt')
-        with open(dedxfile, 'w') as f:
+        self.dedx_path = dedx_path/self.__get_dedx_name(self.mat_number, file_number, dedx_path)
+        with open(self.dedx_path, 'w') as f:
             f.write('\n'.join(lines))
 
-        self.mat_kwargs['dedxfile'] = f'{dedxfile.name} $ - dedx from SRIM'
+        self.mat_kwargs['dedxfile'] = f'{self.dedx_path.name} $ - dedx from SRIM'
+
+    def plot_dedx(self):
+        """
+        todo: Make a get_dedx/ger_range methods.
+        Plots the De/Dx of this material.
+
+        Returns: Figure object
+
+        """
+        assert 'dedxfile' in self.mat_kwargs, "Must run `set_srim_dedx` first. "
+        # assert not self.is_mcnp, "Only works with PHITS"
+        with open(self.dedx_path, ) as f:
+            lines = f.readlines()
+
+        nuclides = []
+        datas = []
+        unit = None
+
+        for line in lines:
+            try:
+                x, y, = map(float, line.split())
+                datas[-1][0].append(x)
+                datas[-1][1].append(y)
+            except ValueError:
+                if m := re.match("kf = ([0-9]+)", line):
+                    kf = int(m.groups()[0])
+                    z = kf // 1000000
+                    a = kf % 100000
+                    nuclides.append(Nuclide.from_Z_A_M(z, a))
+                    datas.append(([], []))
+                elif m := re.match("unit = ([0-9]+)", line):
+                    unit = {1: 'MeV', 2: 'MeV/u', 3: 'MeV/n'}[int(m.groups()[0])]
+
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+
+        def get_yscale():
+            d = self.density
+            if unit == 'MeV':
+                return 1*d
+            elif unit == 'MeV/u':
+                return n.atomic_mass*d
+            else:
+                return n.A*d
+
+        ax1.set_ylabel("MeV/cm")
+
+        ax1.set_xlabel(unit)
+        ax2.set_xlabel(unit)
+
+        ax2.set_ylabel("Range [cm]")
+
+        for n, data in zip(nuclides, datas):
+            y1 = np.array(data[1]) * get_yscale()
+            x = data[0]
+            ax1.plot(x, y1, label=n.name)
+
+            y2 = np.array(data[1]) * get_yscale()
+            dx_de = 1.0 / y2
+
+            y2 = cumulative_trapezoid(dx_de, data[0], initial=0)
+            ax2.plot(data[0], y2, label=n.name)
+
+        ax2.legend()
+        ax1.legend()
+
+        plt.ticklabel_format(axis='y', style='sci', scilimits=(0, 2))
+
+        return fig
 
     @classmethod
     def gas(cls, list_of_chemicals: List[str],
@@ -387,7 +493,7 @@ class PHITSOuterVoid:
     void = Cell(material=PHITSOuterVoid(), geometry=+chamber_cell.surface)
 
     """
-    pass
+    mat_number = 0
 
 
 class DepletedUranium(Material):

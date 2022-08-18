@@ -140,7 +140,7 @@ class Dataset:
         return rec
 
     def _add_level(self, record, comments, xref):
-        lvl = LevelRecord(self, record, comments, xref)
+        lvl = LevelRecord(self, record, comments, xref, len(self.levels))
         self.levels.append(lvl)
         return lvl
 
@@ -371,8 +371,10 @@ class NormalizationRecord(Record):
     
 
 class LevelRecord(Record):
-    def __init__(self, dataset, record, comments, xref):
+    def __init__(self, dataset, record, comments, xref, level_index=None):
         super().__init__(dataset, record, comments, xref)
+        self.level_index = level_index
+
         self.prop["E"] = record[0][9:19].strip()
         self.prop["DE"] = record[0][19:21].strip()
         self.prop["E"] += " " + self.prop["DE"].strip()
