@@ -1185,6 +1185,12 @@ class ListSpectra(EfficiencyCalMixin):
     def __repr__(self):
         return f"ListSpectra: len={len(self.erg_centers)}; n_events:{len(self.times)}"
 
+    def __radd__(self, other):
+        if other is None:
+            return self
+        else:
+            return other + self
+
     def __iadd__(self, other, recalc_effs=True, truncate_time=False):
         """
         See __add__.
@@ -1216,8 +1222,10 @@ class ListSpectra(EfficiencyCalMixin):
         other.rebin(self.erg_bins)
 
         if truncate_time:
-            i = min(len(self.times), len(other.times))
-            for thing in [self, other]:
+            time_max = min(self.times[-1], other.times[-1])
+            iself = np.searchsorted(self.times, time_max)
+            iother = np.searchsorted(other.times, time_max)
+            for thing, i in zip([self, other], [iself, iother]):
                 thing.adc_channels = thing.adc_channels[:i]
                 thing.times = thing.times[:i]
 

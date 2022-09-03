@@ -37,11 +37,13 @@ from scipy import ndimage
 from matplotlib.widgets import Button
 from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
-from JSB_tools.rebin import rebin
+from scipy.integrate import quad
+# from JSB_tools.rebin import rebin
 from matplotlib.axes import Axes
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.colors import Colormap
 from importlib.util import LazyLoader
+from scipy.integrate import trapezoid, cumulative_trapezoid
 from numbers import Number
 try:
     import ROOT
@@ -54,6 +56,109 @@ __all__ = ['DecayNuclide']
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
+
+
+def errorbar(x, y, ax=None, **kwargs):
+    if ax is None:
+        _, ax = plt.subplots()
+    yerr = unp.std_devs(y)
+    y = unp.nominal_values(y)
+    ax.errorbar(x, y, yerr, **kwargs)
+    return ax
+
+
+def rebin(oldbins, oldy, newbins, force_equal_norm=False, kind='linear'):
+    """
+    Rebin a histogram.
+    Do not use for density histograms, use interpolation instead.
+
+    Args:
+        oldbins:
+        oldy:
+        newbins:
+        force_equal_norm: If True, force integrals to be the same.
+        kind:
+
+    Returns: new histogram bin values.
+
+    Example:
+        np.random.seed(0)
+        xmax = 120
+        x1 = np.arange(0, xmax, 1, dtype=float)
+        x1 += np.linspace(0, 0.75, len(x1))
+
+        x2 = np.linspace(0, xmax, 100)
+
+        y1 = np.zeros(len(x1) - 1)
+
+        points = np.concatenate(
+            [8*np.random.randn(10000) + 55,
+             4*np.random.randn(4000) + 20,
+             np.random.randn(4500) + 80,
+             0.3*np.random.randn(4500) + 5,
+             ])
+
+        for i in np.searchsorted(x1, points, side='right') - 1:
+            if i < 0:
+                continue
+            y1[i] += 1
+
+        ax = mpl_hist(x1, y1, label='Original bins')
+        s, y2 = rebin(x1, y1, x2)
+
+        mpl_hist(x2, y2, ax=ax, label='Rebinned')
+
+        _x = np.linspace(0, xmax-3, 1000)
+
+        ax.plot(_x, s.evaluate(_x), label='Interp')
+
+        ax.legend()
+
+        plt.show()
+
+
+
+    """
+    # xmids = 0.5*(oldbins[:-1] + oldbins[1:])
+    # if kind != 'linear':
+    #     x = np.hstack((oldbins[0], xmids, oldbins[-1]))
+    #     y = np.hstack((oldy[0], oldy, oldy[-1]))
+    # else:
+    #     x = xmids
+    #     y = oldy
+
+    # todo: find a way to do higher order without occilations.
+    # cumy = cumulative_trapezoid(y, x, initial=0)
+    if isinstance(oldy[0], UFloat):
+        yerr = unp.std_devs(oldy)
+        oldy = unp.nominal_values(oldy)
+    else:
+        yerr = None
+        oldy = np.array(oldy)
+
+    oldbins = np.array(oldbins)
+    newbins = np.array(newbins)
+
+    cumy = np.cumsum(oldy)
+    interp = interp1d(oldbins[1:], cumy, kind=kind, bounds_error=False, assume_sorted=True, fill_value=(0, cumy[-1]))
+
+    newy = np.array([float(interp(newbins[i + 1])) - float(interp(newbins[i])) for i in range(len(newbins) - 1)])
+
+    if yerr is not None:
+        old_bwidths = oldbins[1:] - oldbins[:-1]
+        new_bwidths = newbins[1:] - newbins[:-1]
+        err_density = yerr**2/old_bwidths
+        oldxmids = 0.5*(oldbins[:-1] + oldbins[1:])
+        newxmids = 0.5*(newbins[:-1] + newbins[1:])
+
+        err_interp = interp1d(oldxmids, err_density, bounds_error=False, assume_sorted=True, fill_value=(0, 0))
+        newyerr = np.sqrt(new_bwidths*err_interp(newxmids))
+        newy = unp.uarray(newy, newyerr)
+
+    if force_equal_norm:
+        newy *= sum(oldy)/sum(newy)
+
+    return newy
 
 
 def mpl_2dhist_from_data(x_bin_edges, y_bin_edges, x_points, y_points, weights=None, ax: Axes3D = None, cmap: Colormap = None):
@@ -906,8 +1011,8 @@ class MPLStyle:
         #     except TypeError:
         #         pass
 
-    @staticmethod
-    def __call__(self, usetex=True, fontscale=None):
+    # @staticmethod
+    def __init__(self, usetex=True, fontscale=None):
         """
 
             Args:
@@ -921,6 +1026,8 @@ class MPLStyle:
         if not usetex:
             plt.rcParams.update({
                 "text.usetex": False, })
+            plt.rcParams.rcParams.update({'text.latex.preamble': r'\boldmath'})
+            plt.rcParams['text.latex.preamble'] = [r'\boldmath']
 
         if fontscale is not None:
             for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
@@ -1027,7 +1134,10 @@ def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
         x0 = x[i]
 
         y0 = cumsum[i]
-        y1 = cumsum[i + 1]
+        try:
+            y1 = cumsum[i + 1]
+        except:
+            print()
 
         x1 = x[i + 1]
         di = (frac - y0)/(y1 - y0)
@@ -1062,16 +1172,18 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         fig_kwargs: kwargs for mpl.figure
         title:
         poisson_errors: If True and yerr is not provided, assume Poissonian errors.
+
         return_handle: Return the handle for custom legend creation. Form is tuple([handle1, handle2]).
             To make legend with marker and all, do e.g. fig.legend(handles, labels), where each element in handles is
             that which is returned due to this argument being True.
+
         stats_box: If true write stats box akin to ROOT histograms.
         stats_kwargs: Default is {'loc': (0.7, 0.8)}
         **mpl_kwargs:
 
     Returns:
-            ax if not return_handle
-            ax, [handle1, handle2] if return_handle
+            ax                        if not return_handle
+            ax, [handle1, handle2]    if return_handle
 
     """
     if not len(bin_edges) == len(y) + 1:
@@ -1164,7 +1276,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
 
 def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
-                       return_line_color=False, log_space=False, stats_box=False, **mpl_kwargs):
+                       return_line_color=False, log_space=False, stats_box=False, norm=None, **mpl_kwargs):
     """
     Plots a histogram from raw data.
 
@@ -1179,6 +1291,7 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
         return_line_color:
         log_space: If True, bin_edges must be an int and bins will be constant width in log space
         stats_box:
+        norm: Scale data such that integral equals norm
         **mpl_kwargs:
 
     Returns:
@@ -1212,6 +1325,13 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
 
     y, _ = np.histogram(data, bins=bin_edges, weights=weights)
     yerr = np.sqrt(y)
+
+    if norm is not None:
+        integral = trapezoid(y, x=0.5*(bin_edges[1:] + bin_edges[:-1]))
+        scale = norm/integral
+        y = y * scale
+        yerr = yerr * scale
+
     return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
                        stats_box=stats_box,  **mpl_kwargs)
 
@@ -1803,7 +1923,15 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-   pass
+    y = unp.uarray([4, 4], [2,2])
+    bins = [0, 2, 4]
+    newy = rebin(bins, y, [0, 4])
+
+    ax = mpl_hist(bins, y)
+    mpl_hist([0, 4], newy, ax=ax)
+    plt.show()
+
+   # pass
     #
     # f = TabPlot()
     #

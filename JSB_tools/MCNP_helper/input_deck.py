@@ -13,7 +13,7 @@ try:
 except (ModuleNotFoundError, AssertionError):
     pass
 import pickle
-from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping
+from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping, PHITSOuterVoid
 import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
 
@@ -344,6 +344,7 @@ class InputDeck:
 
     @staticmethod
     def PHITS2MCNP_plotter(directory, new_file_name, dict_of_globals):
+        dict_of_globals['PHITSOuterVoid'] = PHITSOuterVoid
         i = InputDeck.mcnp_input_deck(Path(__file__).parent/'PHITS2MCNP_geometry.inp', directory)
         i.write_inp_in_scope(dict_of_globals, new_file_name)
 
