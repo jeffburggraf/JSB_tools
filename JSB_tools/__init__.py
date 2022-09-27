@@ -1026,8 +1026,10 @@ class MPLStyle:
         if not usetex:
             plt.rcParams.update({
                 "text.usetex": False, })
-            plt.rcParams.rcParams.update({'text.latex.preamble': r'\boldmath'})
-            plt.rcParams['text.latex.preamble'] = [r'\boldmath']
+        else:
+            # plt.rcParams.update({'text.latex.preamble': r'\boldmath'})
+            # plt.rcParams['text.latex.preamble'] = [r'\boldmath']
+            plt.rcParams['text.latex.preamble'] = [r'\usepackage{sfmath} \boldmath']
 
         if fontscale is not None:
             for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
@@ -1160,7 +1162,7 @@ __default_stats_kwargs = {'loc': (0.7, 0.8)}
 
 
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_handle=False, stats_box=False, stats_kwargs=None,  **mpl_kwargs):
+             return_handle=False, stats_box=False, stats_kwargs=None, elinewidth=1.1, **mpl_kwargs):
     """
 
     Args:
@@ -1179,6 +1181,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
         stats_box: If true write stats box akin to ROOT histograms.
         stats_kwargs: Default is {'loc': (0.7, 0.8)}
+        elinewidth:
         **mpl_kwargs:
 
     Returns:
@@ -1225,7 +1228,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     capsize = mpl_kwargs.pop('capsize', None)
 
-    handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post', **mpl_kwargs)
+    handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post',
+                          elinewidth=elinewidth, **mpl_kwargs)
 
     handle1[0].set_marker(None)
 

@@ -1612,7 +1612,7 @@ class Nuclide:
         -----
         """
     NUCLIDE_NAME_MATCH = re.compile(
-        "(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_[me](?P<iso>[0-9]+))?")  # Nuclide name in GND naming convention
+        "(?P<s>[A-Za-z]{1,2})(?P<A>[0-9]{1,3})(?:_[me](?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
 
     def __init__(self, name, **kwargs):
         assert isinstance(name, str)
@@ -2807,7 +2807,7 @@ class ActivationReactionContainer:
                     existing_instance = CustomUnpickler(f).load()
             except FileNotFoundError:  # no existing pickle file. Raise error
                 raise FileNotFoundError(f'No {projectile} activation data for {nuclide_name} and data source '
-                                        f'"{data_source}"')
+                                        f'"{data_source}"') from None
 
             all_instances[nuclide_name] = existing_instance
 

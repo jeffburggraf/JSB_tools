@@ -13,6 +13,7 @@ cwd = Path(__file__).parent
 
 
 class Branch:
+    __padding = None  # Set in Branch.text_heading
     all_branches: List[Branch] = []
 
     @staticmethod
@@ -143,27 +144,27 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
     # mat is just an integer starting from 1, ie not the material number
 
     #  Below  is a dict mapping variable IDs to branch containers. Uninteresting variables,  e.g. _next_event, are
-    #   are stings  and thus are not stored in TTree.
+    #   are stings  and thus are not stored in the TTree.
     var_id_to_branches = {1: Branch('nps', tree),
-                       2: '_next_event',
-                       4: Branch('next_sur', tree),
-                       7: "_next_event",
-                       10: Branch('zaid', tree),
-                       11: Branch('ntyn', tree),
-                       12: Branch('surf', tree),
-                       13: Branch('surf_theta', tree),
-                       14: Branch('term', tree),
-                       16: Branch('par', tree),
-                       17: Branch('cell', tree),
-                       20: Branch('x', tree),
-                       21: Branch('y', tree),
-                       22: Branch('z', tree),
-                       23: Branch('dirx', tree),
-                       24: Branch('diry', tree),
-                       25: Branch('dirz', tree),
-                       26: Branch('erg', tree),
-                       27: Branch('wgt', tree),
-                       28: Branch('time', tree)}
+                          2: '_next_event',
+                          4: Branch('next_sur', tree),
+                          7: "_next_event",
+                          10: Branch('zaid', tree),
+                          11: Branch('ntyn', tree),
+                          12: Branch('surf', tree),
+                          13: Branch('surf_theta', tree),
+                          14: Branch('term', tree),
+                          16: Branch('par', tree),
+                          17: Branch('cell', tree),
+                          20: Branch('x', tree),
+                          21: Branch('y', tree),
+                          22: Branch('z', tree),
+                          23: Branch('dirx', tree),
+                          24: Branch('diry', tree),
+                          25: Branch('dirz', tree),
+                          26: Branch('erg', tree),
+                          27: Branch('wgt', tree),
+                          28: Branch('time', tree)}
 
     def dict_get(ids) -> List[int, Union[Branch, str, None]]:
 
