@@ -748,8 +748,17 @@ def human_friendly_time(time_in_seconds, unit_precision=2):
     return out
 
 
-def get_bin_index(bins, vals):
-    return np.searchsorted(bins, vals, side='right') - 1
+def get_bin_index(bins, x_values):
+    """
+    Get bin index from an x value(s)
+    Args:
+        bins:
+        x_values:
+
+    Returns:
+
+    """
+    return np.searchsorted(bins, x_values, side='right') - 1
 
 
 def multi_peak_fit(bins, y, peak_centers: List[float], baseline_method='ROOT', baseline_kwargs=None,
@@ -1091,6 +1100,70 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
     return np.convolve(a, kernel, mode=mode)
 
 
+def convolve_unbinned(x, y, sigma):
+    out = np.zeros_like(y)
+
+    def kernal(index):
+        weights = norm(loc=x[index], scale=sigma).pdf(x)
+        return y[index] * weights
+
+    for i in range(len(out)):
+
+        out += kernal(i)
+    return out
+
+
+def hist_gaus_convolve(bins, bin_values, sigma, is_density=False, check_norm=False):
+    """
+    Performs a gaussian convolution over hist (non-uniform bins allowed!).
+    If bin_values refer to a density, then they are converted to counts and then back to density before returning.
+
+    Args:
+        bins: Histogram bins
+        bin_values: Histogram bin values (len(bin_values) == len(bins) - 1)
+        sigma: std in units the same as bins.
+        is_density: Set to True if the histogram is a density (e.g. counts/MeV)
+        check_norm: Verify that integral is unchanged, if not force equality (and suffer a performance penalty)
+
+    Returns:
+
+    """
+    lefts = np.array(bins[:-1])
+    rights = np.array(bins[1:])
+    out = np.zeros_like(bin_values)
+
+    if is_density:
+        bwidths = bins[1:] - bins[:-1]
+        bin_values = bin_values*bwidths  # convert to abs. bin values
+
+    def kernal(index):
+        xcenter = 0.5*(lefts[index] + rights[index])
+        f = norm(loc=xcenter, scale=sigma).cdf
+        gaus_areas = f(rights) - f(lefts)
+        return bin_values[index] * gaus_areas
+
+    for i in range(len(out)):
+
+        out += kernal(i)
+
+    if is_density:
+        out /= bwidths  # convert back to density.
+
+    if check_norm:
+        if is_density:
+            s = bwidths
+        else:
+            s = 1
+
+        tot0 = sum(s * y)
+        tot1 = sum(s * out)
+
+        if not np.isclose(tot0, tot1):
+            out *= tot0/tot1
+
+    return out
+
+
 def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
     """
     Returns dict of stats. Inspired by ROOT's TH1F default behavior.
@@ -1198,6 +1271,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     if ax is None:
         plt.figure(**fig_kwargs)
+        ax = plt.gca()
+    elif ax is plt:
         ax = plt.gca()
     else:
         assert isinstance(ax, Axes), f"`ax` argument must be an mpl.Axes instance, not {type(ax)}"
@@ -1902,7 +1977,7 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
     Returns: unp.uarray
 
     """
-    orders = {0: 'zero', 1:'linear', 2: 'quadratic', 3: 'cubic'}
+    orders = {0: 'zero', 1: 'linear', 2: 'quadratic', 3: 'cubic'}
     assert isinstance(order, int)
     assert order in orders, f'Invalid order, "{order}". Valid are:\n\t{list(orders.keys())}'
     order = orders[order]
@@ -1927,13 +2002,15 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    y = unp.uarray([4, 4], [2,2])
-    bins = [0, 2, 4]
-    newy = rebin(bins, y, [0, 4])
 
-    ax = mpl_hist(bins, y)
-    mpl_hist([0, 4], newy, ax=ax)
-    plt.show()
+    pass
+    # y = unp.uarray([4, 4], [2,2])
+    # bins = [0, 2, 4]
+    # newy = rebin(bins, y, [0, 4])
+    #
+    # ax = mpl_hist(bins, y)
+    # mpl_hist([0, 4], newy, ax=ax)
+    # plt.show()
 
    # pass
     #
