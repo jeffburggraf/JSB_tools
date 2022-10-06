@@ -366,7 +366,7 @@ class TabPlot:
 
     def add_aux_axis(self, ax):
         """
-        Add an axis, `ax`, to the list of axis that will switch on/off with the last axis retiurn by self.
+        Add an axis, `ax`, to the list of axis that will switch on/off with the last axis returned by self.
         Args:
             ax:
 
@@ -390,6 +390,7 @@ class TabPlot:
             ncols:
             sharex:
             sharey:
+            suptitle:
             subplot_kw: kwargs dict to be passed to subplots, e.g. like doing fig.add_subplot(**subplot_kw)
             *args:
             **kwargs:
