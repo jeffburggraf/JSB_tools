@@ -1,6 +1,5 @@
 import re
 from pathlib import Path
-from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
 
 pwd = Path(__file__).parent
 
@@ -57,13 +56,19 @@ deuterium_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1d'
 neutron_tendl_data_dir = parent_data_dir/'TENDL2021-NEUTRONS/gendf-1102'
 
 proton_tendl_data_dir = parent_data_dir/'TENDL2019-PROTONS'
+# =====================================================================================================
+# ===============================End specification of paths to nuclear libraries ====================
+# =====================================================================================================
+
 
 def get_neutron_endf_dir(sym, a, m=0):
+    from openmc.data import ATOMIC_NUMBER
     z = ATOMIC_NUMBER[sym]
     out = f"n-{z:0>3}_{sym}_{a:0>3}"
     if m != 0:
         out += f'm{m}'
     return neutron_enfd_b_data_dir/f"{out}.endf"
+
 
 all_dirs = {"neutron": {'endf':{'path': neutron_enfd_b_data_dir,
                                 'match': re.compile(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf'),
@@ -85,6 +90,4 @@ all_dirs = {"neutron": {'endf':{'path': neutron_enfd_b_data_dir,
 if __name__ == '__main__':
     p = (get_neutron_endf_dir('Co', 58, 1))
     print(p, p.exists())
-# =====================================================================================================
-# ===============================End specification of paths to nuclear libraries ====================
-# =====================================================================================================
+
