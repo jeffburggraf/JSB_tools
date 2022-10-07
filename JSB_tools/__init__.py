@@ -1101,26 +1101,33 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
     return np.convolve(a, kernel, mode=mode)
 
 
-def convolve_unbinned(x, y, sigma, n_sigma_truncate=5):
+def convolve_unbinned(x, y, sigma, n_sigma_truncate=5, thresh=0.0001):
     out = np.zeros_like(y)
 
     # def kernal(index):  # un-optimized
     #     weights = norm(loc=x[index], scale=sigma).pdf(x)
     #     weights /= sum(weights)
     #     return y[index] * weights
+    # A = 1/(sigma*np.sqrt(np.pi))
+    min_y = max(y)*thresh
+
+    def my_norm(center, xs):
+        return np.e**(-0.5*((center - xs)/sigma)**2)
 
     def kernal(index):  # optimized
         i1 = np.searchsorted(x, x[index] - n_sigma_truncate*sigma)
         i2 = i1 + np.searchsorted(x[i1:], x[index] + n_sigma_truncate*sigma)
 
         x_truncated = x[i1: i2]
-        weights = norm(loc=x[index], scale=sigma).pdf(x_truncated)
+        # weights = norm(loc=x[index], scale=sigma).pdf(x_truncated)
+        weights = my_norm(x[index], x_truncated)
         weights /= sum(weights)
         return (i1, i2), y[index] * weights
 
     for i in range(len(out)):
-        (i1, i2), w = kernal(i)  # optimized
-        out[i1: i2] += w   # optimized
+        # if y[i] > min_y:
+            (i1, i2), w = kernal(i)  # optimized
+            out[i1: i2] += w   # optimized
 
         # w = kernal(i)  # un-optimized
         # out += w  # un-optimized
