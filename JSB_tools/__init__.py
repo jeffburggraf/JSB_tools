@@ -223,6 +223,25 @@ def mpl_2dhist_from_data(x_bin_edges, y_bin_edges, x_points, y_points, weights=N
     return ax, x_data, y_data, z_data
 
 
+def flatten_dict_values(X):
+    """
+    Flatten out all dictionary keys
+    Args:
+        X:
+
+    Returns:
+
+    """
+    out = []
+    if isinstance(X, dict):
+        for k in X.values():
+            out.extend(flatten_dict_values(k))
+    else:
+        return [X]
+
+    return out
+
+
 def flatten(X):
     """
     Flatten iter object to be 1-dimension.
@@ -2024,7 +2043,9 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 if __name__ == '__main__':
 
-    pass
+    d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
+    for h in flatten_dict_values(d):
+        print(h)
     # y = unp.uarray([4, 4], [2,2])
     # bins = [0, 2, 4]
     # newy = rebin(bins, y, [0, 4])

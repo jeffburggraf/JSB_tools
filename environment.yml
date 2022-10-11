@@ -2,7 +2,8 @@ name: JSB_tools_3.9
 channels:
   - conda-forge
 dependencies:
-  - root
+  - root    # Problem on Windows
+  - openmc  # Problem on Windows
   - python=3.9
   - numpy
   - scipy
@@ -11,7 +12,6 @@ dependencies:
   - sortedcontainers
   - bitstring
   - pandas
-  - openmc
   - plotly
   - lmfit
   - pip
