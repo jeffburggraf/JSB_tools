@@ -28,7 +28,6 @@ from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background,
 from numpy.core._exceptions import UFuncTypeError
 from JSB_tools.spe_reader import SPEFile, EnergyCalMixin, _rebin
 
-# HERE = pytz.timezone('US/Mountain')
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 cwd = Path(__file__).parent
 

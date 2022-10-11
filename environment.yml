@@ -1,0 +1,19 @@
+name: JSB_tools_3.9
+channels:
+  - conda-forge
+dependencies:
+  - root
+  - python=3.9
+  - numpy
+  - scipy
+  - uncertainties
+  - matplotlib
+  - sortedcontainers
+  - bitstring
+  - pandas
+  - openmc
+  - plotly
+  - lmfit
+  - pip
+  - pip:
+    - winfiletime
