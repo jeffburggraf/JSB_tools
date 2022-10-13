@@ -87,13 +87,18 @@ class SphereCell(Cell, SphereSurface):
         super(Cell, self).__init__(radius=radius, x=x, y=y, z=z, surf_name=surf_name, surf_num=surf_num,
                                    comment=comment)
 
-    # def __del__(self):
-    #     assert False
-
 
 class CuboidSurface(Surface):
-    def __init__(self, x0, x1, y0, y1, z0, z1=None, dz=None, surf_name=None, surf_num=None, comment=None):
-        super(CuboidSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+    @classmethod
+    def square(cls, width,
+               z0, z1=None, dz=None,
+               surf_name: str = None, surf_number: int = None,
+               comment: str = None):
+        return cls(-width/2, width/2, -width/2, width/2, z0=z0, z1=z1, dz=dz, surf_name=surf_name,
+                   surf_number=surf_number, comment=comment)
+
+    def __init__(self, x0, x1, y0, y1, z0, z1=None, dz=None, surf_name=None, surf_number=None, comment=None):
+        super(CuboidSurface, self).__init__(surface_number=surf_number, surface_name=surf_name, surface_comment=comment)
         for coord, kmin, kmax in zip(['x', 'y', 'z'], [x0, y0, z0], [x1, y1, z1]):
             assert kmin != kmax, f'Provided min and max {coord} coordinates of Cuboid are equal: ' \
                                  f'"{coord}0={coord}1={kmin}'
@@ -138,7 +143,7 @@ class CuboidSurface(Surface):
             z0 = z0 - dz
 
         return CuboidSurface(x0=x_center - x_width / 2, y0=y_center - y_width / 2, z0=z0, x1=x_center + x_width / 2,
-                             y1=y_center + y_width / 2, z1=z0 + dz, surf_name=surf_name, surf_num=surf_num,
+                             y1=y_center + y_width / 2, z1=z0 + dz, surf_name=surf_name, surf_number=surf_num,
                              comment=comment)
 
     def cross_section_area(self, axis='s'):
@@ -203,6 +208,20 @@ class CuboidCell(Cell, CuboidSurface):
         c1.surface_card  # string of the surface card
 
     """
+    @classmethod
+    def square(cls, width,
+               z0, z1=None, dz=None,
+               material: Union[int, mat, PHITSOuterVoid] = 0,
+               cell_name: str = None,
+               importance: Union[None, Tuple[str, int]] = None,
+               cell_num: int = None, cell_comment: str = None,
+               surf_name: str = None, surf_number: int = None,
+               surf_comment: str = None, cell_kwargs=None):
+
+        return cls(-width/2, width/2, -width/2, width/2, z0=z0, z1=z1, dz=dz, material=material,
+                   cell_name=cell_name, importance=importance, cell_num=cell_num, cell_comment=cell_comment,
+                   surf_name=surf_name, surf_number=surf_number, surf_comment=surf_comment, cell_kwargs=cell_kwargs)
+
     def __init__(self, x0, x1, y0, y1,
                  z0, z1=None, dz=None,
                  material: Union[int, mat, PHITSOuterVoid] = 0,
@@ -246,7 +265,7 @@ class CuboidCell(Cell, CuboidSurface):
              cell_comment=cell_comment,
              cell_kwargs=cell_kwargs
              )
-        super(Cell, self).__init__(x0, x1, y0, y1, z0, z1=z1, dz=dz, surf_name=surf_name, surf_num=surf_number,
+        super(Cell, self).__init__(x0, x1, y0, y1, z0, z1=z1, dz=dz, surf_name=surf_name, surf_number=surf_number,
                                    comment=surf_comment)
 
     @property

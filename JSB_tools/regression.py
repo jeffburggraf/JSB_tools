@@ -322,8 +322,13 @@ class LogPolyFit(FitBase):
     @staticmethod
     def model_func(x, **params):
         out = np.zeros(len(x), dtype=np.float)
-        for power, (_, coeff) in enumerate(params.items()):
-            out += coeff*np.log(x)**power
+
+        with np.errstate(invalid='ignore'):
+            for power, (_, coeff) in enumerate(params.items()):
+                y = coeff*np.log(x)**power
+                y[np.isinf(y)] = 0
+                out += y
+
         out = np.e**out
         return out
 
@@ -338,7 +343,7 @@ class LogPolyFit(FitBase):
             fix_coeffs: Sometimes it is helpful to fix some coeffs to the value determined from the initial
                 fit (i.e. the guess) in Log-Log space (i.e. when the fit is linear).
                 This can help reduce issues during the final non-linear fit.
-                first.
+                first. 'all' fixes all coeffs except for the multiplicitive factor.
 
         """
         super().__init__(x, y, yerr)
@@ -357,12 +362,13 @@ class LogPolyFit(FitBase):
         _ = model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
 
         if fix_coeffs is not None:
-            assert hasattr(fix_coeffs, '__iter__'), '`fix_coeffs` must be a list of coeffs'
+            assert hasattr(fix_coeffs, '__iter__'), '`fix_coeffs` must be a list of coeffs or string'
+
             if fix_coeffs == 'all':
-                fix_coeffs = range(order)
+                fix_coeffs = range(1, order + 1)
+
             if len(fix_coeffs):
-                assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! " \
-                                                 "(coeff. doesn't exist)"
+                assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! "
                 assert all([isinstance(a, int) for a in fix_coeffs]), "`fix_coeffs` all must be integers.!"
                 for c in fix_coeffs:
                     params[f'c{c}'].vary = False

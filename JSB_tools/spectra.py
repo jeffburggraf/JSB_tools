@@ -78,8 +78,8 @@ class EfficiencyCalMixin:
     Only one representation can be used at a time, and this is enforced in the code.
 
     When using representation 1, calls to self.effs will evaluate self.eff_model.
-    When using representation 2, self.eff_model is None and all efficiency information is accessible
-        via self.effs
+    When using representation 2, self.eff_model is None and all efficiency information is set via
+        via self._effs
 
     There is an option to set a constant scale of the efficiency by changing
         the value of self.eff_scale to something other than 1.0 (this works when using either representation).
@@ -114,6 +114,7 @@ class EfficiencyCalMixin:
             for k, v in d.items():
                 setattr(self, k, v)
         self.recalc_effs()
+        self.eff_path = path
         return self
 
     def __init__(self):
@@ -126,22 +127,24 @@ class EfficiencyCalMixin:
         eff_errs = np.interp(new_energies, self.erg_centers, unp.std_devs(self.effs))
         return unp.uarray(eff, eff_errs)
 
-    def __eff_path__(self) -> Path:
+    def _eff_path(self) -> Path:
         """
-
+        todo: change to property. This will break backwords compatibility :/.
         Automatically create path from self.eff_path, or self.path is necessary.
 
         Returns:
 
         """
         # Precedence is self.eff_path, then self.path.
+        if not hasattr(self, 'eff_path'):
+            self.eff_path = None
 
         if self.eff_path is not None:
             path = self.eff_path
         else:
             if self.path is None:
                 raise FileNotFoundError("Cannot unpickle efficiency bc self.path and self.eff_path is None and "
-                                        "`other_path` was not supplied.")
+                                        "`other_path` argument was not supplied.")
             else:
                 # path = self.path
                 eff_dir = self.path.parent / 'cal_files'
@@ -153,19 +156,14 @@ class EfficiencyCalMixin:
 
     def unpickle_eff(self, path=None):
         """
-        Unpickle from auto-determined path. If no file exists, set attribs to defaults.
+        find and unpickle efficiency model (if exists). Set values accordingly.
 
-        Priority:
-            1. path argument
-            2. Try unpickling self.eff_path
-            3. Auto set self.eff_path from self.path
-            4. raise error
         Returns:
 
         """
         try:
             if path is None:
-                _path = self.__eff_path__()
+                _path = self._eff_path()
             else:
                 _path = Path(path)
             _path = _path.with_suffix('.eff')
@@ -176,11 +174,10 @@ class EfficiencyCalMixin:
                     setattr(self, k, v)
 
         except FileNotFoundError:
-            if path is not None:  # Manual specification failed. Raise!
-                raise
+            raise
 
-        except Exception:
-            warnings.warn("Could not unpickle efficiency")
+        except Exception as e:
+            warnings.warn(f"Could not unpickle efficiency\n{e}")
             raise
 
     def pickle_eff(self, path=None):
@@ -199,7 +196,7 @@ class EfficiencyCalMixin:
         if path is not None:
             path = Path(path).with_suffix(".eff")
         else:
-            path = self.__eff_path__()
+            path = self._eff_path()
 
         d = {'_effs': self._effs if self.eff_model is None else None, 'eff_model': self.eff_model,
              'eff_model_scale': self.eff_model_scale}
@@ -351,13 +348,13 @@ class ListSpectra(EfficiencyCalMixin):
         """
 
         Args:
-            adc_channels: A list of ADC channels corresponding to each event. Max value allowed is len(erg_bins) - 2.
+            adc_channels: A list of ADC channels corresponding to each event. Max value allowed is len(erg_bins) - 2
+                as it is assumed to start from channel 0.
 
             times: The associated times for each event in channels_list
 
-            erg_bins: Used to define mapping between channels_list and energies. len(erg_bins) = 1 + (# of ADC channels)
-                e.g., a value of 0 in adc_channels corresponds to an
-                event with energy bin of [erg_bins[0], erg_bins[1])
+            erg_bins: Used to define mapping between channels_list and energies. len(erg_bins) = 1 + len(adc_channels)
+                e.g., a adc_channels[0] corresponds to an event within energy bin defined by [erg_bins[0], erg_bins[1])
 
             path: Used to tie this instance to a file path. Used for pickling/unpickling.
 
@@ -569,8 +566,10 @@ class ListSpectra(EfficiencyCalMixin):
         n_sig_erg_bins = sig_window_is[-1] - sig_window_is[0]
 
         if eff_corr:
-            bg_weights = np.concatenate([1.0 / unp.nominal_values(self.effs[slice(*bg_window_left_is)]),
-                                         1.0 / unp.nominal_values(self.effs[slice(*bg_window_right_is)])])
+            effs = unp.nominal_values(self.effs)
+            effs = np.where(effs > 0, effs, 1)
+            bg_weights = np.concatenate([1.0 / effs[slice(*bg_window_left_is)],
+                                         1.0 / effs[slice(*bg_window_right_is)]])
 
             sig_weight = np.average((1.0 / self.effs[slice(*sig_window_is)]),
                                     weights=np.fromiter(map(len, self.energy_binned_times[slice(*sig_window_is)]),
@@ -888,10 +887,12 @@ class ListSpectra(EfficiencyCalMixin):
         if eff_corr:
             assert self.effs is not None, 'Cannot perform efficiency correction. No efficiency data. '
             effs = self.effs[erg_index0: erg_index1]
+
             if nominal_values:
                 effs = unp.nominal_values(effs)
                 # if not out.dtype == 'float64':
                 #     out = out.astype('float64')
+            effs = np.where(effs > 0, effs, 1)
             out /= effs
 
         if debug_plot:

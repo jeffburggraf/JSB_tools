@@ -1039,6 +1039,15 @@ class CrossSection1D:
         self.mt_value = mt_value
 
     def cut(self, erg_min=None, erg_max=None):
+        """
+
+        Args:
+            erg_min:
+            erg_max:
+
+        Returns:
+
+        """
         if erg_min is None:
             erg_min = self.ergs[0]
 

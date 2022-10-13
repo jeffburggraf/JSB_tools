@@ -428,15 +428,16 @@ class InputDeck:
                     else:
                         try:
                             evaluated = eval(exp_to_process, dict_of_globals)
-                            if isinstance(evaluated, float):
-                                _fmt = ':.{}g'.format(NDIGITS)
-                                evaluated = ('{' + _fmt + '}').format(evaluated)
-
-                            new_line += "{0}".format(evaluated)
                         except Exception as e:
                             err = _exception(str(e))
                             exception_msg += err
                             unregister(InputDeck.__del)  # Don't print closing messages if exception raised.
+                        else:
+                            if isinstance(evaluated, float):
+                                _fmt = f'.{NDIGITS}g'
+                                evaluated = f"{evaluated:{_fmt}}"
+
+                            new_line += "{0}".format(evaluated)
 
                     exp_to_process = None
                 else:
@@ -479,12 +480,12 @@ class InputDeck:
                     except TypeError:
                         pass
 
-    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd", overwrite_globals=None,
-                           **mcnp_or_phits_kwargs) -> Path:
+    def write_inp_in_scope(self, dict_of_globals: Union[dict, List[dict]], new_file_name=None,
+                           script_name="cmd", overwrite_globals=None, **mcnp_or_phits_kwargs) -> Path:
         """
         Creates and fills an input deck according to a dictionary of values. Usually, just use globals()
         Args:
-            dict_of_globals:
+            dict_of_globals: Dict of scope. Usually just use globals(). Can also be a list of dicts.
             new_file_name: name of generated input file
             script_name: Name of script to obe created that runs (all) simulation(s) automatically.
             overwrite_globals: dictionary of variable names and values that will take precedence over globals()
@@ -494,6 +495,13 @@ class InputDeck:
 
         """
         self.__has_called_write_inp_in_scope__ = True
+
+        if isinstance(dict_of_globals, list):
+            for d in dict_of_globals[1:]:
+                for k, v in d.items():
+                    dict_of_globals[0][k] = v
+
+            dict_of_globals = dict_of_globals[0]
 
         assert len(self.__new_inp_lines__) == 0
 

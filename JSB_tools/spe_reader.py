@@ -5,7 +5,6 @@ import warnings
 from pathlib import Path
 from datetime import datetime
 import re
-
 import lmfit
 from matplotlib import pyplot as plt
 import numpy as np
@@ -18,7 +17,7 @@ import marshal
 from lmfit.models import GaussianModel
 from scipy.signal import find_peaks
 from matplotlib.axes import Axes
-from scipy.signal import argrelextrema
+from JSB_tools.spectra import EfficiencyCalMixin
 
 
 def _rebin(rebin, values, bins):
@@ -147,255 +146,255 @@ def _get_SPE_data(path):
         data = bot_header[bot_header.index('$SHAPE_CAL:\n') + 2].split()
         out['shape_cal'] = list(map(float, data))
     except (ValueError, IndexError) as e:
-        warnings.warn(f"Invalid shape calibration in Spe file '{path}'\n{e}")
+        # warnings.warn(f"Invalid shape calibration in Spe file '{path}'\n{e}")
         out['shape_cal'] = None
 
     return out
 
 
-class EnergyCalMixin:
-    """
-    Mixin for MaestroListFile and SPEFile that allows to override energy calibration by loading pickled values.
-    For this to work, you must first do self.save_erg_cal
-
-    This is useful to make sure that enhanced calibration coeffs don't get over-ridden from self.pickle
-    """
-    def __init__(self, erg_calibration, load_erg_cal=None):
-        """
-        If load_erg_cal is None, look for energy calibration automatically with appropriate name and override
-            `erg_calibration` argument.
-        if load_erg_cal is a Path or str, look for erg cal in path
-        If load_erg_cal is False, use erg cal from file.
-        Args:
-            erg_calibration:
-            load_erg_cal:
-        """
-
-        self._erg_calibration = erg_calibration
-        if load_erg_cal is not False:
-            if isinstance(load_erg_cal, (str, Path)):
-                load_erg_cal = Path(load_erg_cal)
-            else:
-                load_erg_cal = None
-            self.load_erg_cal(load_erg_cal)
-
-        self._load_erg_cal = load_erg_cal
-
-    def __erg_cal_path__(self, other_path=None) -> Path:
-        """
-        Returns energy calibration path
-        Args:
-            other_path:
-
-        Returns:
-
-        """
-        if other_path is not None:
-            path = other_path
-        else:
-            path = getattr(self, 'path', None)
-            if path is None:
-                raise FileNotFoundError
-
-        eff_dir = path.parent / 'cal_files'
-        eff_dir.mkdir(exist_ok=True)
-        return eff_dir / path.with_suffix('.erg').name
-
-    def load_erg_cal(self, path=None):
-        try:
-            with open(self.__erg_cal_path__(path), 'rb') as f:
-                self._erg_calibration = pickle.load(f)
-        except FileNotFoundError:
-            return
-
-    def save_erg_cal(self, path=None):
-        with open(self.__erg_cal_path__(path), 'wb') as f:
-            pickle.dump(self._erg_calibration, f)
-
-
-class EfficiencyCalMixin:
-    """
-    Mixin class for storing and maneging spectra's efficiency calibrations.
-
-    Each Spe/List file has one associated with it. By default, all fields are None (efficiency is unity).
-
-    There are two representations of efficiency.
-        1. An lmfit.model.ModelResult object
-            (stored in self.eff_model)
-        2. A list of efficiencies with length equal to the number of channels
-            (stored in self.effs)
-
-    Only one representation can be used at a time, and this is enforced in the code.
-
-    When using representation 1, calls to self.effs will evaluate self.eff_model.
-    When using representation 2, self.eff_model is None and all efficiency information is accessible
-        via self.effs
-
-    There is an option to set a constant scale of the efficiency by changing
-        the value of self.eff_scale to something other than 1.0 (this works when using either representation).
-
-    Efficiency information can be pickled and unpickled. This is handled automatically when pickleing either a
-        list file or an Spe file.
-
-    """
-    def __init__(self):
-        self._effs = None
-        self._eff_model: lmfit.model.ModelResult = None
-        self.eff_scale = 1
-
-    def interp_eff(self, new_energies):
-        eff = np.interp(new_energies, self.erg_centers, unp.nominal_values(self.effs))
-        eff_errs = np.interp(new_energies, self.erg_centers, unp.std_devs(self.effs))
-        return unp.uarray(eff, eff_errs)
-
-    def __eff_path__(self, other_path=None) -> Path:
-        if other_path is not None:
-            path = other_path
-        else:
-            assert hasattr(self, 'path') and self.path is not None, 'No self.path instance! Cannot pickle the ' \
-                                                                    'efficiency.'
-            path = self.path
-            if path is None:
-                raise FileNotFoundError
-
-        eff_dir = path.parent / 'cal_files'
-        if not eff_dir.exists():
-            eff_dir.mkdir(exist_ok=True)
-        return eff_dir / path.with_suffix('.eff').name
-
-    def unpickle_eff(self, path=None):
-        """
-        Unpickle from auto-determined path. If no file exists, set attribs to defaults.
-        Returns:
-
-        """
-
-        try:
-            if isinstance(path, (str, Path)):
-                path = Path(path)
-            else:
-                path = self.__eff_path__(path)
-            with open(path, 'rb') as f:
-                # out = EfficiencyCalMixin.__new__(EfficiencyCalMixin)
-                d = pickle.load(f)
-                for k, v in d.items():
-                    setattr(self, k, v)
-
-        except FileNotFoundError:
-            pass
-        except Exception:
-            warnings.warn("Could not unpickle efficiency")
-            raise
-
-    def pickle_eff(self, path=None):
-        path = self.__eff_path__(path)
-        if self.effs is self.eff_model is None:  # no efficiency data. Delete old if it exists.
-            path.unlink(missing_ok=True)
-        else:
-            d = {'effs': self.effs, 'eff_model': self.eff_model, 'eff_scale': self.eff_scale}
-            with open(path, 'wb') as f:
-                pickle.dump(d, f)
-
-    @property
-    def effs(self):
-        if self._effs is not None:
-            return self.eff_scale*self._effs
-        else:
-            return None
-
-    @effs.setter
-    def effs(self, value):
-        self.eff_model = None
-        self._effs = value
-
-    @property
-    def eff_model(self):
-        return self._eff_model
-
-    @eff_model.setter
-    def eff_model(self, value: lmfit.model.ModelResult):
-        self._eff_model = value
-        if isinstance(value, lmfit.model.ModelResult):
-            self.recalc_effs()
-
-    def recalc_effs(self, old_erg_centers=None, new_erg_centers=None):
-        """
-        Recalculate for new energies of parent class, *or* if old_energies and new_energies are specified, recalculate
-          efficiency points (and delete the model if it exists).
-        Args:
-            old_erg_centers:
-            new_erg_centers:
-
-        Returns:
-
-        """
-        # if not hasattr(self, '_eff_model'):
-        #     self._eff_model = None
-        # if not hasattr(self, 'effs'):
-        #     self.effs = None
-        if self.eff_model is not None:
-            eff = self.eff_model.eval(x=self.erg_centers)
-            eff = np.where(eff > 1E-6, eff, 1E-6)
-            eff_err = self.eff_model.eval_uncertainty(x=self.erg_centers)
-            self.effs = unp.uarray(eff, eff_err)
-        else:
-            if self.effs is not None:
-                assert old_erg_centers is not new_erg_centers is not None, "Must supply these args"
-                if isinstance(self.effs[0], UFloat):
-                    self.effs = unp.uarray(np.interp(new_erg_centers, old_erg_centers, unp.nominal_values(self.effs)),
-                                           np.interp(new_erg_centers, old_erg_centers, unp.std_devs(self.effs)))
-                else:
-                    self.effs = np.interp(new_erg_centers, old_erg_centers, self.effs)
-
-    def print_eff(self):
-        if self.eff_model is not None:
-            return self.eff_model.fit_report()
-        else:
-            return self.effs.__repr__()
-
-    def plot_efficiency(self, ax=None, **mpl_kwargs):
-        assert self.effs is not None, 'No efficiency to plot. '
-
-        if ax is None:
-            fig, ax = plt.subplots()
-
-        ls = mpl_kwargs.pop('ls', None)
-        alpha = mpl_kwargs.pop('alpha', 0.35)
-
-        _y = unp.nominal_values(self.effs)
-        yerr = unp.std_devs(self.effs)
-        label = mpl_kwargs.pop('label', None)
-
-        lines = ax.plot(self.erg_centers, _y, ls=ls, **mpl_kwargs, label=label)
-        c = lines[0].get_color()
-        ax.fill_between(self.erg_centers, _y - yerr, _y + yerr, alpha=alpha, **mpl_kwargs)
-
-        if self.eff_model is not None:
-            x_points = self.eff_scale*self.eff_model.userkws[self.eff_model.model.independent_vars[0]]
-            y_points = self.eff_scale*self.eff_model.data
-
-            if self.eff_model.weights is not None:
-                yerr = 1.0 / self.eff_model.weights
-            else:
-                yerr = np.zeros_like(x_points)
-            yerr = self.eff_scale*yerr
-
-            ax.errorbar(x_points, y_points, yerr, ls='None', marker='o', c=c)
-        ax.set_xlabel("Energy KeV]")
-        ax.set_ylabel("Efficiency")
-        if label is not None:
-            ax.legend()
-        return ax
+# class EnergyCalMixin:
+#     """
+#     Mixin for MaestroListFile and SPEFile that allows to override energy calibration by loading pickled values.
+#     For this to work, you must first do self.save_erg_cal
+#
+#     This is useful to make sure that enhanced calibration coeffs don't get over-ridden from self.pickle
+#     """
+#     def __init__(self, erg_calibration, load_erg_cal=None):
+#         """
+#         If load_erg_cal is None, look for energy calibration automatically with appropriate name and override
+#             `erg_calibration` argument.
+#         if load_erg_cal is a Path or str, look for erg cal in path
+#         If load_erg_cal is False, use erg cal from file.
+#         Args:
+#             erg_calibration:
+#             load_erg_cal:
+#         """
+#
+#         self._erg_calibration = erg_calibration
+#         if load_erg_cal is not False:
+#             if isinstance(load_erg_cal, (str, Path)):
+#                 load_erg_cal = Path(load_erg_cal)
+#             else:
+#                 load_erg_cal = None
+#             self.load_erg_cal(load_erg_cal)
+#
+#         self._load_erg_cal = load_erg_cal
+#
+#     def __erg_cal_path__(self, other_path=None) -> Path:
+#         """
+#         Returns energy calibration path
+#         Args:
+#             other_path:
+#
+#         Returns:
+#
+#         """
+#         if other_path is not None:
+#             path = other_path
+#         else:
+#             path = getattr(self, 'path', None)
+#             if path is None:
+#                 raise FileNotFoundError
+#
+#         eff_dir = path.parent / 'cal_files'
+#         eff_dir.mkdir(exist_ok=True)
+#         return eff_dir / path.with_suffix('.erg').name
+#
+#     def load_erg_cal(self, path=None):
+#         try:
+#             with open(self.__erg_cal_path__(path), 'rb') as f:
+#                 self._erg_calibration = pickle.load(f)
+#         except FileNotFoundError:
+#             return
+#
+#     def save_erg_cal(self, path=None):
+#         with open(self.__erg_cal_path__(path), 'wb') as f:
+#             pickle.dump(self._erg_calibration, f)
 
 
-class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
+# class EfficiencyCalMixin:
+#     """
+#     Mixin class for storing and maneging spectra's efficiency calibrations.
+#
+#     Each Spe/List file has one associated with it. By default, all fields are None (efficiency is unity).
+#
+#     There are two representations of efficiency.
+#         1. An lmfit.model.ModelResult object
+#             (stored in self.eff_model)
+#         2. A list of efficiencies with length equal to the number of channels
+#             (stored in self.effs)
+#
+#     Only one representation can be used at a time, and this is enforced in the code.
+#
+#     When using representation 1, calls to self.effs will evaluate self.eff_model.
+#     When using representation 2, self.eff_model is None and all efficiency information is simply stored in
+#         via self._effs
+#
+#     There is an option to set a constant scale of the efficiency by changing
+#         the value of self.eff_scale to something other than 1.0 (this works when using either representation).
+#
+#     Efficiency information can be pickled and unpickled. This is handled automatically when pickleing either a
+#         list file or an Spe file.
+#
+#     """
+#     def __init__(self):
+#         self._effs = None
+#         self._eff_model: lmfit.model.ModelResult = None
+#         self.eff_scale = 1
+#
+#     def interp_eff(self, new_energies):
+#         eff = np.interp(new_energies, self.erg_centers, unp.nominal_values(self.effs))
+#         eff_errs = np.interp(new_energies, self.erg_centers, unp.std_devs(self.effs))
+#         return unp.uarray(eff, eff_errs)
+#
+#     def __eff_path__(self, other_path=None) -> Path:
+#         if other_path is not None:
+#             path = other_path
+#         else:
+#             assert hasattr(self, 'path') and self.path is not None, 'No self.path instance! Cannot pickle the ' \
+#                                                                     'efficiency.'
+#             path = self.path
+#             if path is None:
+#                 raise FileNotFoundError
+#
+#         eff_dir = path.parent / 'cal_files'
+#         if not eff_dir.exists():
+#             eff_dir.mkdir(exist_ok=True)
+#         return eff_dir / path.with_suffix('.eff').name
+#
+#     def unpickle_eff(self, path=None):
+#         """
+#         Unpickle from auto-determined path. If no file exists, set attribs to defaults.
+#         Returns:
+#
+#         """
+#
+#         try:
+#             if isinstance(path, (str, Path)):
+#                 path = Path(path)
+#             else:
+#                 path = self.__eff_path__(path)
+#             with open(path, 'rb') as f:
+#                 # out = EfficiencyCalMixin.__new__(EfficiencyCalMixin)
+#                 d = pickle.load(f)
+#                 for k, v in d.items():
+#                     setattr(self, k, v)
+#
+#         except FileNotFoundError:
+#             pass
+#         except Exception:
+#             warnings.warn("Could not unpickle efficiency")
+#             raise
+#
+#     def pickle_eff(self, path=None):
+#         path = self.__eff_path__(path)
+#         if self.effs is self.eff_model is None:  # no efficiency data. Delete old if it exists.
+#             path.unlink(missing_ok=True)
+#         else:
+#             d = {'effs': self.effs, 'eff_model': self.eff_model, 'eff_scale': self.eff_scale}
+#             with open(path, 'wb') as f:
+#                 pickle.dump(d, f)
+#
+#     @property
+#     def effs(self):
+#         if self._effs is not None:
+#             return self.eff_scale*self._effs
+#         else:
+#             return None
+#
+#     @effs.setter
+#     def effs(self, value):
+#         self.eff_model = None
+#         self._effs = value
+#
+#     @property
+#     def eff_model(self):
+#         return self._eff_model
+#
+#     @eff_model.setter
+#     def eff_model(self, value: lmfit.model.ModelResult):
+#         self._eff_model = value
+#         if isinstance(value, lmfit.model.ModelResult):
+#             self.recalc_effs()
+#
+#     def recalc_effs(self, old_erg_centers=None, new_erg_centers=None):
+#         """
+#         Recalculate for new energies of parent class, *or* if old_energies and new_energies are specified, recalculate
+#           efficiency points (and delete the model if it exists).
+#         Args:
+#             old_erg_centers:
+#             new_erg_centers:
+#
+#         Returns:
+#
+#         """
+#         # if not hasattr(self, '_eff_model'):
+#         #     self._eff_model = None
+#         # if not hasattr(self, 'effs'):
+#         #     self.effs = None
+#         if self.eff_model is not None:
+#             eff = self.eff_model.eval(x=self.erg_centers)
+#             eff = np.where(eff > 1E-6, eff, 1E-6)
+#             eff_err = self.eff_model.eval_uncertainty(x=self.erg_centers)
+#             self.effs = unp.uarray(eff, eff_err)
+#         else:
+#             if self.effs is not None:
+#                 assert old_erg_centers is not new_erg_centers is not None, "Must supply these args"
+#                 if isinstance(self.effs[0], UFloat):
+#                     self.effs = unp.uarray(np.interp(new_erg_centers, old_erg_centers, unp.nominal_values(self.effs)),
+#                                            np.interp(new_erg_centers, old_erg_centers, unp.std_devs(self.effs)))
+#                 else:
+#                     self.effs = np.interp(new_erg_centers, old_erg_centers, self.effs)
+#
+#     def print_eff(self):
+#         if self.eff_model is not None:
+#             return self.eff_model.fit_report()
+#         else:
+#             return self.effs.__repr__()
+#
+#     def plot_efficiency(self, ax=None, **mpl_kwargs):
+#         assert self.effs is not None, 'No efficiency to plot. '
+#
+#         if ax is None:
+#             fig, ax = plt.subplots()
+#
+#         ls = mpl_kwargs.pop('ls', None)
+#         alpha = mpl_kwargs.pop('alpha', 0.35)
+#
+#         _y = unp.nominal_values(self.effs)
+#         yerr = unp.std_devs(self.effs)
+#         label = mpl_kwargs.pop('label', None)
+#
+#         lines = ax.plot(self.erg_centers, _y, ls=ls, **mpl_kwargs, label=label)
+#         c = lines[0].get_color()
+#         ax.fill_between(self.erg_centers, _y - yerr, _y + yerr, alpha=alpha, **mpl_kwargs)
+#
+#         if self.eff_model is not None:
+#             x_points = self.eff_scale*self.eff_model.userkws[self.eff_model.model.independent_vars[0]]
+#             y_points = self.eff_scale*self.eff_model.data
+#
+#             if self.eff_model.weights is not None:
+#                 yerr = 1.0 / self.eff_model.weights
+#             else:
+#                 yerr = np.zeros_like(x_points)
+#             yerr = self.eff_scale*yerr
+#
+#             ax.errorbar(x_points, y_points, yerr, ls='None', marker='o', c=c)
+#         ax.set_xlabel("Energy KeV]")
+#         ax.set_ylabel("Efficiency")
+#         if label is not None:
+#             ax.legend()
+#         return ax
+
+
+class SPEFile(EfficiencyCalMixin):
     """
     Used for processing and saving ORTEC ASCII SPE files. Can also build from other data using SPEFile.build(...).
 
     """
     time_format = '%m/%d/%Y %H:%M:%S'
 
-    def __init__(self, path):
+    def __init__(self, path, eff_path=None):
         """
         Analyse ORTEC .Spe ASCII spectra files.
 
@@ -404,10 +403,12 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         """
         self.path = Path(path)
         assert self.path.exists(), self.path
+
         super(SPEFile, self).__init__()
 
         self._energies = None  # if None, this signals to the energies property that energies must be calculated.
         self._erg_bins = None  # same as above
+        self.eff_path = Path(eff_path) if eff_path is not None else None
 
         data = _get_SPE_data(path)
         self.description = data['description']
@@ -421,8 +422,13 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         self.counts.flags.writeable = False
         self.channels = np.arange(len(self.counts))
 
-        # self._erg_calibration = data['_erg_calibration']
-        super(EfficiencyCalMixin, self).__init__(data['_erg_calibration'], load_erg_cal=False)
+        try:
+            self.unpickle_eff(eff_path)
+        except FileNotFoundError:
+            pass
+
+        self._erg_calibration = data['_erg_calibration']
+        # super(SPEFile, self).__init__(data['_erg_calibration'])
         self.erg_units = data['erg_units']
         self.shape_cal = data['shape_cal']
 
@@ -538,7 +544,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
 
     @classmethod
     def build(cls, path, counts, erg_calibration: List[float], livetime, realtime, channels=None, erg_units='KeV',
-              shape_cal=None, description=None, system_start_time=None, eff_model=None, effs=None, eff_scale=1,
+              shape_cal=None, description=None, system_start_time=None, eff_path=None,
               load_erg_cal: Union[Path, bool] = None, load_eff_cal=True) -> SPEFile:
         """
         Build Spe file from arguments.
@@ -553,9 +559,6 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             shape_cal:
             description:
             system_start_time:
-            eff_model:
-            effs:
-            eff_scale:
             load_erg_cal:
             load_eff_cal:
 
@@ -563,6 +566,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
 
         """
         self = SPEFile.__new__(cls)
+        self.eff_path = eff_path
         super(SPEFile, self).__init__()  # run EfficiencyMixin init
 
         self._energies = None
@@ -579,7 +583,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         else:
             self.channels = channels
 
-        # self.erg_calibration = list(erg_calibration)
+        self.erg_calibration = list(erg_calibration)
         self.erg_units = erg_units
 
         if shape_cal is None:
@@ -604,14 +608,18 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         self.detector_id = 0
         self.maestro_version = None
 
-        self.effs = effs
-        self.eff_model = eff_model
-        self.eff_scale = eff_scale
-
-        super(EfficiencyCalMixin, self).__init__(erg_calibration, load_erg_cal)
-        if load_eff_cal:
-            if self.path is not None:
-                self.unpickle_eff()
+        # if effs is not None:
+        #     self.effs = effs
+        #
+        # self.eff_model = eff_model
+        # self.eff_scale = eff_scale
+        try:
+            self.unpickle_eff()
+        except FileNotFoundError:
+            pass
+        # if load_eff_cal:
+        #     if self.path is not None:
+        #         self.unpickle_eff()
 
         return self
 
@@ -691,11 +699,6 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             out = self.channel_2_erg(chs-0.5)
             self._erg_bins = out
             return out
-
-    @property
-    def eff_weights(self):
-        assert self.effs is not None
-        return 1.0/self.effs
 
     def erg_bins_cut(self, erg_min, erg_max):
         """
@@ -791,7 +794,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
         if nominal_values:
             out = unp.nominal_values(counts)
         else:
-            out = counts
+            out = counts.copy()
 
         if rebin != 1:
             if bg is not None:
@@ -801,7 +804,19 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
 
         if eff_corr:
             assert self.effs is not None, f'No efficiency information set for\n{self.path}'
-            out /= self.effs[imin: imax]
+            ar = self.effs[imin: imax]
+
+            if nominal_values:
+                ar = unp.nominal_values(ar)
+            # print(f"E = {0.5*(erg_min + erg_max)}, raw counts: {sum(counts)}")
+            # print(f"eff = {np.mean(unp.nominal_values(ar))} +/- {np.std(unp.nominal_values(ar))}")
+            # print(f"Before: {sum(out)}")
+            if out.dtype != ar.dtype:
+                ar = ar.astype(out.dtype)
+
+            out /= np.where(ar > 0, ar, 1)
+            # print(f"After: {sum(out)}\n")
+
         if make_rate:
             out /= self.livetime
         if make_density:
@@ -992,7 +1007,7 @@ class SPEFile(EfficiencyCalMixin, EnergyCalMixin):
             y = y * self.deadtime_corr
 
         if eff_corr is True:
-            y /= self.effs
+            y /= np.where(self.effs > 0, self.effs, 1)
 
         if baseline_kwargs is None:
             baseline_kwargs = {}

@@ -363,6 +363,9 @@ class TabPlot:
         """
         index = len(self.plt_axs) - 1
 
+        print()
+        self.fig.suptitle
+
         def set_vis(event):
             for axs_group in self.plt_axs:
                 if axs_group is self.plt_axs[index]:

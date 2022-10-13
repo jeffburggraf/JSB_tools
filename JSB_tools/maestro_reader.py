@@ -26,7 +26,7 @@ from uncertainties import unumpy as unp
 from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background, discrete_interpolated_median, shade_plot, \
     rolling_median, InteractivePlot, _float
 from numpy.core._exceptions import UFuncTypeError
-from JSB_tools.spe_reader import SPEFile, EnergyCalMixin, _rebin
+from JSB_tools.spe_reader import SPEFile
 
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 cwd = Path(__file__).parent
@@ -69,7 +69,7 @@ def get_spe_lines(_l: MaestroListFile):
     return spe_lines
 
 
-class MaestroListFile(ListSpectra, EnergyCalMixin):
+class MaestroListFile(ListSpectra):
     pickle_attribs = '_erg_calibration', 'device_address', 'MCB_type_string', 'serial_number', \
                      'detector_id', 'total_realtime', 'total_livetime', 'count_rate_meter', 'n_adc_channels',\
                      'description', 'realtimes', 'livetimes', 'sample_ready_state', 'gate_state'
