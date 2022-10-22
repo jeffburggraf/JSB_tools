@@ -5,7 +5,6 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
-from itertools import cycle
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -27,31 +26,26 @@ from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 from matplotlib.cm import ScalarMappable
 import time
+from JSB_tools.nuke_data_tools import Nuclide, DecayNuclide
 import sys
 from scipy.stats import norm
 from matplotlib import cm
 import traceback
-from JSB_tools.nuke_data_tools import Nuclide, FissionYields, DecayNuclide
 from uncertainties import UFloat
 from scipy import ndimage
 from matplotlib.widgets import Button
 from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
-from scipy.integrate import quad
-# from JSB_tools.rebin import rebin
 from matplotlib.axes import Axes
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.colors import Colormap
-from importlib.util import LazyLoader
-from scipy.integrate import trapezoid, cumulative_trapezoid
+from scipy.integrate import trapezoid
 from numbers import Number
 try:
     import ROOT
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
-
-__all__ = ['DecayNuclide']
 
 cwd = Path(__file__).parent
 
@@ -362,9 +356,6 @@ class TabPlot:
 
         """
         index = len(self.plt_axs) - 1
-
-        print()
-        self.fig.suptitle
 
         def set_vis(event):
             for axs_group in self.plt_axs:

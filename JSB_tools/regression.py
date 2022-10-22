@@ -20,7 +20,6 @@ from lmfit import Parameters, fit_report
 from uncertainties.umath import log as ulog
 from scipy.odr import Model as ODRModel
 from scipy.odr import RealData, ODR, polynomial, Output
-from scipy.odr.models import _poly_fcn
 from lmfit import minimize
 from typing import List, Union
 
@@ -373,6 +372,7 @@ class LogPolyFit(FitBase):
                 for c in fix_coeffs:
                     params[f'c{c}'].vary = False
         model = Model(self.model_func)
+
         self.fit_result = model.fit(self.y, params=params, x=self.x, weights=self.__weights__, scale_covar=True,
                                     verbose=True, )
 
@@ -531,7 +531,9 @@ class PolyFitODR(ODRBase):
         return self.__beta__
 
     def model_func(self, b, x):
-        return _poly_fcn(b, x, self._powers)
+        a, b = b[0], b[1:]
+        b.shape = (b.shape[0], 1)
+        return a + np.sum(b * np.power(x, self._powers), axis=0)
 
     def __repr__(self):
         self.fit_result.pprint()

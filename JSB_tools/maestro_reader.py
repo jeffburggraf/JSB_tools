@@ -18,7 +18,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from datetime import timezone
 from typing import List, Union, Tuple, Iterable, Callable, Dict
-import filetime
+import winfiletime
 from functools import cached_property
 import time
 from uncertainties.core import UFloat, ufloat
@@ -423,7 +423,7 @@ class MaestroListFile(ListSpectra):
             wintime[0] = word3[-16:-8]
             w_time = "".join(wintime)
             w_time = BitStream(bin=w_time).unpack('uintbe:64')[0]
-            w_time = filetime.to_datetime(w_time)
+            w_time = winfiletime.to_datetime(w_time)
             w_time = w_time.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
             if self.start_time is None:  # only set this for the first time we see a Win64 time.
@@ -696,14 +696,13 @@ class MaestroListFile(ListSpectra):
         out = SPEFile.build(path=path, counts=counts,
                             erg_calibration=self._erg_calibration, livetime=total_livetime, realtime=total_realtime,
                             channels=np.arange(self.n_adc_channels),
-                            description=self.description, system_start_time=self.start_time, eff_model=self.eff_model,
-                            effs=self.effs, eff_scale=self.eff_model_scale, shape_cal=[0, 1, 0], erg_units='keV')
+                            description=self.description, system_start_time=self.start_time, shape_cal=[0, 1, 0], erg_units='keV')
 
         if set_spe:
             self._spe = out
         return out
 
-    def pickle(self, path=None, pickle_eff=True, meta_data=None):
+    def pickle(self, path=None, meta_data=None):
         assert not (self.path is path is None), "A `path` argument must be supplied as it wasn't specified at " \
                                                 "initialization. "
         if path is None:
@@ -720,7 +719,7 @@ class MaestroListFile(ListSpectra):
 
             meta_data[name] = getattr(self, name)
 
-        super(MaestroListFile, self).pickle(path=path, pickle_eff=pickle_eff, meta_data=meta_data)
+        super(MaestroListFile, self).pickle(path=path, meta_data=meta_data)
 
     @classmethod
     def from_pickle(cls, path, load_erg_cal=None) -> MaestroListFile:

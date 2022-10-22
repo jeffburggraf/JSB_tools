@@ -10,31 +10,6 @@ from abc import abstractmethod
 from numbers import Number
 
 
-def gen_mcnp_geom(path):
-    """
-
-    Args:
-        path:
-
-    Returns:
-
-    """
-
-
-def rotate_zhat_to_v(v):
-    # Todo
-    """
-    Gives the rotation matrix that rotates (0,0,1) to v: (x, y, z)
-    Args:
-        v: vector to rotate z hat to
-
-    Returns:rotqtion matrix
-
-    """
-    assert isinstance(v, Sized)
-    assert len(v) == 3
-
-
 class Distribution:
     @abstractmethod
     def __get_kwargs__(self):

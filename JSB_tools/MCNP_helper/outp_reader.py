@@ -105,6 +105,7 @@ class OutpCell:
         self.atom_density = float(data[3])  # atoms/barn*cm
         self.density = float(data[4])
         self.volume = float(data[5])
+        self.mass = float(data[6])
         self.outp = outp
         self.name = None
 

@@ -96,6 +96,7 @@ class PHITSTTreeHelper:
                 else:
                     n = Nuclide.from_Z_A_M(2, 4)
                     PHITSTTreeHelper.nuclides[par_id] = n
+
                 return n
         else:
             return None
@@ -140,6 +141,10 @@ class PHITSTTreeHelper:
     @property
     def z(self):
         return self.tree.z
+
+    @property
+    def time(self):
+        return self.tree.time  # in ns
 
     @property
     def energy(self):
@@ -235,7 +240,7 @@ ROOT.gROOT.ProcessLine(
     "Int_t           y;"
     "Int_t           z;"
     "Int_t           erg;"
-    "Int_t           time;"
+    "Int_t           time;"  # in ns
     "Int_t           wgt;"
     "}"
 )
@@ -383,7 +388,7 @@ class Container:
 
     @time.setter
     def time(self, value):
-        self.time_br[0] = value
+        self.time_br[0] = value  # in ns
 
     @property
     def erg(self):
@@ -608,13 +613,6 @@ class Container:
         tree = ROOT.TTree("tree", self.tree_name)
         return file, tree
 
-"""prev_params.erg = values[0]
-            prev_params.time = values[1]
-            prev_params.x = values[2]
-            prev_params.y = values[3]
-            prev_params.z = values[4]"""
-# Todo: I don't think this is useful actually ???
-
 
 class PrevParameters:
     def __init__(self):
@@ -642,9 +640,6 @@ class PrevParameters:
             return 0
         else:
             return de/dx
-
-
-# _containers = []  # to preserve memory of ROOT files
 
 
 def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str, None] = None,

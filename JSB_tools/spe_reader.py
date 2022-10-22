@@ -422,15 +422,15 @@ class SPEFile(EfficiencyCalMixin):
         self.counts.flags.writeable = False
         self.channels = np.arange(len(self.counts))
 
-        try:
-            self.unpickle_eff(eff_path)
-        except FileNotFoundError:
-            pass
-
         self._erg_calibration = data['_erg_calibration']
         # super(SPEFile, self).__init__(data['_erg_calibration'])
         self.erg_units = data['erg_units']
         self.shape_cal = data['shape_cal']
+
+        try:
+            self.unpickle_efficiency(eff_path)
+        except FileNotFoundError:
+            pass
 
     def set_useful_energy_range(self, erg_min=None, erg_max=None):
         if erg_min is None:
@@ -471,13 +471,13 @@ class SPEFile(EfficiencyCalMixin):
     @erg_calibration.setter
     def erg_calibration(self, values):
         self._erg_calibration = values
-        if self._energies is not None:
-            old_energies = self.energies
-        else:
-            old_energies = None
+        # if self._energies is not None:
+        #     old_energies = self.energies
+        # else:
+        #     old_energies = None
         self._energies = None
         self._erg_bins = None
-        self.recalc_effs(old_energies, self.energies)
+        self.recalc_effs()
 
     @property
     def erg_centers(self):
@@ -535,17 +535,18 @@ class SPEFile(EfficiencyCalMixin):
         self.counts.flags.writeable = False
         self._energies = None
         self._erg_bins = None
-        self.unpickle_eff()
-        # if erg_cal_path is not None:
-        #     self.load_erg_cal(erg_cal_path)
-        super(EfficiencyCalMixin, self).__init__(self.erg_calibration, load_erg_cal)
+
+        try:
+            self.unpickle_efficiency(self.eff_path)
+        except FileNotFoundError:
+            pass
 
         return self
 
     @classmethod
     def build(cls, path, counts, erg_calibration: List[float], livetime, realtime, channels=None, erg_units='KeV',
               shape_cal=None, description=None, system_start_time=None, eff_path=None,
-              load_erg_cal: Union[Path, bool] = None, load_eff_cal=True) -> SPEFile:
+              load_eff_cal=True) -> SPEFile:
         """
         Build Spe file from arguments.
         Args:
@@ -559,7 +560,6 @@ class SPEFile(EfficiencyCalMixin):
             shape_cal:
             description:
             system_start_time:
-            load_erg_cal:
             load_eff_cal:
 
         Returns:
@@ -608,18 +608,11 @@ class SPEFile(EfficiencyCalMixin):
         self.detector_id = 0
         self.maestro_version = None
 
-        # if effs is not None:
-        #     self.effs = effs
-        #
-        # self.eff_model = eff_model
-        # self.eff_scale = eff_scale
-        try:
-            self.unpickle_eff()
-        except FileNotFoundError:
-            pass
-        # if load_eff_cal:
-        #     if self.path is not None:
-        #         self.unpickle_eff()
+        if load_eff_cal:
+            try:
+                self.unpickle_efficiency(self.eff_path)
+            except FileNotFoundError:
+                pass
 
         return self
 
