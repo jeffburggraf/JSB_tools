@@ -89,7 +89,7 @@ def nuclide_list():
     return _all_nuclides_
 
 
-def human_readable_half_life(hl, include_errors, abrev_units=True):
+def pretty_half_life(hl, include_errors, abrev_units=True):
     def get_error_print(e, sig_figs=None):
         if sig_figs is None:
             if 1 <= e <= 100:
@@ -183,7 +183,7 @@ def human_readable_half_life(hl, include_errors, abrev_units=True):
                 out += " ({})".format(percent_error)
 
     if out is None:
-        assert False, 'Issue in "human_friendly_half_life'
+        assert False, 'Issue in "pretty_half_life'
 
     return process_return(out)
 
@@ -1267,8 +1267,8 @@ class Nuclide:
                         arrowprops=dict(width=0.1, headwidth=4, facecolor='black', shrink=0.03), rotation=90)
 
         ax.set_title('Gamma spectrum of {}, half-life = {}, for Ig (%) >= {:.1f}'.format(self.name,
-                                                                           self.human_friendly_half_life(False),
-                                                                           min_intensity*100))
+                                                                                         self.pretty_half_life(False),
+                                                                                         min_intensity * 100))
         ax.errorbar(x, y, yerr=y_err, xerr=x_err, label=label, marker='p', ls='none')
         if len(x) == 1:
             ax.set_xlim(x[0] - 10, x[0] + 10)
@@ -1323,16 +1323,17 @@ class Nuclide:
             self.__Z_A_iso_state__ = get_z_a_m_from_name(self.name)
         return self.__Z_A_iso_state__['A']
 
-    def human_friendly_half_life(self, include_errors: bool = True, abrev_units=True) -> str:
+    def pretty_half_life(self, include_errors: bool = True, abrev_units=True) -> str:
         """
         Gives the half life in units of seconds, hours, days, months, etc.
         Args:
             include_errors:  Whether to include uncertainties
+            abrev_units: seconds -> s, minutes -> m, etc.
 
         Returns:
 
         """
-        return human_readable_half_life(self.half_life, include_errors, abrev_units)
+        return pretty_half_life(self.half_life, include_errors, abrev_units)
 
     @property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
@@ -1701,7 +1702,7 @@ class Nuclide:
 
     def __repr__(self):
         try:
-            hl = self.human_friendly_half_life()
+            hl = self.pretty_half_life()
         except ValueError:
             hl = self.half_life
 
@@ -2414,7 +2415,8 @@ class ActivationReactionContainer:
                     continue
 
                 ergs = r.xs['0K'].x * 1E-6
-                xs = r.xs['0K'].y
+                xs = r.xs['0K'].y  #
+
 
                 for prod in r.products:
                     if Nuclide.NUCLIDE_NAME_MATCH.match(prod.particle):
@@ -2423,6 +2425,7 @@ class ActivationReactionContainer:
                         if '_e' in prod.particle:  # Handle this in a special case
                             continue
                         yield_y = prod.yield_.y
+
                         yield_x = prod.yield_.x * 1E-6
 
                         yield_y = np.interp(ergs, yield_x, yield_y)

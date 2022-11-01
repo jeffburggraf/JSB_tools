@@ -109,6 +109,10 @@ class EfficiencyCalMixin:
         Returns:
 
         """
+        assert isinstance(self, EfficiencyCalMixin), "EfficiencyCalMixin.unpickle_efficiency is not a class method. " \
+                                                     "Create an EfficiencyCalMixin object first,e.g.\n" \
+                                                     "eff = EfficiencyCalMixin()\neff.unpickle_efficiency()"
+
         eff_path = self._get_pickle_eff_path(eff_path)
 
         if not eff_path.is_absolute():
@@ -129,6 +133,9 @@ class EfficiencyCalMixin:
         for name, attrib in attribs.items():
             setattr(self, name, attrib)
         self.recalc_effs()
+
+    def eval_efficiency(self, erg):
+        return np.interp(erg, self._effs_ergs, self.effs)
 
     def pickle_efficiency(self, eff_path=None):
         """

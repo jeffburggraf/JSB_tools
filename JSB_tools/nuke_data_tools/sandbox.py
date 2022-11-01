@@ -32,7 +32,7 @@ nuclides = np.array(nuclides)[argsrt]
 braching_ratio_means = np.array(braching_ratio_means)[argsrt]
 
 for n, b in zip(nuclides, braching_ratio_means):
-    print(n, b, Nuclide.from_symbol(n).add_neutron(1).human_friendly_half_life())
+    print(n, b, Nuclide.from_symbol(n).add_neutron(1).pretty_half_life())
 
 #
 #
