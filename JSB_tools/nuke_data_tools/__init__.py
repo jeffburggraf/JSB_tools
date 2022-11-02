@@ -16,6 +16,7 @@ from JSB_tools.nuke_data_tools.global_directories import DECAY_PICKLE_DIR, PROTO
 from functools import cached_property
 from uncertainties import nominal_value
 from datetime import datetime, timedelta
+from openmc.data import Tabulated1D
 # from JSB_tools import TabPlot
 # from JSB_tools import TabPlot
 # from JSB_tools.nuke_data_tools.talys import talys_dir, run, pickle_result
@@ -451,100 +452,126 @@ alpha_mass = 3727.37
 
 
 class CrossSection1D:
-    def __init__(self, ergs: List[float], xss: List[Union[UFloat, float]],
+    def __init__(self, xs: Tabulated1D, yield_: Tabulated1D,
                  fig_label: str = None, incident_particle: str = 'particle', data_source='', mt_value=None,
                  **misc_data):
         """
         A container for energy dependent 1-D cross-section
         Args:
-            ergs: energies for which cross-section is evaluated.
-            xss: Cross sections corresponding to energies.
+            # x: energies for which cross-section is evaluated.
+            # xss: Cross sections corresponding to energies.
             fig_label: Figure label.
             incident_particle:
 
         """
-        self.__ergs__ = np.array(ergs)
-        self.__xss__ = np.array(xss)
+        self.__xs__ = xs
+        self.__yield__ = yield_
+        # self.__xss__ = np.array(xss)
         self.__fig_label__ = fig_label
         self.__incident_particle__ = incident_particle
         self.data_source = data_source
         self.misc_data = misc_data
         self.mt_value = mt_value
 
-    def cut(self, erg_min=None, erg_max=None):
+    @property
+    def emin(self):
+        if self.__yield__ is None:
+            return self.__xs__.x[0]
+        else:
+            return 1E-6 * max(self.__xs__.x[0], self.__yield__.x[0])
+
+    @property
+    def emax(self):
+        if self.__yield__ is None:
+            return self.__xs__.x[-1]
+        else:
+            return 1E-6 * min(self.__xs__.x[-1], self.__yield__.x[-1])
+
+    @property
+    def ergs(self):
+        return np.arange(self.emin, self.emax, 0.25)
+    # def cut(self, erg_min=None, erg_max=None):
+    #     """
+    #
+    #     Args:
+    #         erg_min:
+    #         erg_max:
+    #
+    #     Returns:
+    #
+    #     """
+    #     if erg_min is None:
+    #         erg_min = self.ergs[0]
+    #
+    #     if erg_max is None:
+    #         erg_max = self.ergs[-1]
+    #
+    #     sel = np.where((self.ergs <= erg_max) & (self.ergs >= erg_min))
+    #
+    #     self.__ergs__ = self.__ergs__[sel]
+    #
+    #     self.__xss__ = self.__xss__[sel]
+    #     try:
+    #         del self.xss
+    #     except AttributeError:
+    #         pass
+    #     try:
+    #         del self.ergs
+    #     except AttributeError:
+    #         pass
+    #
+    #     return self
+
+    # @property
+    # def nominal_xs(self):
+    #     return unp.nominal_values(self.xss)
+    #
+    # @cached_property
+    # def xss(self):
+    #     return np.interp(self.ergs, self.__ergs__, self.__xss__)
+    #
+    # @cached_property
+    # def ergs(self):
+    #     return self.__ergs__
+    #     # return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
+    #
+    # def threshold_erg(self, thresh_barn=50E-3):
+    #     if max(self.xss) < thresh_barn:
+    #         return np.inf
+    #     return self.ergs[np.argmax(self.xss > thresh_barn)]
+
+    # @classmethod
+    # def from_endf(cls, endf_path, product_name, mt=5):
+    #     e = Evaluation(endf_path)
+    #     r = Reaction.from_endf(e, mt)
+    #     for prod in r.products:
+    #         if prod.particle == product_name:
+    #             break
+    #     else:
+    #         assert False, 'could not find product in endf file {0}. Available products: {1}'\
+    #             .format(Path(endf_path).name, [prod.particle for prod in r.products])
+    #
+    #     erg = prod.yield_.x/1E6
+    #     xs = prod.yield_.y
+    #     return CrossSection1D(erg, xs)
+
+    def __call__(self, ergs):
         """
 
         Args:
-            erg_min:
-            erg_max:
+            ergs: Energy in MeV
 
         Returns:
 
         """
-        if erg_min is None:
-            erg_min = self.ergs[0]
-
-        if erg_max is None:
-            erg_max = self.ergs[-1]
-
-        sel = np.where((self.ergs <= erg_max) & (self.ergs >= erg_min))
-
-        self.__ergs__ = self.__ergs__[sel]
-
-        self.__xss__ = self.__xss__[sel]
-        try:
-            del self.xss
-        except AttributeError:
-            pass
-        try:
-            del self.ergs
-        except AttributeError:
-            pass
-
-        return self
-
-    @property
-    def nominal_xs(self):
-        return unp.nominal_values(self.xss)
-
-    @cached_property
-    def xss(self):
-        return np.interp(self.ergs, self.__ergs__, self.__xss__)
-
-    @cached_property
-    def ergs(self):
-        return self.__ergs__
-        # return np.arange(self.__ergs__[0], self.__ergs__[-1], XS_BIN_WIDTH_INTERPOLATION)
-
-    def threshold_erg(self, thresh_barn=50E-3):
-        if max(self.xss) < thresh_barn:
-            return np.inf
-        return self.ergs[np.argmax(self.xss > thresh_barn)]
-
-    @classmethod
-    def from_endf(cls, endf_path, product_name, mt=5):
-        e = Evaluation(endf_path)
-        r = Reaction.from_endf(e, mt)
-        for prod in r.products:
-            if prod.particle == product_name:
-                break
-        else:
-            assert False, 'could not find product in endf file {0}. Available products: {1}'\
-                .format(Path(endf_path).name, [prod.particle for prod in r.products])
-
-        erg = prod.yield_.x/1E6
-        xs = prod.yield_.y
-        return CrossSection1D(erg, xs)
-
-    def interp(self, new_energies) -> np.ndarray:
-        out = np.interp(new_energies, self.ergs, self.xss)
-
-        if not hasattr(new_energies, '__len__'):
-            return out
-
+        out = self.__xs__(1E6 * ergs)
+        if self.__yield__ is not None:
+            out *= self.__yield__(1E6 * ergs)
         return out
 
-    def plot(self, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, **mpl_kwargs):
+    def plot(self, ergs=None,  ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, **mpl_kwargs):
+        if ergs is None:
+            ergs = self.ergs
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
         try:
             unit_factor = unit_convert[units]
@@ -557,12 +584,6 @@ class CrossSection1D:
             ax = plt.gca()
             ax.set_title('')
 
-        if erg_max is None:
-            erg_max = self.__ergs__[-1]
-        if erg_min is None:
-            erg_min = self.__ergs__[0]
-        selector = np.where((self.__ergs__ <= erg_max) & (self.__ergs__ >= erg_min))
-
         label = mpl_kwargs.pop('label', None)
         if label is None:
             try:
@@ -571,7 +592,7 @@ class CrossSection1D:
                 src = 'No src data'
             label = f"{self.__fig_label__}" + (f"({src})" if src else "")
 
-        ax.plot(self.__ergs__[selector], (self.__xss__[selector]) * unit_factor, label=label, **mpl_kwargs)
+        ax.plot(ergs, self(ergs) * unit_factor, label=label, **mpl_kwargs)
 
         y_label = "Cross-section [{}]".format(units)
         x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
@@ -614,14 +635,15 @@ class CrossSection1D:
             return np.mean(xss)
 
     def __repr__(self):
-        ergs = ", ".join(["{:.2e}".format(e) for e in self.__ergs__])
-        xss = ", ".join(["{:.2e}".format(e) for e in self.__xss__])
-        out = "{0}:\nergs: {1}\nxs: {2}".format(self.__fig_label__, ergs, xss)
-        return out
+        return self.__fig_label__
+        # ergs = ", ".join(["{:.2e}".format(e) for e in self.ergs])
+        # xss = ", ".join(["{:.2e}".format(e) for e in self.__xss__])
+        # out = "{0}:\nergs: {1}\nxs: {2}".format(self.__fig_label__, ergs, xss)
+        # return out
 
-    def cut_off(self, threshold=0.001):
-        i = np.searchsorted(self.xss, threshold)
-        return self.ergs[i]
+    # def cut_off(self, threshold=0.001):
+    #     i = np.searchsorted(self.xss, threshold)
+    #     return self.ergs[i]
 
 
 class DecayMode:
@@ -1886,7 +1908,7 @@ class Nuclide:
 
         return out
 
-    def is_effectively_stable(self, threshold_in_years: int=100) -> bool:
+    def is_effectively_stable(self, threshold_in_years: int = 100) -> bool:
         """
         Is this nuclide effectively stable?
         Args:
@@ -2291,46 +2313,46 @@ class ActivationReactionContainer:
         Returns:
         """
 
-        assert isinstance(self._evaluation, Evaluation)
-
-        def get_xy(mt):
-            r = Reaction.from_endf(self._evaluation, mt)
-            xs = r.xs["0K"]  # cross-sections at zero Kelvin
-            return xs.x * 1E-6, xs.y
-
-        non_elastic = 3
-
-        fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
-
-        x, y = None, None
-
-        if self.projectile == 'neutron':
-            xtot, ytot = get_xy(1)
-            xel, yel = get_xy(2)
-
-            x = xel
-            if not (xel[0] > xtot[0] and xel[-1] < xtot[-1]):
-                x = xtot
-                yel = np.interp(x, xel, yel)
-            else:
-                ytot = np.interp(x, xtot, ytot)
-            y = ytot - yel
-        else:
-            if non_elastic in self._available_mts:
-                x, y = get_xy(non_elastic)
-
-        if x is not None:
-            self.inelastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
-
-        if 2 in self._available_mts:
-            x, y = get_xy(2)
-            fig_label = f"{self.nuclide_name}({self._get_projectile_short}, elastic)"
-            self.elastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
-
-        if 1 in self._available_mts:
-            x, y = get_xy(1)
-            fig_label = f"{self.nuclide_name}({self._get_projectile_short}, total)"
-            self.total_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+        assert isinstance(self._evaluation, Evaluation)  # todo
+        #
+        # def get_xy(mt):
+        #     r = Reaction.from_endf(self._evaluation, mt)
+        #     xs = r.xs["0K"]  # cross-sections at zero Kelvin
+        #     return xs.x * 1E-6, xs.y
+        #
+        # non_elastic = 3
+        #
+        # fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
+        #
+        # x, y = None, None
+        #
+        # if self.projectile == 'neutron':
+        #     xtot, ytot = get_xy(1)
+        #     xel, yel = get_xy(2)
+        #
+        #     x = xel
+        #     if not (xel[0] > xtot[0] and xel[-1] < xtot[-1]):
+        #         x = xtot
+        #         yel = np.interp(x, xel, yel)
+        #     else:
+        #         ytot = np.interp(x, xtot, ytot)
+        #     y = ytot - yel
+        # else:
+        #     if non_elastic in self._available_mts:
+        #         x, y = get_xy(non_elastic)
+        #
+        # if x is not None:
+        #     self.inelastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+        #
+        # if 2 in self._available_mts:
+        #     x, y = get_xy(2)
+        #     fig_label = f"{self.nuclide_name}({self._get_projectile_short}, elastic)"
+        #     self.elastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+        #
+        # if 1 in self._available_mts:
+        #     x, y = get_xy(1)
+        #     fig_label = f"{self.nuclide_name}({self._get_projectile_short}, total)"
+        #     self.total_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
 
     @property
     def _get_projectile_short(self):
@@ -2340,48 +2362,12 @@ class ActivationReactionContainer:
             assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
 
     @staticmethod
-    def _find_yield(r, product):
-        out = ActivationReactionContainer._get_xs(r)
-
-        for prod in r.products:
-            if prod.particle == product:
-                break
-        else:
-            raise FileNotFoundError(f"No product {product} for MT {r.mt}")
-
-        yield_y = prod.yield_.y
-        yield_x = prod.yield_.x * 1E-6
-
-        yield_y = np.interp(out['ergs'], yield_x, yield_y)
-        out['xss'] *= yield_y
-
-        return out
-
-    @staticmethod
-    def _get_xs(r: Reaction):
-        """
-        Get cross-section from Reaction instance
-        Args:
-            r:
-
-        Returns:
-
-        """
-        try:
-            ergs = r.xs['0K'].x * 1E-6
-            xs = r.xs['0K'].y
-        except KeyError:
-            raise FileNotFoundError
-
-        return {'ergs': ergs, "xss": xs, "mt": r.mt}
-
-    @staticmethod
     def _get_activation_products(e: Evaluation, projectile, debug=False) -> dict:
         """
         Get all activation products from ENDF Evaluation.
         Notes:
             MT 4: If r.product is same as target, this is production of ground state (i.e. same Z, A)
-                    If ZZAAA_e_1 is the product, then first level
+                  If ZZAAA_e_1 is the product, then first level
             MT 51: Different from ZZAAA_e_1 in MT=4 in that this is direct inelastic scattering (e.g. like setting isomer to ~0 in TALYS)
 
         Args:
@@ -2389,7 +2375,8 @@ class ActivationReactionContainer:
             projectile:
             debug:
 
-        Returns:dict of form {'ergs': [...], 'xss': [...], 'mt'=int}
+        Returns:dict of form {mt: {'xs': xs_tab, 'products': {'nuclide_name': yield_tab, 'nuclide_name': yield_tab}}}
+            where tab means the object is an openmc.Tabulated1D instance.
 
         """
         if debug:
@@ -2406,6 +2393,7 @@ class ActivationReactionContainer:
 
         for mf, mt, _, _ in e.reaction_list:
             if mf == 3:
+                outs[mt] = {'products': {}}
                 if debug:
                     print(f"MT = {mt}")
                 try:
@@ -2414,24 +2402,22 @@ class ActivationReactionContainer:
                     warn(f"openmc bug: Creating Reaction for {projectile} on {e.target['zsymam']}")
                     continue
 
-                ergs = r.xs['0K'].x * 1E-6
-                xs = r.xs['0K'].y  #
-
+                outs[mt]['xs'] = r.xs['0K']
 
                 for prod in r.products:
                     if Nuclide.NUCLIDE_NAME_MATCH.match(prod.particle):
                         if prod.particle == target:  # Not sure how to interpret this, so ignore.
                             continue
                         if '_e' in prod.particle:  # Handle this in a special case
-                            continue
-                        yield_y = prod.yield_.y
+                            if m := re.match(".+_e([0-9]+)", prod.particle):
+                                iso = int(m.groups()[0])
+                                prod.particle = to_string(z, a, iso)
+                            else:
+                                continue
+                        yield_ = prod.yield_
 
-                        yield_x = prod.yield_.x * 1E-6
-
-                        yield_y = np.interp(ergs, yield_x, yield_y)
-                        prod_xs = xs * yield_y
-
-                        outs[prod.particle] = {'ergs': ergs, "xss": prod_xs, "mt": mt}
+                        outs[mt]['products'][prod.particle] = yield_
+                        # outs[prod.particle] = {'ergs': ergs, "xss": prod_xs, "mt": mt}
 
                         if debug:
                             print(f"\t{prod} [included]")
@@ -2439,18 +2425,20 @@ class ActivationReactionContainer:
                         if debug:
                             print(f"\t{prod} [ignored]")
 
-        if projectile == 'neutron':  # radiative capture
-            r = Reaction.from_endf(e, 102)
-            try:
-                outs[to_string(z, a + 1, m)] = ActivationReactionContainer._get_xs(r)
-            except FileNotFoundError:
-                pass
-
-            r = Reaction.from_endf(e, 4)
-            for prod in r.products:
-                if m := re.match(".+_e([0-9]+)", prod.particle):
-                    iso = int(m.groups()[0])
-                    outs[to_string(z, a, iso)] = ActivationReactionContainer._find_yield(r, prod.particle)
+        # if projectile == 'neutron':  # radiative capture
+        #     r = Reaction.from_endf(e, 102)
+        #     try:
+        #         to_string(z, a + 1, m)
+        #         outs[102] = {'xs': r.xs['0K'], 'products': {to_string(z, a + 1, m): None}}
+        #     except KeyError:
+        #         pass
+        #
+        #     r = Reaction.from_endf(e, 4)
+        #     for prod in r.products:
+        #         print("what? ")
+        #         # if m := re.match(".+_e([0-9]+)", prod.particle):
+        #         #     iso = int(m.groups()[0])
+        #         #     outs[to_string(z, a, iso)] = ActivationReactionContainer._find_yield(r, prod.particle)
 
         if debug:
             tab = None
@@ -2516,26 +2504,28 @@ class ActivationReactionContainer:
 
         par_id = self._get_projectile_short
 
-        for activation_product_name, reaction_dict in ActivationReactionContainer._get_activation_products(e, projectile, debug).items():
-            if activation_product_name == nuclide_name:
-                continue
-
-            _product_label = cls.__get_product_name__(nuclide_name, activation_product_name, projectile)
-
-            xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){activation_product_name}"
-
-            xs = CrossSection1D(reaction_dict['ergs'], reaction_dict['xss'], xs_fig_label,
-                                self.projectile,  self.data_source, reaction_dict['mt'])
-
-            self.product_nuclide_names_xss[activation_product_name] = xs
-
+        for mt, reaction_dict in ActivationReactionContainer._get_activation_products(e, projectile, debug).items():
             try:
-                daughter_reaction = all_instances[activation_product_name]
-            except KeyError:  # initialize fresh instance
-                daughter_reaction = ActivationReactionContainer(activation_product_name, self.projectile,
-                                                                self.data_source)
+                openmc_xs = reaction_dict['xs']
+            except KeyError:
+                continue
+            for product_name, yield_ in reaction_dict['products'].items():
+                _product_label = cls.__get_product_name__(nuclide_name, product_name, projectile)
 
-            daughter_reaction.parent_nuclide_names.append(self.nuclide_name)
+                xs_fig_label = f"{self.nuclide_name}({par_id},{_product_label}){product_name}"
+
+                xs = CrossSection1D(openmc_xs, yield_, xs_fig_label,
+                                    self.projectile,  self.data_source, mt)
+
+                self.product_nuclide_names_xss[product_name] = xs
+
+                try:
+                    daughter_reaction = all_instances[product_name]
+                except KeyError:  # initialize fresh instance
+                    daughter_reaction = ActivationReactionContainer(product_name, self.projectile,
+                                                                    self.data_source)
+
+                daughter_reaction.parent_nuclide_names.append(self.nuclide_name)
 
         return self
 
@@ -2599,8 +2589,8 @@ class ActivationReactionContainer:
         return len(self.parent_nuclide_names) + len(self.product_nuclide_names_xss)
 
     def __repr__(self):
-        return 'self: {0}, parents: {1}, daughters: {2}'.format(self.nuclide_name, self.parent_nuclide_names,
-                                                                self.product_nuclide_names_xss.keys())
+        return '<ActivationReactionContainer: {0}, parents: {1}, daughters: {2}'\
+            .format(self.nuclide_name, self.parent_nuclide_names, self.product_nuclide_names_xss.keys())
 
 
 if __name__ == "__main__":
