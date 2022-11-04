@@ -3,12 +3,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 from pathlib import Path
 from typing import Dict, List, Union, Tuple
-from data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
+from JSB_tools.nuke_data_tools.nuclide.data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
 import re
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
-# from JSB_tools.nuke_data_tools import Nuclide
 import JSB_tools.nuke_data_tools.nuclide as nuclide
-# from JSB_tools.nuke_data_tools.nudel import LevelScheme
+from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import pickle
 from logging import warning as warn
 
@@ -20,6 +19,9 @@ class CustomUnpickler(pickle.Unpickler):
 
         elif name == 'ActivationCrossSection':
             return ActivationCrossSection
+
+        elif name == 'ActivationReactionContainer':
+            return ActivationReactionContainer
 
         return super().find_class(module, name)
 
@@ -39,7 +41,6 @@ class CrossSection1D:
         """
         self.__xs__ = xs
         self.__yield__ = yield_
-        # self.__xss__ = np.array(xss)
         self.__fig_label__ = fig_label
         self.__incident_particle__ = incident_particle
         self.data_source = data_source
@@ -78,7 +79,8 @@ class CrossSection1D:
             out *= self.__yield__(1E6 * ergs)
         return out
 
-    def plot(self, ergs=None,  ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, **mpl_kwargs):
+    def plot(self, ergs=None,  ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
+             **mpl_kwargs):
         if ergs is None:
             ergs = self.ergs
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
@@ -101,7 +103,7 @@ class CrossSection1D:
                 src = 'No src data'
             label = f"{self.__fig_label__}" + (f"({src})" if src else "")
 
-        ax.plot(ergs, self(ergs) * unit_factor, label=label, **mpl_kwargs)
+        handle = ax.plot(ergs, self(ergs) * unit_factor, label=label, **mpl_kwargs)[0]
 
         y_label = "Cross-section [{}]".format(units)
         x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
@@ -114,11 +116,10 @@ class CrossSection1D:
             ax.set_ylabel(y_label)
         if label != '':
             ax.legend()
-        return ax
-
-    @property
-    def bin_widths(self):
-        return XS_BIN_WIDTH_INTERPOLATION
+        if not return_handle:
+            return ax
+        else:
+            return ax, handle
 
     def mean_xs(self, erg_low=None, erg_high=None, weight_callable=None):
         if erg_low is None and erg_high is None:
@@ -145,7 +146,7 @@ class CrossSection1D:
             return np.mean(xss)
 
     def __repr__(self):
-        return self.__fig_label__
+        return f"{self.__fig_label__} ({self.data_source})"
 
 
 class ActivationCrossSection(CrossSection1D):
@@ -403,7 +404,7 @@ class ActivationReactionContainer:
     def __get_product_name__(n1, n2, projectile) -> str:
         """For a reaction like C13(p, X) -> B10, find X (e.g. a in this case for alpha). """
         _1 = nuclide.Nuclide.from_symbol(n1)
-        _2 = Nuclide.from_symbol(n2)
+        _2 = nuclide.Nuclide.from_symbol(n2)
         z1, n1 = _1.Z, _1.N
         z2, n2 = _2.Z, _2.N
         z = z1-z2
@@ -708,7 +709,8 @@ class ActivationReactionContainer:
     def pickle_all(projectile):
         for _data_source, _dict in ActivationReactionContainer.all_instances[projectile].items():
             for nuclide_name, reaction in _dict.items():
-                reaction.__pickle__()
+                if len(reaction.product_nuclide_names_xss) > 0:
+                    reaction.__pickle__()
 
     @staticmethod
     def __bug_test__(openmc_reaction: Reaction, openmc_product: Product, nuclide_name, incident_particle):
@@ -719,7 +721,7 @@ class ActivationReactionContainer:
         warn_other = False
         try:
             if len(openmc_product.yield_.y) == 2 and all(openmc_product.yield_.y == np.array([1, 1])):
-                one_less_n_name = Nuclide.from_symbol(nuclide_name).remove_neutron().name
+                one_less_n_name = Nuclide(nuclide_name).remove_neutron().name
                 warn_other = True
                 if activation_product_name == one_less_n_name:
                     if incident_particle == 'gamma':

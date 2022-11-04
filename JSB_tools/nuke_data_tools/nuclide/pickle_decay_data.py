@@ -203,6 +203,8 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
 
     if pickle_nuclides:
         for nuclide_name in nuclide_module.Nuclide.all_instances.keys():
+            if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
+                continue
             with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
                 print("Writing decay data for {0}".format(nuclide_name))
                 pickle.dump(nuclide_module.Nuclide.all_instances[nuclide_name], pickle_file)

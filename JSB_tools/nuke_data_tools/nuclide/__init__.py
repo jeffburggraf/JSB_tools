@@ -1,17 +1,21 @@
 from __future__ import annotations
 import numpy as np
 from matplotlib import pyplot as plt
-from JSB_tools import mpl_hist
 from pathlib import Path
 import re
 from logging import warning as warn
 from typing import Dict, List, Tuple, Union, Callable
 from uncertainties import UFloat, ufloat
-from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR
-import JSB_tools.nuke_data_tools.nuclide.cross_section as cross_section
+from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
+    NEUTRON_PICKLE_DIR
+# import JSB_tools.nuke_data_tools.nuclide.cross_section as cross_section
+from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
 import pickle
 from datetime import datetime, timedelta
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
+import functools
+import uncertainties.unumpy as unp
+
 try:
     from openmc.data.endf import Evaluation
     from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
@@ -22,15 +26,14 @@ except ModuleNotFoundError:
 
 pwd = Path(__file__).parent
 
-with open(pwd/'elements.pickle', 'rb') as f:
+with open(pwd / 'elements.pickle', 'rb') as f:
     _element_data = pickle.load(f)
 
 constants = {'neutron_mass': 939.56542052,
              'proton_mass': 938.272088,
-             'u_to_kg':  1.6605390666E-27,  # atomic mass units to kg
-             'J_to_eV': 1.0/1.602176634E-19,  # Joules to eV
-             'c':  299792458}
-
+             'u_to_kg': 1.6605390666E-27,  # atomic mass units to kg
+             'J_to_eV': 1.0 / 1.602176634E-19,  # Joules to eV
+             'c': 299792458}
 
 NATURAL_ABUNDANCE: dict = None  # Has form {SS1: {A1: abun1, A2: abum2, ...}, SS2: {...} }
 ALL_ISOTOPES: dict = None  #
@@ -42,9 +45,9 @@ def all_isotopes():
     Returns:
 
     """
-    global  ALL_ISOTOPES
+    global ALL_ISOTOPES
     if ALL_ISOTOPES is None:
-        with open(pwd/"all_isotopes.pickle", 'rb') as f:
+        with open(pwd / "all_isotopes.pickle", 'rb') as f:
             ALL_ISOTOPES = pickle.load(f)
     return ALL_ISOTOPES
 
@@ -65,7 +68,7 @@ def get_abundance():
     """
     global NATURAL_ABUNDANCE
     if NATURAL_ABUNDANCE is None:
-        with open(pwd/'abundances.pickle', 'rb') as f:
+        with open(pwd / 'abundances.pickle', 'rb') as f:
             NATURAL_ABUNDANCE = pickle.load(f)
     return NATURAL_ABUNDANCE
 
@@ -88,43 +91,35 @@ class CustomUnpickler(pickle.Unpickler):
 
 class Element:
     def __init__(self, Z):
-        data = _element_data[Z]
-        self.atomic_number = data['AtomicNumber']
-        self.element_name = data['Element']
-        self._atomic_mass_in_u = data['AtomicMass']
-        self.element_period = data['Period']
-        self.element_group = data['Group']
-        self.element_phase = data['Phase']
-        self.metalQ = data['Metal'] == 'yes'
-        self.nonmetalQ = data['Nonmetal'] == 'yes'
-        self.metalloidQ = data['Metalloid'] == 'yes'
-        self.element_type = data['Type']
-        self.atomic_radius = data['AtomicRadius']
-        self.electronegativity = data['Electronegativity']
-        self.firstIonization = data['FirstIonization']
-        self.density = data['Density']  # in g/cm3
-        self.melting_point = data['MeltingPoint']
-        self.boiling_point = data['BoilingPoint']
-        self.specific_heat = data['SpecificHeat']
-        self.n_valence_electrons = data['NumberofValence']
-
-    def get_atomic_mass(self, unit='g'):
-        u_to_kg = constants['u_to_kg']
-        if unit == 'u':
-            s = 1
-        elif unit == 'g':
-            s = u_to_kg * 1E3
-        elif unit == 'kg':
-            s = u_to_kg
-        else:
-            raise ValueError(f"Invalid unit, {unit}")
-
-        return self._atomic_mass_in_u * s
+        try:
+            data = _element_data[Z]
+            self.element_name = data['Element']
+            self.element_period = data['Period']
+            self.element_group = data['Group']
+            self.element_phase = data['Phase']
+            self.metalQ = data['Metal'] == 'yes'
+            self.nonmetalQ = data['Nonmetal'] == 'yes'
+            self.metalloidQ = data['Metalloid'] == 'yes'
+            self.element_type = data['Type']
+            self.atomic_radius = data['AtomicRadius']
+            self.electronegativity = data['Electronegativity']
+            self.firstIonization = data['FirstIonization']
+            self.density = data['Density']  # in g/cm3
+            self.melting_point = data['MeltingPoint']
+            self.boiling_point = data['BoilingPoint']
+            self.specific_heat = data['SpecificHeat']
+            self.n_valence_electrons = data['NumberofValence']
+        except KeyError:
+            for k in ['element_name ', 'element_period ', 'element_group ', 'element_phase ', 'metalQ ', 'nonmetalQ ',
+                      'metalloidQ ', 'element_type ', 'atomic_radius ', 'electronegativity ', 'firstIonization ',
+                      'density ', 'melting_point ', 'boiling_point ', 'specific_heat ', 'n_valence_electrons ']:
+                setattr(self, k, None)
+                self.atom_density = 0
 
 
 def get_symbol_etc(symbol):
     """
-    Get (correct) symbol fro argument and return nucleus Z, A, etc.
+    Get (correct) symbol from argument and return nucleus Z, A, etc.
     Args:
         symbol:
 
@@ -137,7 +132,7 @@ def get_symbol_etc(symbol):
             symbol = symbol[:-1] + '_m1'
 
     if symbol[0] == 'n' and symbol.lower() in ['n', 'neutron']:
-        symbol = 'N1'
+        symbol = 'Nn1'
 
     _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
 
@@ -162,6 +157,9 @@ def get_symbol_etc(symbol):
 
     if isometric_state is None:
         isometric_state = 0
+    else:
+        isometric_state = int(isometric_state)
+
     isometric_state = isometric_state
 
     return symbol, Z, A, isometric_state
@@ -192,12 +190,11 @@ class Nuclide(Element):
                       'is_stable': None,
                       'decay_radiation_types': list,
                       '__decay_daughters_str__': list,
-                      '__decay_gamma_lines': list,
-                      '__decay_betaplus_lines': list,
                       'decay_modes': dict,
                       '__decay_parents_str__': list,
                       '__decay_mode_for_print__': None,
-                      'self.mean_energies': None
+                      'self.mean_energies': None,
+                      'is_valid': False
                       }
 
     @staticmethod
@@ -208,7 +205,7 @@ class Nuclide(Element):
 
         return val
 
-    def __new__(cls, symbol, *args, **kwargs):
+    def __new__(cls, symbol=None, *args, **kwargs):
         """
 
         Args:
@@ -216,8 +213,10 @@ class Nuclide(Element):
             *args:
             **kwargs: if _default in kwargs, run __init__, setting all values to default.
         """
+        if symbol is None:  # deal with call to __new__ during unpickling.
+            return object.__new__(cls)
 
-        symbol,  z, a, m = get_symbol_etc(symbol)
+        symbol, z, a, m = get_symbol_etc(symbol)
 
         pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
 
@@ -237,13 +236,34 @@ class Nuclide(Element):
 
         return self
 
+    def _get_default_attrib(self, name):
+        """
+        Sets attrib to default value unless the attrib is already defined
+        Args:
+            name:
+
+        Returns:
+
+        """
+        if hasattr(self, name):
+            return getattr(self, name)
+        else:  # set default
+            try:
+                val = Nuclide.default_values[name]
+                if isinstance(val, Callable):
+                    val = val()
+                return val
+            except KeyError:
+                return None
+
     def __init__(self, symbol, **kwargs):
         """
 
 
         Notes:
-            __init__ is not called unless the nuclide is to be set to default values.
-            The heavy lifting is done in __new__
+            In __new__, attempt to load nuclide data from pickle file.
+            If not file present or "__default__" in kwargs, set attribs to defaults.
+            The reason for doing this in __init__ is so that autocomplete and type hinting work as usual.
 
         Args:
             symbol:
@@ -251,37 +271,33 @@ class Nuclide(Element):
         """
         self.name = symbol
 
-        super().__init__(self.Z)
+        super().__init__(self.Z)  # set element information. This is
 
-        self.excitation_energy: float = 0
-        self.half_life: Union[None, UFloat] = ufloat(np.nan, np.nan)
-        self.spin: int = None
+        self.excitation_energy: float = self._get_default_attrib('excitation_energy')
+        self.half_life: Union[None, UFloat] = self._get_default_attrib('half_life')
+        self.spin: int = self._get_default_attrib('spin')
 
-        self.is_stable: Union[None, bool] = None
-        self.decay_radiation_types: list = []
+        self.is_stable: Union[None, bool] = self._get_default_attrib('is_stable')
+        self.decay_radiation_types: list = self._get_default_attrib('decay_radiation_types')
 
         # self.__decay_daughters_str__: List[str] = self.__get_default_atrib('__decay_daughters_str__')
-        self.__decay_daughters_str__: List[str] = []
+        self.__decay_daughters_str__: List[str] = self._get_default_attrib('__decay_daughters_str__')
 
-        self.__decay_gamma_lines: List[GammaLine] = []
-        # self.__decay_gamma_lines: List[GammaLine] = self.__get_default_atrib('__decay_gamma_lines')
-        # self.__decay_betaplus_lines: List[BetaPlusLine] = self.__get_default_atrib('__decay_betaplus_lines')
-        self.__decay_betaplus_lines: List[BetaPlusLine] = []
+        self.__decay_gamma_lines: List[GammaLine] = None
+        self.__decay_betaplus_lines: List[BetaPlusLine] = None
 
         # self.decay_modes: Dict[Tuple[str], List[DecayMode]] = self.__get_default_atrib('decay_modes')
-        self.decay_modes: Dict[Tuple[str], List[DecayMode]] = {}
+        self.decay_modes: Dict[Tuple[str], List[DecayMode]] = self._get_default_attrib('decay_modes')
 
-        self.__decay_parents_str__: List[str] = []
+        self.__decay_parents_str__: List[str] = self._get_default_attrib('__decay_parents_str__')
         # self.__decay_parents_str__: List[str] = self.__get_default_atrib('__decay_parents_str__')
 
-        self.__decay_mode_for_print__ = None
-        # self.__decay_mode_for_print__ = self.__get_default_atrib('__decay_mode_for_print__')
-        self.is_valid = False
+        self.is_valid = self._get_default_attrib('is_valid')
 
-        # self.decay_radiation_types
+        self.__decay_mode_for_print__ = None
 
     @staticmethod
-    def get_z_a_m_from_name(name: str) -> Dict[str, int]:
+    def get_z_a_m_from_name(name: str):
         """
         From a nuclide name, return the atomic number (Z), mass number (A) and isomeric state (ie excited state, or M)
         Args:
@@ -290,13 +306,23 @@ class Nuclide(Element):
         Returns:
 
         """
-        _m = Nuclide.NUCLIDE_NAME_MATCH.match(name)
+        try:
+            _m = Nuclide.NUCLIDE_NAME_MATCH.match(name)
+            if not _m:
+                raise ValueError
+            z = ATOMIC_NUMBER[_m.group('s')]
+            a = _m.group('A')
+            m = _m.group('iso')
 
-        assert _m, "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
-                   "e.g. Cl38_m1, n1, Ar40".format(name)
+        except (ValueError, KeyError) as e:
+            raise ValueError(
+                "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
+                "e.g. Cl38_m1, Nn1, Ar40".format(name)) from e
 
-        assert False
+        if m is None:
+            m = 0
 
+        return z, a, m
 
     def adopted_levels(self):
         """
@@ -325,7 +351,7 @@ class Nuclide(Element):
             raise IndexError(f"No gamma lines from {self.name}")
         ergs = np.array([g.erg.n for g in self.decay_gamma_lines])
         if isinstance(energy, (float, int)):
-            out = self.decay_gamma_lines[np.argmin(np.abs(ergs-energy))]
+            out = self.decay_gamma_lines[np.argmin(np.abs(ergs - energy))]
         else:
             if not hasattr(energy, '__iter__'):
                 raise ValueError(f'Invalid value for arg `energy`: {energy}')
@@ -339,7 +365,7 @@ class Nuclide(Element):
             if spec.__is_empty__:
                 return []
             self.__decay_betaplus_lines = list(sorted([BetaPlusLine(self, ds) for ds in spec.__discrete_entries__],
-                                               key=lambda x: -x.intensity))
+                                                      key=lambda x: -x.intensity))
             return self.__decay_betaplus_lines
         else:
             return self.__decay_betaplus_lines
@@ -367,7 +393,7 @@ class Nuclide(Element):
         try:
             {(1, 1): 2212, (0, 1): 2112}[(self.Z, self.A)]
         except KeyError:
-            return int(self.Z*1E6 + self.A)
+            return int(self.Z * 1E6 + self.A)
 
     def get_n_decays(self, ref_activity: float, activity_ref_date: datetime, tot_acquisition_time: float,
                      acquisition_ti: datetime = datetime.now(), activity_unit='uCi') -> UFloat:
@@ -390,14 +416,14 @@ class Nuclide(Element):
 
         corr_seconds = (acquisition_ti - activity_ref_date).total_seconds()  # seconds since ref date.
         try:
-            unit_factor = {'ci': 3.7E10, 'uci': 3.7E10*1E-6, 'bq': 1, "kbq": 1E3}[activity_unit.lower()]
+            unit_factor = {'ci': 3.7E10, 'uci': 3.7E10 * 1E-6, 'bq': 1, "kbq": 1E3}[activity_unit.lower()]
         except KeyError:
             assert False, f'Bad activity unit, "{activity_unit}". Valid units: Ci, uCi, Bq, uBq'
 
-        ref_num_nuclides = ref_activity*unit_factor/self.decay_rate  # # of nuclides when ref calibration was performed
+        ref_num_nuclides = ref_activity * unit_factor / self.decay_rate  # # of nuclides when ref calibration was performed
 
-        corrected_num_nuclides = ref_num_nuclides*0.5**(corr_seconds/self.half_life)
-        n_decays = corrected_num_nuclides*(1-0.5**(tot_acquisition_time/self.half_life))
+        corrected_num_nuclides = ref_num_nuclides * 0.5 ** (corr_seconds / self.half_life)
+        n_decays = corrected_num_nuclides * (1 - 0.5 ** (tot_acquisition_time / self.half_life))
         return n_decays
 
     def plot_decay_gamma_spectrum(self, label_first_n_lines: int = 5, min_intensity: float = 0.02, ax=None,
@@ -456,7 +482,7 @@ class Nuclide(Element):
             xy = np.array(xy)
             erg = xy[0]
 
-            text_xy = (xy[0], y_max*1.1)
+            text_xy = (xy[0], y_max * 1.1)
             ax.annotate('{:.2f}KeV'.format(erg), xy=xy, xytext=text_xy,
                         arrowprops=dict(width=0.1, headwidth=4, facecolor='black', shrink=0.03), rotation=90)
 
@@ -466,7 +492,7 @@ class Nuclide(Element):
         ax.errorbar(x, y, yerr=y_err, xerr=x_err, label=label, marker='p', ls='none')
         if len(x) == 1:
             ax.set_xlim(x[0] - 10, x[0] + 10)
-        ax.set_ylim(0, max(y+y_err)*1.5)
+        ax.set_ylim(0, max(y + y_err) * 1.5)
 
         return ax
 
@@ -496,7 +522,7 @@ class Nuclide(Element):
 
     @property
     def N(self) -> int:
-        return self.A-self.Z
+        return self.A - self.Z
 
     @property
     def isometric_state(self) -> int:
@@ -511,35 +537,57 @@ class Nuclide(Element):
         """
         return self.__Z_A_iso_state__[1]
 
-    def pretty_half_life(self, include_errors: bool = True, abrev_units=True) -> str:
+    def pretty_half_life(self, include_errors: bool = False, precision=3) -> str:
         """
         Gives the half life in units of seconds, hours, days, months, etc.
         Args:
+            precision:
             include_errors:  Whether to include uncertainties
-            abrev_units: seconds -> s, minutes -> m, etc.
 
         Returns:
 
         """
-        return self.half_life
-        # return pretty_half_life(self.half_life, include_errors, abrev_units)
+        if self.half_life is None:
+            return None
+        elif np.isinf(self.half_life.n):
+            return 'inf'
 
-    @property
+        dts = [('ns', 1E-9), ('us', 1E-6), ('ms', 1E-3), ('s', 1), ('min', 60), ('hr', 60 ** 2), ('day', 24 * 60 ** 2),
+               ('month', 30 * 24 * 60 ** 2), ('year', 365 * 24 * 60 ** 2)]
+
+        n_units = 0
+        unit = 0
+
+        for unit, dt in dts[::-1]:
+            n_units = self.half_life.n / dt
+            if n_units > 1:
+                break
+
+        if include_errors:
+            rel_err = self.half_life.std_dev / self.half_life.n
+            n_units = ufloat(n_units, rel_err * n_units)
+            nominal_n_units = n_units.n
+        else:
+            nominal_n_units = n_units
+
+        if np.abs(np.log10(nominal_n_units)) > 3:
+            n_units = f"{n_units:.{precision}e}"
+        else:
+            n_units = f"{n_units:.{precision + 1}g}"
+
+        return f"{n_units} {unit}"
+
+    @functools.cached_property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
-        global PROTON_INDUCED_FISSION_XS1D
-        simple_nuclide_name = self.atomic_symbol + str(self.A)
-        if simple_nuclide_name not in PROTON_INDUCED_FISSION_XS1D:
-            try:
-                with open(PROTON_PICKLE_DIR/'fissionXS'/'{}.pickle'.format(simple_nuclide_name), 'rb') as f:
-                    PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
-            except FileNotFoundError:
-                assert False, 'No proton induced fissionXS data for {0}. Download it and integrate it if it is ' \
-                              'available. The conversion to pickle is done in `endf_to_pickle.py`. See "{1}" for' \
-                              ' instructions.'.format(self, pwd/'endf_files'/'FissionXS'/'readme.md')
+        try:
+            with open(PROTON_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(self.name), 'rb') as f:
+                return CustomUnpickler(f).load()
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f'No proton induced fissionXS data for {self.name}. Download it and integrate it if it is available. '
+                f'The conversion to pickle is done in `endf_to_pickle.py`. See "{1}" for instructions.')
 
-        return PROTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
-
-    @property
+    @functools.cached_property
     def gamma_induced_fiss_xs(self) -> CrossSection1D:
         """
         Get the photon induced fissionXS cross section for this nuclide.
@@ -547,15 +595,11 @@ class Nuclide(Element):
         Returns:
 
         """
-        simple_nuclide_name = self.atomic_symbol + str(self.A)
-        if simple_nuclide_name not in PHOTON_INDUCED_FISSION_XS1D:
-            try:
-                with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
-                    PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
-            except FileNotFoundError:
-                assert False, 'No photon induced fissionXS data for {0}.'
-
-        return PHOTON_INDUCED_FISSION_XS1D[simple_nuclide_name]
+        try:
+            with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(self.name), 'rb') as f:
+                return CustomUnpickler(f).load()
+        except FileNotFoundError:
+            raise FileNotFoundError(f'No photon induced fissionXS data for {self.name}.')
 
     @property
     def neutron_induced_fiss_xs(self) -> CrossSection1D:
@@ -565,29 +609,21 @@ class Nuclide(Element):
         Returns:
 
         """
-        simple_nuclide_name = self.atomic_symbol + str(self.A)
-        if simple_nuclide_name not in PHOTON_INDUCED_FISSION_XS1D:
-            try:
-                with open(NEUTRON_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(simple_nuclide_name), 'rb') as f:
-                    NEUTRON_INDUCED_FISSION_XS1D[simple_nuclide_name] = CustomUnpickler(f).load()
-            except FileNotFoundError:
-                assert False, 'No photon induced fissionXS data for {0}.'
-
-        return NEUTRON_INDUCED_FISSION_XS1D[simple_nuclide_name]
+        try:
+            with open(NEUTRON_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(self.name), 'rb') as f:
+                return CustomUnpickler(f).load()
+        except FileNotFoundError:
+            assert False, f'No photon induced fissionXS data for {self.name}.'
 
     def rest_energy(self, units='MeV'):  # in J or MeV
         units = units.lower()
         ev = constants['J_to_eV']
-        unit_dict = {'j': 1, 'mev': ev*1E-6, 'ev': ev}
-        assert units in unit_dict.keys(), 'Invalid units, "{}".\nUse one of the following: {}'\
+        unit_dict = {'j': 1, 'mev': ev * 1E-6, 'ev': ev}
+        assert units in unit_dict.keys(), 'Invalid units, "{}".\nUse one of the following: {}' \
             .format(units, unit_dict.keys())
         c = constants['c']
-        j = self.get_atomic_mass('kg') * c**2
-        return j*unit_dict[units]
-
-    @property
-    def mass_in_mev_per_c2(self) -> float:
-        return self.rest_energy('MeV')
+        j = self.atomic_mass('kg') * c ** 2
+        return j * unit_dict[units]
 
     def neutron_separation_energy(self, n_neutrons=1):
         """
@@ -601,7 +637,7 @@ class Nuclide(Element):
         z, a, m = Nuclide.get_z_a_m_from_name(self.name).values()
         a -= n_neutrons
         neutron_mass = constants['neutron_mass']
-        return (Nuclide.from_Z_A_M(z, a, m).mass_in_mev_per_c2 + n_neutrons*neutron_mass) - self.mass_in_mev_per_c2
+        return (Nuclide.from_Z_A_M(z, a, m).rest_energy('MeV') + n_neutrons * neutron_mass) - self.rest_energy('MeV')
 
     def proton_separation_energy(self, n_protons=1):
         """
@@ -616,7 +652,7 @@ class Nuclide(Element):
         z -= n_protons
         a -= n_protons
         proton_mass = constants['proton_mass']
-        return (Nuclide.from_Z_A_M(z, a, m).mass_in_mev_per_c2 + n_protons * proton_mass) - self.mass_in_mev_per_c2
+        return (Nuclide.from_Z_A_M(z, a, m).rest_energy('MeV') + n_protons * proton_mass) - self.rest_energy('MeV')
 
     def alpha_separation_energy(self):
         """
@@ -629,8 +665,8 @@ class Nuclide(Element):
         z -= 2
         a -= 2
 
-        return (Nuclide.from_Z_A_M(z, a, m).mass_in_mev_per_c2 + Nuclide.from_symbol('He-4').mass_in_mev_per_c2) \
-                - self.mass_in_mev_per_c2
+        return (Nuclide.from_Z_A_M(z, a, m).rest_energy('MeV') + Nuclide('He-4').rest_energy('MeV')) \
+               - self.rest_energy('MeV')
 
     # @property
     # def atomic_mass(self) -> float:
@@ -669,9 +705,34 @@ class Nuclide(Element):
             except KeyError:
                 continue
         try:
-            return Nuclide.isotopic_abundance(nuclide_name)/tot
+            return Nuclide.isotopic_abundance(nuclide_name) / tot
         except ZeroDivisionError:
             return 0
+
+    @functools.cached_property
+    def atom_density(self):
+        return self.density/self.atomic_mass(unit='g')
+
+    def atomic_mass(self, unit='g'):
+        """
+        todo: mass differences from xcited states can be calculated.
+        Args:
+            unit:
+
+        Returns:
+
+        """
+        u_to_kg = constants['u_to_kg']
+        if unit == 'u':
+            s = 1
+        elif unit == 'g':
+            s = u_to_kg * 1E3
+        elif unit == 'kg':
+            s = u_to_kg
+        else:
+            raise ValueError(f"Invalid unit, {unit}")
+
+        return atomic_mass(self.name) * s
 
     @staticmethod
     def get_all_isotopes(atomic_symbol: str, non_zero_abundance=False) -> List[str]:
@@ -705,7 +766,7 @@ class Nuclide(Element):
     @staticmethod
     def natural_abundance(symbol) -> float:
         try:
-            return NATURAL_ABUNDANCE[symbol]
+            return Nuclide.isotopic_abundance(symbol)
         except KeyError:
             return 0.
 
@@ -716,7 +777,7 @@ class Nuclide(Element):
 
         for s in Nuclide.get_all_isotopes(atomic_symbol):
             try:
-                a = NATURAL_ABUNDANCE[s]
+                a = Nuclide.isotopic_abundance(s)
             except KeyError:
                 continue
 
@@ -751,22 +812,22 @@ class Nuclide(Element):
         return f'{self.Z}{self.A:0>3}'
 
     def add_proton(self, n=1) -> Nuclide:
-        return self.from_Z_A_M(self.Z+n, self.A+n, self.isometric_state)
+        return self.from_Z_A_M(self.Z + n, self.A + n, self.isometric_state)
 
     def remove_proton(self, n=1) -> Nuclide:
-        return self.from_Z_A_M(self.Z-n, self.A-n, self.isometric_state)
+        return self.from_Z_A_M(self.Z - n, self.A - n, self.isometric_state)
 
     def remove_neutron(self, n=1) -> Nuclide:
-        return self.from_Z_A_M(self.Z, self.A-n, self.isometric_state)
+        return self.from_Z_A_M(self.Z, self.A - n, self.isometric_state)
 
     def add_neutron(self, n=1) -> Nuclide:
-        return self.from_Z_A_M(self.Z, self.A+n, self.isometric_state)
+        return self.from_Z_A_M(self.Z, self.A + n, self.isometric_state)
 
     def remove_alpha(self):
-        return self.from_Z_A_M(self.Z-2, self.A-4, self.isometric_state)
+        return self.from_Z_A_M(self.Z - 2, self.A - 4, self.isometric_state)
 
     def add_alpha(self):
-        return self.from_Z_A_M(self.Z+2, self.A+4, self.isometric_state)
+        return self.from_Z_A_M(self.Z + 2, self.A + 4, self.isometric_state)
 
     def is_heavy_FF(self) -> bool:
         return 125 < self.A < 158
@@ -802,7 +863,7 @@ class Nuclide(Element):
         name = "{0}{1}".format(symbol, a)
         if isometric_state != 0:
             name += "_m" + str(isometric_state)
-        return cls.from_symbol(name)
+        return cls(name)
 
     # @classmethod
     # def from_symbol(cls, symbol: str, discard_meta_state=False):
@@ -877,7 +938,7 @@ class Nuclide(Element):
             if self.excitation_energy == 0:
                 ext_print = " (? keV)"
             else:
-                ext_print = f" ({self.excitation_energy*1E-3:.6g} keV)"
+                ext_print = f" ({self.excitation_energy * 1E-3:.6g} keV)"
         else:
             ext_print = ""
 
@@ -888,7 +949,7 @@ class Nuclide(Element):
 
     @property
     def decay_rate(self):
-        return np.log(2)/self.half_life
+        return np.log(2) / self.half_life
 
     def get_decay_parents(self, return_branching_ratios=False) -> Union[List[Nuclide], List[Tuple[Nuclide, UFloat]]]:
         """
@@ -906,19 +967,19 @@ class Nuclide(Element):
         if return_branching_ratios:
             out_dict = {}
             for n in self.__decay_parents_str__:
-                par = self.from_symbol(n)
+                par = Nuclide(n)
                 out_dict[n] = ufloat(0, 0)
                 for modes in par.decay_modes.values():
                     for mode in modes:
                         if mode.daughter_name == self.name:
                             out_dict[n] += mode.branching_ratio
-            return [(Nuclide.from_symbol(k), v) for k, v in out_dict.items()]
+            return [(Nuclide(k), v) for k, v in out_dict.items()]
         else:
-            return list([self.from_symbol(name) for name in self.__decay_parents_str__])
+            return list([Nuclide(name) for name in self.__decay_parents_str__])
 
     @property
     def decay_daughters(self):
-        out = list([self.from_symbol(name) for name in self.__decay_daughters_str__])
+        out = list([Nuclide(name) for name in self.__decay_daughters_str__])
         for nuclide in out:
             for decay_modes in self.decay_modes.values():
                 for decay_mode in decay_modes:
@@ -940,7 +1001,8 @@ class Nuclide(Element):
         f = getattr(self, f"get_incident_{particle}_daughters")
         return f(data_source=data_source, a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only)
 
-    def get_incident_proton_parents(self, data_source=None, a_z_hl_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+    def get_incident_proton_parents(self, data_source=None, a_z_hl_cut='', is_stable_only=False) -> Dict[
+        str, InducedParent]:
         """
         See __get_daughters__
         :param data_source:
@@ -950,19 +1012,24 @@ class Nuclide(Element):
         """
         return self.__get_parents__('proton', a_z_hl_cut, is_stable_only, data_source)
 
-    def get_incident_proton_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+    def get_incident_proton_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+        str, InducedDaughter]:
         return self.__get_daughters__('proton', a_z_hl_m_cut, is_stable_only, data_source)
 
-    def get_incident_gamma_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+    def get_incident_gamma_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+        str, InducedDaughter]:
         return self.__get_daughters__('gamma', a_z_hl_m_cut, is_stable_only, data_source)
 
-    def get_incident_gamma_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+    def get_incident_gamma_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+        str, InducedParent]:
         return self.__get_parents__('gamma', a_z_hl_m_cut, is_stable_only, data_source)
 
-    def get_incident_neutron_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[str, InducedDaughter]:
+    def get_incident_neutron_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+        str, InducedDaughter]:
         return self.__get_daughters__('neutron', a_z_hl_m_cut, is_stable_only, data_source)
 
-    def get_incident_neutron_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[str, InducedParent]:
+    def get_incident_neutron_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+        str, InducedParent]:
         return self.__get_parents__('neutron', a_z_hl_m_cut, is_stable_only, data_source)
 
     def __get_daughters__(self, projectile, a_z_hl_m_cut='', is_stable_only=False,
@@ -986,7 +1053,9 @@ class Nuclide(Element):
         out: Dict[str, InducedDaughter] = {}
 
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
-            daughter_nuclide = Nuclide.from_symbol(daughter_name)
+            if daughter_name == 'photon':  # todo: Dont pickle these
+                continue
+            daughter_nuclide = Nuclide(daughter_name)
             a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, \
                           daughter_nuclide.isometric_state
             if __nuclide_cut__(a_z_hl_m_cut, a, z, hl, is_stable_only, m):
@@ -1002,7 +1071,7 @@ class Nuclide(Element):
         assert isinstance(daughter_reaction, ActivationReactionContainer)
         out: Dict[str, InducedParent] = {}
 
-        parent_nuclides = [Nuclide.from_symbol(name) for name in daughter_reaction.parent_nuclide_names]
+        parent_nuclides = [Nuclide(name) for name in daughter_reaction.parent_nuclide_names if name != 'photon']
 
         for parent_nuclide in parent_nuclides:
             a, z, hl, m = parent_nuclide.A, parent_nuclide.Z, parent_nuclide.half_life, parent_nuclide.isometric_state
@@ -1014,7 +1083,7 @@ class Nuclide(Element):
         return out
 
     def inelastic_xs(self, projectile, data_source=None):
-        warnings.warn("See U235 neutron inelastic vs fission xs. Doesn't make sense bc F is > inel. Something is wrong. ")
+        warn("See U235 neutron inelastic vs fission xs. Doesn't make sense bc F is > inel. Something is wrong. ")
         return self.__get_misc_xs__('inelastic_xs', projectile, data_source)
 
     def elastic_xs(self, projectile, data_source=None):
@@ -1062,7 +1131,7 @@ class Nuclide(Element):
         Returns:
 
         """
-        return self.half_life.n >= (365*24*60**2)*threshold_in_years
+        return self.half_life.n >= (365 * 24 * 60 ** 2) * threshold_in_years
 
     @staticmethod
     def get_all_nuclides(z_a_m_hl_cut: str = '', is_stable_only=False) -> List[Nuclide]:
@@ -1084,13 +1153,105 @@ class Nuclide(Element):
         """
         assert isinstance(z_a_m_hl_cut, str), 'All cuts must be a string instance.'
         nuclides = []
-        with open(DECAY_PICKLE_DIR/'quick_nuclide_lookup.pickle', 'rb') as f:
+        with open(DECAY_PICKLE_DIR / 'quick_nuclide_lookup.pickle', 'rb') as f:
             nuclides_dict = pickle.load(f)
         for (a, z, hl, m), nuclide_name in nuclides_dict.items():
             if __nuclide_cut__(z_a_m_hl_cut, a, z, hl, is_stable_only, m=m):
-                nuclides.append(Nuclide.from_symbol(nuclide_name))
+                nuclides.append(Nuclide(nuclide_name))
 
         yield from nuclides
+
+
+def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=False, m=0) -> bool:
+    """
+    Does a nuclide with a given z, a, and time_in_seconds (half life) make fit the criteria given by `a_z_hl_cut`?
+    Args:
+        a_z_hl_cut: The criteria to be evaluated as python code, where z=atomic number, a=mass_number,
+            and time_in_seconds=half life in seconds
+        a: mass number
+        z: atomic number
+        hl: half life in seconds
+        is_stable_only: does the half life have to be effectively infinity?
+        m: Excited level.
+    Returns: bool
+    """
+    makes_cut = True
+
+    assert isinstance(is_stable_only, bool)
+    if is_stable_only:
+        if hl is None:
+            return False
+        elif not np.isinf(unp.nominal_values(hl)):
+            return False
+
+    if len(a_z_hl_cut) > 0:
+        a_z_hl_cut = a_z_hl_cut.lower()
+        if 'hl' in a_z_hl_cut and hl is None:
+            makes_cut = False
+        else:
+            try:
+                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z, 'm': m})
+                assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
+            except NameError as e:
+                invalid_name = str(e).split("'")[1]
+
+                raise Exception("\nInvalid name '{}' used in cut. Valid names are: 'z', 'a', and 'hl',"
+                                " which stand for atomic-number, mass-number, and half-life, respectively."
+                                .format(invalid_name)) from e
+
+    return makes_cut
+
+
+class InducedDaughter(Nuclide):
+    """
+    A subclass of Nuclide representing a nucleus that was the result of an induced reaction.
+    This adds some cross section attributes
+    Attributes:
+        xs: CrossSection1D instance
+        parent: Parent nuclide
+        inducing_particle:
+    """
+
+    def __new__(cls, daughter_nuclide, parent_nuclide, inducing_particle, *args, **kwargs):
+        return daughter_nuclide
+
+    def __init__(self, daughter_nuclide, parent_nuclide, inducing_particle):
+        assert isinstance(daughter_nuclide, Nuclide)
+        assert isinstance(parent_nuclide, Nuclide)
+        # kwargs = {k: v for k, v in daughter_nuclide.__dict__.items() if k != "name"}
+        # super().__init__(daughter_nuclide.name, __internal__=True, **kwargs)
+        self.xs: ActivationCrossSection = None
+        self.parent: Nuclide = parent_nuclide
+        self.inducing_particle = inducing_particle
+
+    def __repr__(self):
+        par_symbol = self.inducing_particle[0]
+        return '{0}({1},X) --> {2}'.format(self.parent, par_symbol, super().__repr__())
+
+
+class InducedParent(Nuclide):
+    """
+        A subclass of Nuclide representing a nucleus that is the parent in an induced reaction.
+        This adds some cross section attributes
+        Attributes:
+            xs: CrossSection1D instance
+            daughter: Daughter nuclide
+            inducing_particle:
+        """
+
+    def __new__(cls, daughter_nuclide, parent_nuclide, inducing_particle, *args, **kwargs):
+        return parent_nuclide
+
+    def __init__(self, daughter_nuclide, parent_nuclide, inducing_particle):
+        assert isinstance(daughter_nuclide, Nuclide)
+        assert isinstance(parent_nuclide, Nuclide)
+        self.xs: ActivationCrossSection = None
+        self.daughter: Nuclide = daughter_nuclide
+        self.inducing_particle = inducing_particle
+
+    def __repr__(self):
+        par_symbol = self.inducing_particle[0]
+        return '{0}({1},X) --> {2}'.format(super().__repr__(), par_symbol, self.daughter)
 
 
 class _DiscreteSpectrum:
@@ -1109,10 +1270,10 @@ class _DiscreteSpectrum:
         try:
             self.__discrete_entries__ = spectra_data["discrete"]
             for emission_data in self.__discrete_entries__:
-                emission_data['intensity'] = discrete_normalization*emission_data['intensity']
-                emission_data['energy'] = emission_data['energy']*1E-3
+                emission_data['intensity'] = discrete_normalization * emission_data['intensity']
+                emission_data['energy'] = emission_data['energy'] * 1E-3
                 emission_data['from_mode'] = tuple(emission_data['from_mode'])
-        except KeyError as e:
+        except KeyError:
             self.__discrete_entries__ = []
 
         try:
@@ -1126,8 +1287,8 @@ class _DiscreteSpectrum:
     @classmethod
     def __blank_entry(cls, nuclide: Nuclide, radiation_type) -> _DiscreteSpectrum:
         out = cls(nuclide, {'energy_average': ufloat(0, 0),
-                             'type': radiation_type,
-                             'discrete_normalization': 1})
+                            'type': radiation_type,
+                            'discrete_normalization': 1})
         out.__is_empty__ = True
         return out
 
@@ -1149,7 +1310,7 @@ class _DiscreteSpectrum:
         radiation_type = radiation_type.replace('/', '_')
         # if radiation_type == 'ec/beta+':
         #     radiation_type = 'ec_beta_plus'
-        return pwd/'data'/'nuclides'/f'{radiation_type}_spectra'/f'{nuclide_name}.pickle'
+        return pwd / 'data' / 'nuclides' / f'{radiation_type}_spectra' / f'{nuclide_name}.pickle'
 
     def __pickle__(self):
         path = self.__pickle_path(self.radiation_type, self.__nuclide_name)
@@ -1170,16 +1331,17 @@ class DecayMode:
         partial_decay_constant: Rate of decays through this mode.
         partial_half_life: Half life for decays through this mode.
     """
+
     def __init__(self, openmc_decay_mode, parent_half_life):
-        self.q_value = openmc_decay_mode.energy*1E-6
+        self.q_value = openmc_decay_mode.energy * 1E-6
         self.modes = tuple(openmc_decay_mode.modes)
         self.daughter_name = openmc_decay_mode.daughter
         self.parent_name = openmc_decay_mode.parent
         self.branching_ratio = openmc_decay_mode.branching_ratio
-        parent_decay_rate = np.log(2)/parent_half_life
-        self.partial_decay_constant = parent_decay_rate*self.branching_ratio
+        parent_decay_rate = np.log(2) / parent_half_life
+        self.partial_decay_constant = parent_decay_rate * self.branching_ratio
         if self.partial_decay_constant != 0:
-            self.partial_half_life = np.log(2)/self.partial_decay_constant
+            self.partial_half_life = np.log(2) / self.partial_decay_constant
         else:
             self.partial_half_life = np.inf
 
@@ -1188,11 +1350,8 @@ class DecayMode:
 
     def __repr__(self):
         out = "{0} -> {1} via {2} with BR of {3}".format(self.parent_name, self.daughter_name, self.modes,
-                                                   self.branching_ratio)
-        if not DEBUG:
-            return out
-        else:
-            return f"{out}, Q-value: {self.q_value}"
+                                                         self.branching_ratio)
+        return f"{out}, Q-value: {self.q_value}"
 
 
 class DecayModeHandlerMixin:
@@ -1209,7 +1368,7 @@ class DecayModeHandlerMixin:
 
     @property
     def parent_nuclide(self) -> Nuclide:
-        return Nuclide.from_symbol(self.parent_nuclide_name)
+        return Nuclide(self.parent_nuclide_name)
 
     @property
     def from_mode(self):
@@ -1236,6 +1395,7 @@ class GammaLine(DecayModeHandlerMixin):
         intensity:
             Mean number of gammas with energy self.erg emitted per parent nucleus decay (through any decay channel)
     """
+
     def __new__(cls, *args, **kwargs):
         obj = super(GammaLine, cls).__new__(cls)
         if kwargs:  # alternative __init__
@@ -1278,11 +1438,11 @@ class GammaLine(DecayModeHandlerMixin):
 
         """
         assert isinstance(tot_acquisition_time, (float, int)), tot_acquisition_time
-        n = Nuclide.from_symbol(self.parent_nuclide_name)
+        n = Nuclide(self.parent_nuclide_name)
         n_decays = n.get_n_decays(ref_activity=ref_activity, activity_ref_date=activity_ref_date,
                                   tot_acquisition_time=tot_acquisition_time, acquisition_ti=acquisition_ti,
                                   activity_unit=activity_unit)
-        return n_decays*self.intensity
+        return n_decays * self.intensity
 
     def __repr__(self, compact=False):
         if len(self.from_modes) > 1:
@@ -1290,7 +1450,7 @@ class GammaLine(DecayModeHandlerMixin):
         else:
             mode = self.from_mode
 
-        return "Gamma line at {0:.2f} KeV; intensity = {1:.2e}; decay: {2} "\
+        return "Gamma line at {0:.2f} KeV; intensity = {1:.2e}; decay: {2} " \
             .format(self.erg, self.intensity, mode)
 
 
@@ -1300,6 +1460,7 @@ class BetaPlusLine(DecayModeHandlerMixin):
         erg: This appears to be the energy of available to an EC transition, not that of the beta particle.
         positron_intensity:
     """
+
     def __init__(self, nuclide: Nuclide, emission_data):
         """
         A container for a single gamma emission line.
@@ -1310,7 +1471,7 @@ class BetaPlusLine(DecayModeHandlerMixin):
     """
         super(BetaPlusLine, self).__init__(nuclide, emission_data)
 
-        self.erg = emission_data['energy']*1E-6
+        self.erg = emission_data['energy'] * 1E-6
         self.intensity = emission_data['intensity']
         self.absolute_rate = nuclide.decay_rate * self.intensity
         self.positron_intensity = emission_data['positron_intensity']
@@ -1320,9 +1481,14 @@ class BetaPlusLine(DecayModeHandlerMixin):
 
 
 if __name__ == '__main__':
-    Nuclide().decay_modes
-    n = Nuclide.from_symbol("U235")
-    print(n.all_isotopes())
+    n = Nuclide("Pb208")
+
+    for k, n in n.get_incident_proton_daughters().items():
+        print(k, n.xs)
+        if k == 'Bi205':
+            n.xs.plot()
+    plt.show()
+
     # from openmc.data import NATURAL_ABUNDANCE
     # isotopes = {}
     # for path in Path('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/data/nuclides').iterdir():
@@ -1346,4 +1512,3 @@ if __name__ == '__main__':
     #
     # for k, v in isotopes.items():
     #     print(k, v)
-

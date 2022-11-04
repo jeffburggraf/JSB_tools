@@ -12,7 +12,7 @@ from uncertainties import unumpy as unp
 import re
 import matplotlib.pyplot as plt
 from pathlib import Path
-from JSB_tools.nuke_data_tools.global_directories import FISS_YIELDS_PATH
+from JSB_tools.nuke_data_tools.nuclide.data_directories import FISS_YIELDS_PATH
 import marshal
 from functools import cached_property
 

@@ -1,18 +1,4 @@
-# from __future__ import annotations
-# import pickle
-# import numpy as np
-# import warnings
-# from matplotlib import pyplot as plt
-# import re
-# from pathlib import Path
-# from warnings import warn
-# from uncertainties import ufloat, UFloat
-# from typing import Union, List, Dict, Tuple
-# from global_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
-#     NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
-# from uncertainties import nominal_value
-# from datetime import datetime, timedelta
-from logging import warning as warn
+from JSB_tools.nuke_data_tools.nuclide import Nuclide
 
 def s():
 
@@ -50,17 +36,6 @@ def s():
                                "Lu159_m1": {"half_life": ufloat(10, 5)},
                                "Rh114_m1": {"half_life": ufloat(1.85, 0.05), "__decay_daughters_str__": "Pd114"},
                                "Pr132_m1": {"half_life": ufloat(20, 5), "__decay_daughters_str__": "Ce132"}}
-
-
-
-
-
-
-
-
-
-
-
 
     def decay_default_func(nuclide_name):
         """

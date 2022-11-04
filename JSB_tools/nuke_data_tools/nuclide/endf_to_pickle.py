@@ -14,7 +14,7 @@ from typing import Dict, List, TypedDict
 from JSB_tools.nuke_data_tools. nuclide import Nuclide, DecayMode, _DiscreteSpectrum
 from warnings import warn
 from JSB_tools.nuke_data_tools.nuclide.data_directories import GAMMA_PICKLE_DIR,\
-     PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
+     PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH, DECAY_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationReactionContainer
 from uncertainties import ufloat
 from numbers import Number
@@ -81,7 +81,7 @@ def quick_nuclide_lookup():
         for path in DECAY_PICKLE_DIR.iterdir():
             if path.is_file():
                 if Nuclide.NUCLIDE_NAME_MATCH.match(path.name):
-                    nuclide = Nuclide.from_symbol(path.stem)
+                    nuclide = Nuclide(path.stem)
                     key = nuclide.A, nuclide.Z, nuclide.half_life, nuclide.isometric_state
                     data[key] = nuclide.name
 
