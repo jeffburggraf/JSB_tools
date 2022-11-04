@@ -11,14 +11,15 @@ from pathlib import Path
 import re
 import marshal
 from typing import Dict, List, TypedDict
-from JSB_tools.nuke_data_tools import NUCLIDE_INSTANCES, Nuclide, DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR,\
-     PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, CrossSection1D, ActivationReactionContainer,\
-     GammaLine, DecayMode, FISS_YIELDS_PATH, _DiscreteSpectrum
+from JSB_tools.nuke_data_tools. nuclide import Nuclide, DecayMode, _DiscreteSpectrum
 from warnings import warn
+from JSB_tools.nuke_data_tools.nuclide.data_directories import GAMMA_PICKLE_DIR,\
+     PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH
+from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationReactionContainer
 from uncertainties import ufloat
 from numbers import Number
 import numpy as np
-from global_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
+from data_directories import parent_data_dir, decay_data_dir, proton_padf_data_dir, proton_enfd_b_data_dir,\
     gamma_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir,\
     proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, gamma_tendl_dir,\
     neutron_fission_yield_data_dir_ukfy, tendl_2019_proton_dir, neutron_tendl_data_dir, proton_tendl_data_dir
@@ -63,73 +64,6 @@ hl_match_2 = re.compile(r'T1\/2=([0-9.decE+-]+) ([A-Z]+).*')
 stable_match = re.compile('Parent half-life: STABLE.+')
 
 
-def get_error_from_error_in_last_digit(x: Number, last_digit_err: Number):
-    """Convert `x` to a ufloat, where `x` is a number whose uncertainty in the last digit is given by `last_digit_err`
-        """
-    assert isinstance(x, Number)
-    assert isinstance(last_digit_err, Number)
-    x_str = str(x)
-    if 'e' in x_str.lower():
-        index = x_str.index('e')
-        x_str, exponent = x_str[:index], int(x_str[index+1:])
-    else:
-        exponent = 0
-
-    if '.' not in x_str:
-        x_str += '.'
-    n_digits_after_zero = len(x_str[x_str.index('.'):]) - 1
-    err_scale = 10**-n_digits_after_zero
-    err = float(last_digit_err)*err_scale
-    x = float(x_str)
-    return ufloat(x, err)*10**exponent
-
-
-def get_hl_from_ednf_file(path_to_file):
-    """
-    Used to correct for bug in openmc where the ENDF evaluation of some stable isotopes return a half life of zero.
-    Also, very very long half-lives, e.g. 1E12 years, were also returning a half life of zero.
-    """
-
-    with open(path_to_file) as f:
-        _line = None
-        for line in f:
-            if m := hl_match_1.match(line):
-                units = m.groups()[1]
-                hl = float(m.groups()[0])
-                err = m.groups()[-1]
-                _line = line
-                break
-            elif m := hl_match_2.match(line):
-                units = m.groups()[1]
-                hl = float(m.groups()[0])
-                _line = line
-                break
-            elif stable_match.match(line):
-                hl = ufloat(np.inf, 0)
-                return hl
-        else:
-            assert False, 'Failed to read half life in file: {}'.format(path_to_file.name)
-    if units == 'Y':
-        scale = _seconds_in_year
-    else:
-        assert False, 'Haven\'t implemented the units "{}". This is an easy fix.'.format(units)
-
-    if err == 'GT' or err == 'GE':
-        err = hl
-    else:
-        try:
-            err = float(err)
-        except ValueError:
-            warn('\nUnknown specification of half-life error: "{}", in line: "{}", in file: "{}"'
-                 .format(err, _line, path_to_file.name))
-            err = hl
-        else:
-            hl_out = get_error_from_error_in_last_digit(hl, err)
-            return scale * hl_out
-
-    return ufloat(hl*scale, err*scale)
-
-
 def decay_evaluation_score(decay1):
     if decay1 is None:
         return 0
@@ -137,205 +71,6 @@ def decay_evaluation_score(decay1):
         return len(decay1.spectra['gamma']['discrete'])
     except KeyError:
         return 0.5
-
-
-def set_nuclide_attributes(_self: Nuclide, open_mc_decay):
-    _self.half_life = open_mc_decay.half_life
-    _self.mean_energies = open_mc_decay.average_energies
-    _self.spin = open_mc_decay.nuclide["spin"]
-    if np.isinf(_self.half_life.n) or open_mc_decay.nuclide["stable"]:
-        _self.is_stable = True
-        _self.half_life = ufloat(np.inf, 0)
-    else:
-        _self.is_stable = False
-    _self.decay_radiation_types.extend(open_mc_decay.spectra.keys())
-    for mode in open_mc_decay.modes:
-        decay_mode = DecayMode(mode, _self.half_life)
-        try:
-            _self.decay_modes[tuple(mode.modes)].append(decay_mode)
-        except KeyError:
-            _self.decay_modes[tuple(mode.modes)] = [decay_mode]
-    l = len(_self.decay_modes)
-    for key, value in list(_self.decay_modes.items())[:]:
-        _self.decay_modes[key] = list(sorted(_self.decay_modes[key], key=lambda x: -x.branching_ratio))
-    assert len(_self.decay_modes) == l
-
-
-def pickle_spectra(nuclide: Nuclide, open_mc_decay: Decay):
-    """
-    Pickle decay data for each radiation type.
-    Returns:
-
-    """
-    for spectra_mode, spec_data in open_mc_decay.spectra.items():
-        spectra = _DiscreteSpectrum(nuclide, spec_data)
-        spectra.__pickle__()
-
-
-def pickle_decay_data(pickle_data=True, nuclides_to_process=None):
-    """
-    Todo: Re-implement this. It's kinda ugly?
-    Pickles nuclide properties into ../data/nuclides/x.pickle
-    Writes   __fast__gamma_dict__.marshal, which can be used to quickly look up decays by decay energy.
-    data structure of __fast__gamma_dict__:
-        {
-         g_erg_1: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...]),
-         g_erg_2: (...)
-         }
-    Args:
-        pickle_data: If false, don't save to pickle files.
-        nuclides_to_process: If None, process all data. Otherwise, should be a list of nuclide names,
-            e.g. ["Na22", "U240"].
-
-    Returns:
-
-    """
-    if nuclides_to_process is not None:
-        assert hasattr(nuclides_to_process, '__iter__')
-        assert isinstance(nuclides_to_process[0], str)
-    directory_endf = decay_data_dir/'decay_ENDF'  # Path to downloaded ENDF decay data
-    directory_jeff = decay_data_dir/'decay_JEFF'  # Path to downloaded ENDF decay data
-
-    assert directory_endf.exists(), 'Create the following directory: {}'.format(directory_endf)
-    assert directory_jeff.exists(), 'Create the following directory: {}'.format(directory_jeff)
-    openmc_decays = {}
-
-    jeff_decay_file_match = re.compile('([A-Z][a-z]{0,2})([0-9]{1,3})([mnop]*)')
-    endf_decay_file_match = re.compile(r'dec-[0-9]{3}_(?P<S>[A-Za-z]{1,2})_(?P<A>[0-9]+)(?:m(?P<M>[0-9]+))?\.endf')
-    misc_evaluation_data = {'excitation_energy': {}}
-
-    for endf_file_path in directory_endf.iterdir():
-        file_name = endf_file_path.name
-        if _m := endf_decay_file_match.match(file_name):
-            a = int(_m.group("A"))
-            _s = _m.group("S")  # nuclide symbol, e.g. Cl, Xe, Ar
-            m = _m.group("M")
-            if m is not None:
-                m = int(m)
-            nuclide_name = "{0}{1}{2}".format(_s, a, "" if m is None else "_m{0}".format(m))
-            if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
-                continue
-
-            print('Reading ENDSF decay data from {}'.format(endf_file_path.name))
-            e = Evaluation(endf_file_path)
-            d = Decay(e)
-            misc_evaluation_data['excitation_energy'][nuclide_name] = e.target['excitation_energy']*1E-3  #eV -> keV
-
-            if d.nuclide["stable"]:
-                half_life = ufloat(np.inf, 0)
-            elif d.half_life.n == 0:
-                half_life = get_hl_from_ednf_file(endf_file_path)
-            else:
-                half_life = d.half_life
-            openmc_decays[nuclide_name] = {'endf': d, 'jeff': None, 'half_life': half_life}
-        else:
-            continue
-    #
-    for jeff_file_path in directory_jeff.iterdir():
-        file_name = jeff_file_path.name
-        if match := jeff_decay_file_match.match(file_name):
-            s = match.groups()[0]
-            a = int(match.groups()[1])
-
-            m = match.groups()[2]
-            m = {'': 0, 'm': 1, 'n': 2, 'o': 3}[m]
-
-            if m != 0:
-                nuclide_name = '{}{}_m{}'.format(s, a, m)
-            else:
-                nuclide_name = '{}{}'.format(s, a)
-
-            if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
-                continue
-
-            print('Reading JEFF decay data from {}'.format(jeff_file_path.name))
-
-            e = Evaluation(jeff_file_path)
-            d = Decay(e)
-
-            misc_evaluation_data['excitation_energy'][nuclide_name] = e.target['excitation_energy']*1E-3  #eV -> keV
-
-            if nuclide_name in openmc_decays:
-                openmc_decays[nuclide_name]['jeff'] = d
-            else:
-                openmc_decays[nuclide_name] = {'endf': None, 'jeff': d, 'half_life': d.half_life}
-
-    for parent_nuclide_name, openmc_dict in openmc_decays.items():
-        jeff_score = decay_evaluation_score(openmc_dict['jeff'])
-        endf_score = decay_evaluation_score(openmc_dict['endf'])
-
-        if jeff_score > endf_score:
-            openmc_decay = openmc_dict['jeff']
-        else:
-            openmc_decay = openmc_dict['endf']
-
-        openmc_decay.half_life = openmc_dict['half_life']
-
-        if parent_nuclide_name in NUCLIDE_INSTANCES:
-            parent_nuclide = NUCLIDE_INSTANCES[parent_nuclide_name]
-        else:
-            parent_nuclide = Nuclide(parent_nuclide_name, __internal__=True)
-            NUCLIDE_INSTANCES[parent_nuclide_name] = parent_nuclide
-
-        for attr in misc_evaluation_data:
-            try:
-                v = misc_evaluation_data[attr][parent_nuclide_name]
-                setattr(parent_nuclide, attr, v)
-            except KeyError:
-                continue
-
-        daughter_names = [mode.daughter for mode in openmc_decay.modes]
-
-        for daughter_nuclide_name in daughter_names:
-            # if (nuclides_to_process is not None) and (daughter_nuclide_name not in nuclides_to_process):
-            #     continue
-            if daughter_nuclide_name in NUCLIDE_INSTANCES:
-                daughter_nuclide = NUCLIDE_INSTANCES[daughter_nuclide_name]
-            else:
-                daughter_nuclide = Nuclide(daughter_nuclide_name, __internal__=True)
-                NUCLIDE_INSTANCES[daughter_nuclide_name] = daughter_nuclide
-
-            if daughter_nuclide_name != parent_nuclide_name:
-                daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
-                parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
-
-        set_nuclide_attributes(parent_nuclide, openmc_decay)
-        pickle_spectra(parent_nuclide, openmc_decay)
-
-    if pickle_data:
-        for nuclide_name in NUCLIDE_INSTANCES.keys():
-            with open(DECAY_PICKLE_DIR/(nuclide_name + '.pickle'), "wb") as pickle_file:
-                print("Writing decay data for {0}".format(nuclide_name))
-                pickle.dump(NUCLIDE_INSTANCES[nuclide_name], pickle_file)
-
-
-
-        # data structure of d: {g_erg: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...])}
-
-        if nuclides_to_process is None:  # None means all here.
-            d = {}
-            for nuclide in NUCLIDE_INSTANCES.values():
-                for g in nuclide.decay_gamma_lines:
-                    erg = g.erg.n
-                    intensity: float = g.intensity.n
-                    hl = nuclide.half_life.n
-                    try:
-                        i = len(d[erg][1]) - np.searchsorted(d[erg][1][::-1], intensity)
-                        # the below flow control is to avoid adding duplicates.
-                        for __name, __intensity in zip(d[erg][0], d[erg][1]):
-                            if __name == nuclide.name and __intensity == intensity:
-                                break
-                        else:
-                            d[erg][0].insert(i, nuclide.name)
-                            d[erg][1].insert(i, intensity)
-                            d[erg][2].insert(i, hl)
-
-                    except KeyError:
-                        d[erg] = ([nuclide.name], [intensity], [hl])
-
-            with open(DECAY_PICKLE_DIR / '__fast__gamma_dict__.marshal', 'wb') as f:
-                print("Writing quick gamma lookup table...")
-                marshal.dump(d, f)
 
 
 def quick_nuclide_lookup():
@@ -435,76 +170,83 @@ def pickle_gamma_neutron_fission_xs_data():
                 pickle.dump(xs, f)
 
 
-def pickle_proton_activation_data():
-    # for path in proton_padf_data_dir.iterdir():
-    #     if re.match("([0-9]{2})([0-9]{3})(M[0-9])?", path.name):
-    #         ActivationReactionContainer.from_endf(path, 'proton', 'padf')
-    # ActivationReactionContainer.pickle_all('proton', 'padf')
+def pickle_proton_activation_data(pickle=True, endf=True, tendl=True):
 
-    for path in Path(proton_enfd_b_data_dir).iterdir():
-        f_name = path.name
+    if endf:
+        p = ProgressReport(len(list(proton_enfd_b_data_dir.iterdir())), 5)
+        i = 0
+        for path in Path(proton_enfd_b_data_dir).iterdir():
+            f_name = path.name
 
-        _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
-        if _m:
-            ActivationReactionContainer.from_endf(path, 'proton', 'endf')
-    ActivationReactionContainer.pickle_all('proton', 'endf')
+            _m = re.match(r"p-([0-9]+)_([A-Za-z]{1,2})_([0-9]+)\.endf", f_name)
+            if _m:
+                ActivationReactionContainer.from_endf(path, 'proton', 'endf')
+            i += 1
+            p.log(i, 'Protons ENDF')
 
-    for path in Path(proton_tendl_data_dir).iterdir():
-        if path.is_dir() and re.match("[A-Z][a-z]{0,2}", path.name):
-            for path in path.iterdir():
-                if re.match(r"[A-Z][a-z]{0,2}[0-9]+", path.name):
-                    nuclide_name = path.name
-                    path = path/'lib'/'endf'/f'p-{nuclide_name}.tendl'
-                    if path.exists(): #and (nuclide_name[:2] == 'Np' or nuclide_name[:1] == 'U'):
-                        try:
-                            ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
-                        except ActivationReactionContainer.EvaluationException:
-                            warn(f"openmc Evaluation Failed for {nuclide_name}")
-                            continue
+    if tendl:
+        p = ProgressReport(len(list(proton_tendl_data_dir.iterdir())), 5)
+        i = 0
+        for path in Path(proton_tendl_data_dir).iterdir():
+            if re.match(r'p-[A-Z][a-z]*[0-9]+[mnopqrst]?\.tendl', path.name):
+                ActivationReactionContainer.from_endf(path, 'proton', 'tendl')
+            i += 1
+            p.log(i, 'Protons TENDL')
 
-    ActivationReactionContainer.pickle_all('proton', 'tendl')
+    if pickle:
+        ActivationReactionContainer.pickle_all('proton')
 
 
-def pickle_neutron_activation_data():
-    for file_path in neutron_enfd_b_data_dir.iterdir():
-        _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
-        if _m:
-            ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
+def pickle_neutron_activation_data(pickle=True, endf=True, tendl=True):
 
-    ActivationReactionContainer.pickle_all('neutron')
-
-    for file_path in neutron_tendl_data_dir.iterdir():
-        _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnop]?g\.asc', file_path.name)
-        if _m:
-            ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
-
-    ActivationReactionContainer.pickle_all('neutron')
-
-
-def pickle_gamma_activation_data():
-    p = ProgressReport(len(list(gamma_tendl_dir.iterdir())) + len(list(gamma_endf_dir.iterdir())), 5)
-    i = 0
-    for file_path in gamma_endf_dir.iterdir():
-        _m = re.match(r'g_(?P<Z>[0-9]+)-(?P<S>[A-Z][a-z]{0,2})-(?P<A>[0-9]+)_[0-9]+.+endf', file_path.name)
-        if _m:
-            ActivationReactionContainer.from_endf(file_path, 'gamma', 'endf')
+    if endf:
+        p = ProgressReport(len(list(neutron_enfd_b_data_dir.iterdir())), 5)
+        i = 0
+        for file_path in neutron_enfd_b_data_dir.iterdir():
+            _m = re.match(r'n-([0-9]{3})_([A-Z,a-z]+)_([0-9]{3})\.endf', file_path.name)
+            if _m:
+                ActivationReactionContainer.from_endf(file_path, 'neutron', 'endf')
         i += 1
-        p.log(i)
+        p.log(i, 'Neutrons ENDF')
 
-    for file_path in gamma_tendl_dir.iterdir():
-        if m := re.match("g-([A-Z][a-z]*)([0-9]+)([m-z]{0,1})\.tendl", file_path.name):
-            # a = int(m.groups()[1])
-            # s = m.groups()[0]
-            # iso = m.groups()[2]
-            #
-            # if len(iso):
-            #     iso = f"_m{'mnopqrstuvwxyz'.index(iso) + 1}"
+    if tendl:
+        p = ProgressReport(len(list(neutron_tendl_data_dir.iterdir())), 5)
+        i = 0
+        for file_path in neutron_tendl_data_dir.iterdir():
+            _m = re.match(r'([A-Z][a-z]{0,2})([0-9]+)[mnop]?g\.asc', file_path.name)
+            if _m:
+                ActivationReactionContainer.from_endf(file_path, 'neutron', 'tendl')
+            i += 1
+            p.log(i, 'Neutrons TENDL')
 
-            ActivationReactionContainer.from_endf(file_path, 'gamma', 'tendl')
+    if pickle:
+        ActivationReactionContainer.pickle_all('neutron')
 
-        i += 1
-        p.log(i)
-    ActivationReactionContainer.pickle_all('gamma')
+
+def pickle_gamma_activation_data(pickle=True, endf=True, tendl=True):
+
+    if endf:
+        p = ProgressReport(len(list(gamma_endf_dir.iterdir())), 5)
+        i = 0
+        for file_path in gamma_endf_dir.iterdir():
+            _m = re.match(r'g_(?P<Z>[0-9]+)-(?P<S>[A-Z][a-z]{0,2})-(?P<A>[0-9]+)_[0-9]+.+endf', file_path.name)
+            if _m:
+                ActivationReactionContainer.from_endf(file_path, 'gamma', 'endf')
+            i += 1
+            p.log(i, 'Gammas ENDF')
+
+    if tendl:
+        p = ProgressReport(len(list(gamma_tendl_dir.iterdir())), 5)
+        i = 0
+        for file_path in gamma_tendl_dir.iterdir():
+            if m := re.match("g-([A-Z][a-z]*)([0-9]+)([m-z]{0,1})\.tendl", file_path.name):
+                ActivationReactionContainer.from_endf(file_path, 'gamma', 'tendl')
+
+            i += 1
+            p.log(i, 'Gammas TENDL')
+
+    if pickle:
+        ActivationReactionContainer.pickle_all('gamma')
 
 
 class Helper:
@@ -723,11 +465,11 @@ if __name__ == '__main__':
     print()
     # quick_nuclide_lookup()
     # pickle_neutron_activation_data()
-    pickle_gamma_activation_data()
+    # pickle_gamma_activation_data()
     # pickle_decay_data(pickle_data=False)
     # pickle_fission_product_yields()
-    # pickle_proton_activation_data()
-    # pickle_neutron_activation_data()
+    # pickle_proton_activation_data(True, True, False)
+    # pickle_neutron_activation_data(True, True, False)
     # pickle_gamma_neutron_fission_xs_data()
     # pickle_neutron_activation_data()
 # pickle_gamma_fission_xs_data

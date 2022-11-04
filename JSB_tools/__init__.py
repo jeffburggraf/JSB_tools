@@ -26,7 +26,6 @@ from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 from matplotlib.cm import ScalarMappable
 import time
-from JSB_tools.nuke_data_tools import Nuclide, DecayNuclide
 import sys
 from scipy.stats import norm
 from matplotlib import cm

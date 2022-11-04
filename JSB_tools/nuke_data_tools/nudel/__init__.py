@@ -26,7 +26,7 @@ import numpy as np
 
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 
-from JSB_tools.nuke_data_tools import Nuclide
+import JSB_tools.nuke_data_tools.nuclide as nuclide
 from JSB_tools.nuke_data_tools.nudel.core import get_active_ensdf
 # from JSB_tools.nuke_data_tools.nudel.core import (get_active_ensdf, LevelRecord, GammaRecord, DecayRecord, Quantity)
 from JSB_tools.nuke_data_tools.nudel.core import LevelRecord as _LevelRecord
@@ -108,7 +108,7 @@ class LevelScheme:
         return cls(f"{ATOMIC_SYMBOL[z]}{a}")
 
     def __init__(self, nuclide_name):
-        if not (m := Nuclide.NUCLIDE_NAME_MATCH.match(nuclide_name)):
+        if not (m := nuclide.Nuclide.NUCLIDE_NAME_MATCH.match(nuclide_name)):
             raise ValueError(f"Invalide nuclide_name, {nuclide_name}. Correct examples include 'U238', 'H2'")
 
         a = int(m.group('A'))
@@ -135,7 +135,7 @@ class LevelScheme:
 
 class Coincidence:
     def __init__(self, nuclide_name, daughter_name=None):
-        self.nuclide = Nuclide.from_symbol(nuclide_name)
+        self.nuclide = nuclide.Nuclide.from_symbol(nuclide_name)
         if daughter_name is None:
             br = -1
             for m in self.nuclide.decay_modes.values():
@@ -143,7 +143,7 @@ class Coincidence:
                     daughter_name = m[-1].daughter_name
                     br = m[-1].branching_ratio
         self.levels = {l.level_index: l for l in LevelScheme(daughter_name).levels}
-        self.daughter_nuclide = Nuclide.from_symbol(daughter_name)
+        self.daughter_nuclide = nuclide.Nuclide.from_symbol(daughter_name)
 
         glines_ergs = [g.erg.n for g in self.nuclide.decay_gamma_lines]
 

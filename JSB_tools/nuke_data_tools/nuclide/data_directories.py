@@ -20,8 +20,6 @@ parent_data_dir = pwd / 'endf_files'  # ENDF file directory
 
 # download decay data from https://fispact.ukaea.uk/nuclear-data/downloads/. You should find a file titled
 # 'general decay data' in the list.
-#  Second set of decay files (JEFF) can be found at  https://www.nndc.bnl.gov/endf/b8.0/download.html
-#  See endf_files/decay/readme.md for more information.
 
 # =====================================================================================================
 # ===============================Begin specification of paths to nuclear libraries ====================
@@ -55,7 +53,9 @@ alpha_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1a'
 deuterium_fiss_yield_data_dir_ukfy = parent_data_dir / 'UKFY41data' / 'ukfy4_1d'
 neutron_tendl_data_dir = parent_data_dir/'TENDL2021-NEUTRONS/gendf-1102'
 
-proton_tendl_data_dir = parent_data_dir/'TENDL2019-PROTONS'
+# proton_tendl_data_dir = parent_data_dir/'TENDL2019-PROTONS'  # old
+#  Download TENDL from https://tendl.web.psi.ch/tendl_2021/tar.html
+proton_tendl_data_dir = parent_data_dir/'TENDL-p'
 # =====================================================================================================
 # ===============================End specification of paths to nuclear libraries ====================
 # =====================================================================================================

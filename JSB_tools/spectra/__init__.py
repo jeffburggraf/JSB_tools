@@ -134,7 +134,7 @@ class EfficiencyCalMixin:
             setattr(self, name, attrib)
         self.recalc_effs()
 
-    def eval_efficiency(self, erg):
+    def eval_efficiency(self, erg, nominal=False):  # todo
         return np.interp(erg, self._effs_ergs, self.effs)
 
     def pickle_efficiency(self, eff_path=None):

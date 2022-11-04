@@ -3,7 +3,8 @@ from typing import Tuple, Dict, List, Union, Collection
 import numpy as np
 from numbers import Number
 from JSB_tools import TabPlot, Nuclide
-from JSB_tools.nuke_data_tools import rest_mass, CrossSection1D, DecayNuclide
+from JSB_tools.nuke_data_tools import rest_mass, DecayNuclide
+from JSB_tools.nuke_data_tools._cross_section import CrossSection1D
 from scipy.interpolate import interp1d
 from warnings import warn
 from uncertainties import ufloat

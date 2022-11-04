@@ -1,1 +1,0 @@
-JENDl Gamma activation. Download from https://wwwndc.jaea.go.jp/ftpnd/jendl/jendl-pd-2016.1.html
