@@ -66,7 +66,7 @@ def _run(data_directory, incident_projectile, library_name, _pickle, paths=None)
         p.log(i, f'{library_name}-{incident_projectile}')
 
     if _pickle:
-        ActivationReactionContainer.pickle_all(incident_projectile, library_name)
+        ActivationReactionContainer.pickle_all(incident_projectile, library_name, paths)
 
 
 def run(data_directory, incident_projectile, library_name, _pickle=True, parallel=False,
@@ -343,7 +343,9 @@ def debug_nuclide(n: str, library="ENDF"):
 
 if __name__ == '__main__':
     pass
-    # pickle_fission_product_yields('neutron')
+    pickle_proton_activation_data(True, False, True,
+                                  paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl'])
+    # pickle_fission_product_yields(parallel=True)
     # pickle_gamma_activation_data(parallel=True)
-    # pickle_neutron_activation_data(tendl=True, endf=False, parallel=True)
-    pickle_proton_activation_data(tendl=True, parallel=False, paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl'])
+    # pickle_neutron_activation_data(parallel=True)
+    # pickle_proton_activation_data(parallel=True) #, paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl'])

@@ -48,7 +48,7 @@ class Level:
 
         self.nuclide_name = nuclide_name
         self.decays: List[_DecayRecord] = _n_level.decays
-        self.energy = _n_level.energy.cast_to_unit('keV').val
+        self.energy: UFloat = ufloat(_n_level.energy.cast_to_unit('keV').val, _n_level.energy.cast_to_unit('keV').pm)
 
         self.level_index = _n_level.level_index
 

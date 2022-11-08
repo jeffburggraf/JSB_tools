@@ -135,28 +135,28 @@ def get_symbol_etc(symbol):
     if symbol[0] == 'n' and symbol.lower() in ['n', 'neutron']:
         symbol = 'Nn1'
 
-    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
+    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  #         "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
 
     if not _m:
         raise ValueError(
             "\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
             "e.g. Cl38_m1, n1, Ar40".format(symbol))
 
-    if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
-        symbol = _m.groups()[0] + _m.groups()[1]
+    if _m.group('iso') == '0':  # ground state specification, "_m0", is redundant.
+        symbol = _m.group('s') + _m.group('A')
 
     m_or_e = _m.group('m_e')
 
     try:
-        Z = ATOMIC_NUMBER[_m.groups()[0]]
+        Z = ATOMIC_NUMBER[_m.group('s')]
     except KeyError:
         if symbol == "Nn1":
             Z = 0
         else:
             Z = None
 
-    A = int(_m.groups()[1])
-    isometric_state = _m.groups()[2]
+    A = int(_m.group('A'))
+    isometric_state = _m.group('iso')
 
     if isometric_state is None:
         isometric_state = 0
@@ -212,13 +212,12 @@ class Nuclide(Element):
     @classmethod
     def _from_e(cls, symbol, z, a, e: int) -> Nuclide:
         # todo: Decay modes. and return isomer is exists.
-        pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
 
-        with open(pickle_file, "rb") as pickle_file:
-            self: Nuclide = CustomUnpickler(pickle_file).load()
-
+        self = Nuclide(symbol, _default=True)
         self.__decay_gamma_lines = []
         self.__decay_betaplus_lines = []
+
+        self.__decay_daughters_str__ = [symbol]
 
         level = LevelScheme(symbol).levels[e]
 
@@ -247,15 +246,14 @@ class Nuclide(Element):
 
         if m_or_e == 'e':
             symbol = symbol.replace(f'_e{m}', '')  # remove "_ei" from symbol
-            return Nuclide._from_e(symbol, m)
-
-        pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
+            return Nuclide._from_e(symbol, z, a, m)
 
         if symbol not in Nuclide.all_instances:
+            pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
             if '_default' in kwargs or not pickle_file.exists():
                 self = super().__new__(cls)
                 self.__Z_A_iso_state__ = z, a, m
-                self.__init__(symbol)
+                # self.__init__(symbol)
 
             else:
                 with open(pickle_file, "rb") as pickle_file:
@@ -326,6 +324,14 @@ class Nuclide(Element):
         self.name = symbol
         super().__init__(self.Z)  # set element information. This is
 
+        self.__decay_gamma_lines: List[GammaLine] = None
+        self.__decay_betaplus_lines: List[BetaPlusLine] = None
+
+        self.__decay_mode_for_print__ = None
+
+        if '_default' not in kwargs:  # means instances were set in __new__
+            return
+
         self.excitation_energy: float = self._get_default_attrib('excitation_energy')
 
         self.nuclear_level: float = self._get_default_attrib('nuclear_level')
@@ -339,16 +345,11 @@ class Nuclide(Element):
 
         self.__decay_daughters_str__: List[str] = self._get_default_attrib('__decay_daughters_str__')
 
-        self.__decay_gamma_lines: List[GammaLine] = None
-        self.__decay_betaplus_lines: List[BetaPlusLine] = None
-
         self.decay_modes: Dict[Tuple[str], List[DecayMode]] = self._get_default_attrib('decay_modes')
 
         self.__decay_parents_str__: List[str] = self._get_default_attrib('__decay_parents_str__')
 
         self.is_valid = self._get_default_attrib('is_valid')
-
-        self.__decay_mode_for_print__ = None
 
     @staticmethod
     def get_z_a_m_from_name(name: str):

@@ -87,8 +87,6 @@ def set_nuclide_attributes(_self: nuclide_module.Nuclide, ev: Evaluation, open_m
     else:
         _self.is_stable = False
 
-    # _self.decay_radiation_types.extend(open_mc_decay.spectra.keys())
-
     for mode in open_mc_decay.modes:
         decay_mode = nuclide_module.DecayMode(mode, _self.half_life)
         try:

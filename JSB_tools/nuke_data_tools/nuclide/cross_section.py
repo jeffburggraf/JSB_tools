@@ -235,7 +235,7 @@ class NuclearLibraries:
     # list of nuclear library sources for each incident particle. The order in which a given data source is
     # first used (in endf_to_pickle.py) determines the order in which they appear in `libraries`,
     # which in turn determines priority.
-    xs_libraries = {'proton': ['endf', 'tendl', 'padf'],
+    xs_libraries = {'proton': ['endf', 'tendl'],
                     'gamma': ['endf', 'tendl'],
                     'neutron': ['endf', 'tendl']}
 
@@ -312,6 +312,8 @@ class ActivationReactionContainer:
         self.inelastic_xs: Union[CrossSection1D, None] = None
         self.total_xs: Union[CrossSection1D, None] = None
 
+        self.path = None  # Path to ENDF file.
+
         self._evaluation: Union[Evaluation, None] = None  # Only set when instance is created by from_endf() factory.
 
         self._available_mts: Union[None, set] = None  # MT values in ENDF file.
@@ -368,8 +370,6 @@ class ActivationReactionContainer:
 
         reactions = []
 
-        reaction = None
-
         if data_source is None:
             return cls.from_pickle(nuclide_name, projectile, data_source=None)
 
@@ -377,15 +377,16 @@ class ActivationReactionContainer:
             return cls.from_pickle(nuclide_name, projectile, data_source=data_source)
 
         elif data_source == 'all':
-            for library in cls.libraries[projectile]:
+            for library in cls.libraries[projectile]: # Adds reactions from library in order of priority set by the NuclearLibraries class.
                 try:
-                    r = cls.from_pickle(nuclide_name, projectile, library)
+                    r: ActivationReactionContainer = cls.from_pickle(nuclide_name, projectile, library)
                 except FileNotFoundError:
                     continue
-                if reaction is None:  # reaction is the obj that will be returned (after possible additions below)
-                    reaction = r
-                else:
-                    reactions.append(r)
+                reactions.append(r)
+                # if reaction is None:  # reaction is the obj that will be returned (after possible additions below)
+                #     reaction = r
+                # else:
+                #     reactions.append(r)
         else:
             if projectile not in cls.libraries:
                 raise ValueError(f'Invalid/no data for projectile, "{projectile}"')
@@ -394,17 +395,22 @@ class ActivationReactionContainer:
                                     f'or, you can specify "all"')
 
         # If we reach this far, then that means 'all' was specified as data source
-        if reaction is None:
+        if len(reactions) == 0:
             raise FileNotFoundError(f'No data found for {projectile} on {nuclide_name}')
 
-        for _other_reaction in reactions:
-            for name, xs in _other_reaction.product_nuclide_names_xss.items():
-                if name not in reaction.product_nuclide_names_xss:
-                    reaction.product_nuclide_names_xss[name] = xs
-            reaction.parent_nuclide_names.extend([pname for pname in _other_reaction.parent_nuclide_names
-                                                  if pname not in reaction.parent_nuclide_names])
+        return_reaction = reactions[0]
+        reactions = reactions[1:]
 
-        return reaction
+        for other_reaction in reactions:
+            for name, xs in other_reaction.product_nuclide_names_xss.items():
+
+                if name not in return_reaction.product_nuclide_names_xss:
+                    return_reaction.product_nuclide_names_xss[name] = xs
+
+            return_reaction.parent_nuclide_names.extend([pname for pname in other_reaction.parent_nuclide_names
+                                                         if pname not in return_reaction.parent_nuclide_names])
+
+        return return_reaction
 
     @classmethod
     def from_pickle(cls, nuclide_name, projectile, data_source) -> ActivationReactionContainer:
@@ -522,7 +528,7 @@ class ActivationReactionContainer:
         Starting from a nuclear isomer named in terms of excited level, e.g. Pt_193_e5, return the nucleus name
         in terms of isomeric number.
 
-        e.g. Pt193_e5 -> Pt193_m1
+        e.g. 'Pa234_e2' -> 'Pa234_m1'  (the ~1 min half-life Pa234_m1 occurs at the second excited level of Pa234)
 
         Args:
             name:
@@ -531,22 +537,21 @@ class ActivationReactionContainer:
 
         """
         m = re.match(".+_e([0-9]+)", name)
-        if not m: return None
-        base_name = name.replace(f"_e{m.groups()[0]}", '')
-        level = int(m.groups()[0])
 
-        try:
-            level = LevelScheme(base_name).levels[level]
-        except IndexError:
+        if not m:
             return None
 
-        erg, hl = level.energy, level.half_life.n
+        base_name = name.replace(f"_e{m.groups()[0]}", '')
+        level_i = int(m.groups()[0])
 
-        for i in range(1, 4):
+        level = LevelScheme(base_name).levels[level_i]
+        erg = level.energy.n
+        hl = level.half_life.n
+
+        for i in range(1, 5):
             n = nuclide_module.Nuclide(f"{base_name}_m{i}")
-            if n.is_valid:
-                if np.isclose(n.excitation_energy, erg, rtol=0.05):
-                    return n.name
+            if n.is_valid and np.isclose(erg, n.excitation_energy, rtol=0.15) and hl > 0.1:  # 0.1: arb. threshold
+                return n.name
 
         return name  # leave name as is
 
@@ -613,7 +618,7 @@ class ActivationReactionContainer:
 
                 for prod in r.products:
                     yield_: Tabulated1D = prod.yield_
-                    _old = prod.particle
+
                     if hasattr(yield_, 'y') and all(yield_.y == 0):
                         continue
 
@@ -633,7 +638,7 @@ class ActivationReactionContainer:
                         activation_cross_section.__xss__.append(xs)
                         activation_cross_section.mt_values.append(mt)
                     except KeyError:
-                        fig_label = f"{target}({projectile}, X){prod.particle}"  # todo: make not be X somehow?
+                        fig_label = f"{target}({projectile}, X){prod.particle}"
                         outs[prod.particle] = ActivationCrossSection([xs], [yield_], fig_label, projectile,
                                                                      self.data_source, mt_values=[mt])
 
@@ -712,7 +717,10 @@ class ActivationReactionContainer:
         except KeyError:
             self = ActivationReactionContainer(nuclide_name, projectile, data_source)
 
+        self.path = endf_path
+
         self._evaluation = e
+
         self._available_mts = set([x[1] for x in self._evaluation.reaction_list])
 
         self.set_misc_xs()
@@ -751,13 +759,29 @@ class ActivationReactionContainer:
             pickle.dump(self, f)
 
     @staticmethod
-    def pickle_all(projectile, library=None):
-        for _data_source, _dict in ActivationReactionContainer.all_instances[projectile].items():
-            if (library is not None) and (library.lower() != _data_source.lower()):
-                continue
-            for nuclide_name, reaction in _dict.items():
-                if len(reaction.product_nuclide_names_xss) > 0:
+    def pickle_all(projectile, library=None, paths=None):
+        if paths is not None:
+            paths = [Path(p) for p in paths]
+
+        try:
+            for _data_source, _dict in ActivationReactionContainer.all_instances[projectile].items():
+                if (library is not None) and (library.lower() != _data_source.lower()):
+                    continue
+
+                for nuclide_name, reaction in _dict.items():
+                    if paths is not None:
+                        if len(paths) == 0:
+                            raise StopIteration
+
+                        if reaction.path not in paths:
+                            continue
+                        else:
+                            paths.remove(reaction.path)
+
                     reaction.__pickle__()
+
+        except StopIteration:
+            pass
 
     @staticmethod
     def __bug_test__(openmc_reaction: Reaction, openmc_product: Product, nuclide_name, incident_particle):
@@ -798,12 +822,11 @@ class ActivationReactionContainer:
 if __name__ == "__main__":
     from openmc.data import Evaluation, Reaction
     e = Evaluation('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl')
-    mts = [1, 17, 33, 42]
+    mts = [11, 17, 33, 42]
     for mt in mts:
         print(f"MT: {mt}")
         for p in Reaction.from_endf(e, mt).products:
             print('\t', p.particle, p)
-
 
     from JSB_tools.nuke_data_tools import Nuclide
     # for k, v in Nuclide("U238").get_incident_proton_daughters(data_source='all').items():
