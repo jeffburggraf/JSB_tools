@@ -1,27 +1,20 @@
 import re
+from pathlib import Path
 
-sss="""self.element_name = data['Element']
-            self.element_period = data['Period']
-            self.element_group = data['Group']
-            self.element_phase = data['Phase']
-            self.metalQ = data['Metal'] == 'yes'
-            self.nonmetalQ = data['Nonmetal'] == 'yes'
-            self.metalloidQ = data['Metalloid'] == 'yes'
-            self.element_type = data['Type']
-            self.atomic_radius = data['AtomicRadius']
-            self.electronegativity = data['Electronegativity']
-            self.firstIonization = data['FirstIonization']
-            self.density = data['Density']  # in g/cm3
-            self.melting_point = data['MeltingPoint']
-            self.boiling_point = data['BoilingPoint']
-            self.specific_heat = data['SpecificHeat']
-            self.n_valence_electrons = data['NumberofValence']"""
 
-ls = []
-for line in sss.split('\n'):
-    s = line.split('=')[0]
-    print(s)
-    if m := re.match(" *self\.(.+)", s):
-        ls.append(m.groups()[0])
+def iter_evaluations(path, i=0):
 
-print(ls)
+    i += 1
+    path = Path(path)
+    if path.is_dir():
+        for sub_path in path.iterdir():
+            yield from iter_evaluations(sub_path, i)
+    else:
+        if i % 2 == 0:
+            yield path
+        else:
+            print(i)
+
+
+for i in iter_evaluations("/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools"):
+    print(i)

@@ -20,7 +20,7 @@ try:
     from openmc.data.endf import Evaluation
     from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
     from openmc.data import Reaction, Decay, Product
-    from openmc.data.data import atomic_mass, atomic_weight, AVOGADRO, _ATOMIC_MASS
+    from openmc.data.data import atomic_mass, atomic_weight, AVOGADRO
 except ModuleNotFoundError:
     warn("OpenMC not installed! Some functionality is limited. ")
 
@@ -120,10 +120,11 @@ class Element:
 def get_symbol_etc(symbol):
     """
     Get (correct) symbol from argument and return nucleus Z, A, etc.
+    m_or_e is 'e' if name refers to nuclear level, None for gs and 'm' for an isomeric state.
     Args:
         symbol:
 
-    Returns: symbol, Z, A, M
+    Returns: symbol, Z, A, M, m_or_e
 
     """
     if '-' in symbol:
@@ -144,6 +145,8 @@ def get_symbol_etc(symbol):
     if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
         symbol = _m.groups()[0] + _m.groups()[1]
 
+    m_or_e = _m.group('m_e')
+
     try:
         Z = ATOMIC_NUMBER[_m.groups()[0]]
     except KeyError:
@@ -162,12 +165,12 @@ def get_symbol_etc(symbol):
 
     isometric_state = isometric_state
 
-    return symbol, Z, A, isometric_state
+    return symbol, Z, A, isometric_state, m_or_e
 
 
 class Nuclide(Element):
     """
-    A nuclide object that can be used to access cross sections, decay children/parent nuclides, decay modes,
+    A nuclide object that can be used to access cross-sections, decay children/parent nuclides, decay modes,
     and much more.
 
     Available data:
@@ -176,19 +179,20 @@ class Nuclide(Element):
         Decay channels and the resulting child nuclides (+ branching ratios)
         Proton activation cross-sections (PADF)
         Neutron activation cross-sections (ENDF)
-        Neutron, photon, proton, and SF fissionXS yeilds (use caution with photon and proton data)
-        Neutron, photon, and proton fissionXS cross-sections
+        Neutron, photon, proton, and SF fission xs yeilds (use caution with photon and proton data)
+        Neutron, photon, and proton fission cross-sections
 
         """
     NUCLIDE_NAME_MATCH = re.compile(
-        "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?m(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
+        "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
 
     all_instances = {}  # keeping track of all Nuclides to save time on loading
     default_values = {'excitation_energy': 0,
+                      'nuclear_level': 0,
+                      'fissionable': False,
                       'half_life': None,
                       'spin': 0,
                       'is_stable': None,
-                      'decay_radiation_types': list,
                       '__decay_daughters_str__': list,
                       'decay_modes': dict,
                       '__decay_parents_str__': list,
@@ -205,6 +209,29 @@ class Nuclide(Element):
 
         return val
 
+    @classmethod
+    def _from_e(cls, symbol, z, a, e: int) -> Nuclide:
+        # todo: Decay modes. and return isomer is exists.
+        pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
+
+        with open(pickle_file, "rb") as pickle_file:
+            self: Nuclide = CustomUnpickler(pickle_file).load()
+
+        self.__decay_gamma_lines = []
+        self.__decay_betaplus_lines = []
+
+        level = LevelScheme(symbol).levels[e]
+
+        self.excitation_energy = level.energy
+        self.nuclear_level = level
+
+        self.__Z_A_iso_state__ = z, a, None
+
+        self.half_life = level.half_life
+        self.name = f"{symbol}_e{e}"
+
+        return self
+
     def __new__(cls, symbol=None, *args, **kwargs):
         """
 
@@ -216,7 +243,11 @@ class Nuclide(Element):
         if symbol is None:  # deal with call to __new__ during unpickling.
             return object.__new__(cls)
 
-        symbol, z, a, m = get_symbol_etc(symbol)
+        symbol, z, a, m, m_or_e = get_symbol_etc(symbol)
+
+        if m_or_e == 'e':
+            symbol = symbol.replace(f'_e{m}', '')  # remove "_ei" from symbol
+            return Nuclide._from_e(symbol, m)
 
         pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
 
@@ -229,6 +260,8 @@ class Nuclide(Element):
             else:
                 with open(pickle_file, "rb") as pickle_file:
                     self = CustomUnpickler(pickle_file).load()
+                self.is_valid = True
+
                 Nuclide.all_instances[symbol] = self
 
         else:
@@ -259,6 +292,27 @@ class Nuclide(Element):
     def __init__(self, symbol, **kwargs):
         """
 
+        Attributes:
+            name: e.g. 'Xe139',  or 'U235_m1' for long-lived isomers, or 'U238_e2' for U238 in the second excited state
+
+            excitation_energy: excited state energy in keV (always 0 for ground-state,
+                None for nuclei in short-lived excited states.)
+
+            nuclear_level: 0 for gs, 1 for first excited state, etc.
+
+            isometric_state: A property that refers to the isomeric state. A value of None means nuclear excited level
+                is directly specified by self.nuclear_level. isometric_state is not always the same as nuclear_level,
+                since the isomeric_state number increments for each nuclear level with a long half-life.
+
+            half_life: half life in seconds.
+
+            spin: Spin state in units of hbar
+
+            is_stable:  Equal to True is nuclei is stable, False otherwise.
+
+            decay_modes: Dictionary with values DecayMode instances and keys tuple of strings (e.g. ('beta-',) ),
+                usually of len=1 except for case of delayed-decay ratiotion, such as beta-delayrd neutron emission,
+                in which case would be ('beta-', 'n')
 
         Notes:
             In __new__, attempt to load nuclide data from pickle file.
@@ -270,27 +324,27 @@ class Nuclide(Element):
             **kwargs: Used by __new__
         """
         self.name = symbol
-
         super().__init__(self.Z)  # set element information. This is
 
         self.excitation_energy: float = self._get_default_attrib('excitation_energy')
+
+        self.nuclear_level: float = self._get_default_attrib('nuclear_level')
+
+        self.fissionable: bool = self._get_default_attrib('fissionable')
+
         self.half_life: Union[None, UFloat] = self._get_default_attrib('half_life')
         self.spin: int = self._get_default_attrib('spin')
 
         self.is_stable: Union[None, bool] = self._get_default_attrib('is_stable')
-        self.decay_radiation_types: list = self._get_default_attrib('decay_radiation_types')
 
-        # self.__decay_daughters_str__: List[str] = self.__get_default_atrib('__decay_daughters_str__')
         self.__decay_daughters_str__: List[str] = self._get_default_attrib('__decay_daughters_str__')
 
         self.__decay_gamma_lines: List[GammaLine] = None
         self.__decay_betaplus_lines: List[BetaPlusLine] = None
 
-        # self.decay_modes: Dict[Tuple[str], List[DecayMode]] = self.__get_default_atrib('decay_modes')
         self.decay_modes: Dict[Tuple[str], List[DecayMode]] = self._get_default_attrib('decay_modes')
 
         self.__decay_parents_str__: List[str] = self._get_default_attrib('__decay_parents_str__')
-        # self.__decay_parents_str__: List[str] = self.__get_default_atrib('__decay_parents_str__')
 
         self.is_valid = self._get_default_attrib('is_valid')
 
@@ -301,7 +355,7 @@ class Nuclide(Element):
         """
         From a nuclide name, return the atomic number (Z), mass number (A) and isomeric state (ie excited state, or M)
         Args:
-            name: nuclide name
+            name: nuclide name, e.g. 'Xe139'
 
         Returns:
 
@@ -311,7 +365,7 @@ class Nuclide(Element):
             if not _m:
                 raise ValueError
             z = ATOMIC_NUMBER[_m.group('s')]
-            a = _m.group('A')
+            a = int(_m.group('A'))
             m = _m.group('iso')
 
         except (ValueError, KeyError) as e:
@@ -577,43 +631,57 @@ class Nuclide(Element):
 
         return f"{n_units} {unit}"
 
+    def get_fission_xs(self, projectile: str, library=None):
+        if library is None:
+            try:
+                library = ActivationReactionContainer.libraries[projectile][0]
+            except KeyError:
+                raise KeyError(f"No nuclear data for library, '{library}'")
+
+        dir_var = f'{projectile.upper}_PICKLE_DIR'
+
+        try:
+            pickle_dir = eval(dir_var)
+        except NameError:
+            raise NameError(f"No global variable defined to point to directory for {projectile}'s. Define {dir_var}")
+
+        try:
+            with open(pickle_dir / library / 'fission_xs' / f'{self.name}.pickle', 'rb') as f:
+                return CustomUnpickler(f).load()
+        except FileNotFoundError:
+            raise FileNotFoundError(f'No {projectile} induced fission xs data for {self.name} from library {library}.')
+
     @functools.cached_property
     def proton_induced_fiss_xs(self) -> CrossSection1D:
         try:
-            with open(PROTON_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(self.name), 'rb') as f:
-                return CustomUnpickler(f).load()
+            return self.get_fission_xs('proton', 'endf')
         except FileNotFoundError:
+            p = Path(__file__).parent/'endf_files'/'proton_fission_xs' / 'readme'
+            with open(p) as f:
+                msg = '\n'.join(f.readlines())
             raise FileNotFoundError(
-                f'No proton induced fissionXS data for {self.name}. Download it and integrate it if it is available. '
-                f'The conversion to pickle is done in `endf_to_pickle.py`. See "{1}" for instructions.')
+                f'No proton induced fission xs data for {self.name}. Download it and integrate it if it is available. '
+                f'Saving to pickle is done in `endf_to_pickle.py`.\n{msg}')
 
     @functools.cached_property
     def gamma_induced_fiss_xs(self) -> CrossSection1D:
         """
-        Get the photon induced fissionXS cross section for this nuclide.
+        Get the photon induced fission cross-section for this nuclide.
         Raise error if no data available.
         Returns:
 
         """
-        try:
-            with open(GAMMA_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(self.name), 'rb') as f:
-                return CustomUnpickler(f).load()
-        except FileNotFoundError:
-            raise FileNotFoundError(f'No photon induced fissionXS data for {self.name}.')
+        return self.get_fission_xs('gamma')
 
     @property
     def neutron_induced_fiss_xs(self) -> CrossSection1D:
         """
-        Get the neutron induced fissionXS cross section for this nuclide.
+        Get the neutron induced fission cross-section for this nuclide.
         Raise error if no data available.
         Returns:
 
         """
-        try:
-            with open(NEUTRON_PICKLE_DIR / 'fissionXS' / '{}.pickle'.format(self.name), 'rb') as f:
-                return CustomUnpickler(f).load()
-        except FileNotFoundError:
-            assert False, f'No photon induced fissionXS data for {self.name}.'
+        return  self.get_fission_xs('neutron')
 
     def rest_energy(self, units='MeV'):  # in J or MeV
         units = units.lower()
@@ -634,7 +702,8 @@ class Nuclide(Element):
         Returns:
 
         """
-        z, a, m = Nuclide.get_z_a_m_from_name(self.name).values()
+        warn("Verify!")
+        z, a, m = Nuclide.get_z_a_m_from_name(self.name)
         a -= n_neutrons
         neutron_mass = constants['neutron_mass']
         return (Nuclide.from_Z_A_M(z, a, m).rest_energy('MeV') + n_neutrons * neutron_mass) - self.rest_energy('MeV')
@@ -648,7 +717,9 @@ class Nuclide(Element):
         Returns:
 
         """
-        z, a, m = Nuclide.get_z_a_m_from_name(self.name).values()
+        warn("Verify!")
+
+        z, a, m = Nuclide.get_z_a_m_from_name(self.name)
         z -= n_protons
         a -= n_protons
         proton_mass = constants['proton_mass']
@@ -661,23 +732,17 @@ class Nuclide(Element):
         Returns:
 
         """
-        z, a, m = Nuclide.get_z_a_m_from_name(self.name).values()
+        warn("Verify!")
+
+        z, a, m = Nuclide.get_z_a_m_from_name(self.name)
         z -= 2
         a -= 2
 
         return (Nuclide.from_Z_A_M(z, a, m).rest_energy('MeV') + Nuclide('He-4').rest_energy('MeV')) \
                - self.rest_energy('MeV')
 
-    # @property
-    # def atomic_mass(self) -> float:
-    #     try:
-    #         return atomic_mass(self.name)
-    #     except KeyError:
-    #         warn('Atomic mass for {} not found'.format(self))
-    #         return None
-
     @property
-    def grams_per_mole(self) -> float:
+    def grams_per_mole(self) -> Union[float, None]:
         try:
             return atomic_weight(self.name)
         except KeyError:
@@ -686,6 +751,14 @@ class Nuclide(Element):
 
     @staticmethod
     def isotopic_abundance(nuclide_name) -> float:
+        """
+        Return isotopic abundance.
+        Args:
+            nuclide_name:
+
+        Returns:
+
+        """
         m = re.match("(([A-Z][a-z]*)([0-9]+).*?)", nuclide_name)
         if not m:
             raise ValueError(f"Invalid nuclide name, {nuclide_name}")
@@ -696,33 +769,32 @@ class Nuclide(Element):
         except KeyError:
             return 0
 
-    @staticmethod
-    def rel_isotopic_abundance(nuclide_name) -> float:
-        tot = 0
-        for name in Nuclide.get_all_isotopes(nuclide_name, True):
-            try:
-                tot += NATURAL_ABUNDANCE[name]
-            except KeyError:
-                continue
-        try:
-            return Nuclide.isotopic_abundance(nuclide_name) / tot
-        except ZeroDivisionError:
-            return 0
-
     @functools.cached_property
     def atom_density(self):
+        """
+        Return Atoms/cm3 for material at STP conditions.
+        Returns:
+
+        """
         return self.density/self.atomic_mass(unit='g')
 
     def atomic_mass(self, unit='g'):
         """
-        todo: mass differences from xcited states can be calculated.
         Args:
-            unit:
+            unit: can be 'u', 'g', or 'kg'
 
         Returns:
 
         """
         u_to_kg = constants['u_to_kg']
+
+        if self.excitation_energy != 0:
+            eV_to_J = 1.0/constants['J_to_eV']
+            excitation_mass = eV_to_J * 1E3 * self.excitation_energy / constants['c']**2  # mass in kg
+            excitation_mass /= u_to_kg  # kg -> u
+        else:
+            excitation_mass = 0
+
         if unit == 'u':
             s = 1
         elif unit == 'g':
@@ -732,10 +804,10 @@ class Nuclide(Element):
         else:
             raise ValueError(f"Invalid unit, {unit}")
 
-        return atomic_mass(self.name) * s
+        return (atomic_mass(self.name) + excitation_mass) * s
 
     @staticmethod
-    def get_all_isotopes(atomic_symbol: str, non_zero_abundance=False) -> List[str]:
+    def get_all_isotopes(atomic_symbol: str, non_zero_abundance=True) -> List[str]:
         """
         Returns list of strings of all isotopes with atomic number according to `atomic_symbol` argument.
         Args:
@@ -747,13 +819,16 @@ class Nuclide(Element):
         """
         m = re.match('^([A-z]{0,3})(?:[0-9]+[_m]*([0-9]+)?)', atomic_symbol)
         assert m, f"Invalid argument, '{atomic_symbol}'"
+
         s = m.groups()[0]
         s = f"{s[0].upper()}{s[1:]}"
         outs = []
+
         for a in all_isotopes()[s]:
-            other_s = f"{atomic_symbol}{a}"
+            other_s = f"{s}{a}"
+
             if non_zero_abundance:
-                if get_abundance()[s][a] > 0:
+                if a in get_abundance()[s] and get_abundance()[s][a] > 0:
                     outs.append(other_s)
             else:
                 outs.append(other_s)
@@ -771,7 +846,7 @@ class Nuclide(Element):
             return 0.
 
     @staticmethod
-    def max_abundance_nucleus(atomic_symbol) -> Tuple[float, str]:
+    def max_abundance_isotope(atomic_symbol) -> Tuple[float, str]:
         abundance = None
         out = None
 
@@ -864,69 +939,6 @@ class Nuclide(Element):
         if isometric_state != 0:
             name += "_m" + str(isometric_state)
         return cls(name)
-
-    # @classmethod
-    # def from_symbol(cls, symbol: str, discard_meta_state=False):
-    #     """
-    #
-    #     Args:
-    #         symbol: e.g. 'Xe139', 'Ta180_m1"
-    #         discard_meta_state: If True, discard meta stable state.
-    #
-    #     Returns:
-    #
-    #     """
-    #     if discard_meta_state:
-    #         symbol = symbol.split('_')[0]
-    #     assert isinstance(symbol, str), f'`symbol` argument must be a string, not {type(symbol)}'
-    #
-    #     if symbol in Nuclide.all_instances:  # check first thing for speed.
-    #         return Nuclide.all_instances[symbol]
-    #
-    #     if '-' in symbol:
-    #         symbol = symbol.replace('-', '')
-    #         if symbol.endswith('m'):
-    #             symbol = symbol[:-1] + '_m1'
-    #
-    #     if symbol.lower() in ['n', 'neutron']:
-    #         symbol = 'N1'
-    #     elif symbol.lower() == 'alpha':
-    #         symbol = 'He4'
-    #     elif symbol.lower() == 'proton':
-    #         symbol = 'H1'
-    #
-    #     _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
-    #     if not _m:
-    #         raise ValueError("\nInvalid Nuclide name '{0}'. Argument <name> must follow the GND naming convention, Z(z)a(_mi)\n" \
-    #                "e.g. Cl38_m1, n1, Ar40".format(symbol))
-    #     # assert _m,
-    #
-    #     symbol = _m.group()
-    #
-    #     if _m.groups()[2] == '0':  # ground state specification, "_m0", is redundant.
-    #         symbol = _m.groups()[0] + _m.groups()[1]
-    #         _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)
-    #
-    #     pickle_file = DECAY_PICKLE_DIR/(symbol + '.pickle')
-    #
-    #     if symbol not in Nuclide.all_instances:
-    #         if not pickle_file.exists():
-    #                 instance = Nuclide(symbol,  __internal__=True, half_life=ufloat(np.nan, np.nan))
-    #                 instance.is_valid = False
-    #         else:
-    #             with open(pickle_file, "rb") as pickle_file:
-    #                 instance = CustomUnpickler(pickle_file).load()
-    #                 instance.is_valid = True
-    #             Nuclide.all_instances[symbol] = instance
-    #
-    #     else:
-    #         instance = NUCLIDE_INSTANCES[symbol]
-    #         instance.is_valid = True
-    #
-    #     if instance.name == 'n1':
-    #         instance.name = 'N1'
-    #
-    #     return instance
 
     def __repr__(self):
         try:
@@ -1480,35 +1492,193 @@ class BetaPlusLine(DecayModeHandlerMixin):
         return f'Beta+/EC: e+ intensity: {self.positron_intensity}'
 
 
+def decay_default_func(nuclide_name):
+    """
+    For the trivial case of stable nuclides.
+    Also used for nuclides with no data
+
+    Args:
+        nuclide_name:
+
+    Returns:
+
+    """
+    def func(ts, scale=1, decay_rate=False, *args, **kwargs):
+        if decay_rate:
+            scale = 0
+
+        if hasattr(ts, '__iter__'):
+            out = {nuclide_name: scale*np.ones_like(ts)}
+        else:
+            out = {nuclide_name: scale}
+
+        return out
+
+    return func
+
+
+class DecayNuclide:
+    """
+    This class's __call__ method solves the following problem:
+        Starting with some amount (see init_quantity) of a given unstable nuclide, what amount of the parent and its
+         progeny nuclides remain after time t?
+
+    This is done by solving the diff. eq: y' == M.y, where M is a matrix derived from decay rates/branching ratios.
+    Either y or y' can be returned (see documentation in __call__).
+
+    Use driving_term arg for the case of nuclei being generated at a constant rate (in Hz), e.g. via a beam.
+    A negative driving_term can be used, however, not that if the number of parent nuclei goes negative
+    the solution is unphysical.
+
+    Spontaneous fission products are not (yet) included in decay progeny.
+
+    Solution is exact in the sense that the only errors are from machine precision.
+
+    The coupled system of linear diff. egs. is solved "exactly" by solving the corresponding eigenvalue problem
+        (or inhomogeneous system of lin. diff. eq. in the case of a nonzero driving_term).
+
+    Args:
+        nuclide_name: Name of parent nuclide.
+
+        init_quantity: Unitless scalar representing the number (or amount) of the parent nuclei at t = 0
+            i.e. the initial condition.
+
+        init_rate: Similar to init_quantity, except specify a initial rate (decays/second).
+            Only one of the two init args can be used
+
+        driving_term: Set to non-zero number to have the parent nucleus be produced at a constant rate (in Hz).
+
+        fiss_prod: If True, decay fission products as well.
+
+        fiss_prod_thresh: Threshold of a given fission product yield (rel to highest yielded product).
+            Between 0 and 1.0. 0 means accept all.
+
+        max_half_life: A given decay chain will halt after reaching a nucleus with half life (in sec.) above this value.
+
+    Returns:
+        A function that takes a time (or array of times), and returns nuclide fractions at time(s) t.
+        Return values of this function are of form: Dict[nuclide_name: Str, fractions: Union[np.ndarray, float]]
+        See 'return_func' docstring below for more details.
+
+    """
+
+    def __init__(self, nuclide_name: str, init_quantity=1., init_rate=None, driving_term=0.,
+                 fiss_prod=False, fiss_prod_thresh=0, max_half_life=None):
+        nuclide = Nuclide(nuclide_name)
+        self.nuclide_name = nuclide_name
+        self.driving_term = driving_term
+
+        if (not nuclide.is_valid) or nuclide.is_stable:
+            self.return_default_func = True
+        else:
+            self.return_default_func = False
+            # return decay_default_func(nuclide_name)
+
+        if fiss_prod:
+            from JSB_tools.nuke_data_tools.nuclide.fission_yields import FissionYields
+            assert ('sf',) in nuclide.decay_modes, f"Cannot include fission product on non-SF-ing nuclide, {nuclide}"
+            fission_yields = FissionYields(nuclide.name, None, independent_bool=True)
+            fission_yields.threshold(fiss_prod_thresh)
+        else:
+            fission_yields = None
+
+        assert isinstance(init_quantity, (float, int, type(None))), "`init_quantity` must be a float or int"
+        assert isinstance(init_rate, (float, int, type(None))), "`init_rate` must be a float or int"
+        assert not init_quantity is init_rate is None, "Only one of the two init args can be used"
+        if init_rate is not None:
+            init_quantity = init_rate/nuclide.decay_rate.n
+
+        self.column_labels = [nuclide_name]  # Nuclide names corresponding to lambda_matrix.
+        self.lambda_matrix = [[-nuclide.decay_rate.n]]  # Seek solutions to F'[t] == lambda_matrix.F[t]
+
+        completed = set()
+
+        def loop(parent_nuclide: Nuclide, decay_modes):
+            if not len(decay_modes):  # or parent_nuclide.name in _comp:  # stable nuclide. Terminate recursion.
+                return
+
+            if parent_nuclide.name in completed:  # this decay chain has already been visited. No need to repeat.
+                return
+
+            # Loop through all decay channels
+            for mode_name_tuple, modes in decay_modes.items():
+                if not len(modes):
+                    continue
+
+                if mode_name_tuple == ('sf',):
+                    if fiss_prod:
+                        fiss_branching = modes[0].branching_ratio
+
+                        modes = []  # new modes that mimics structure of typical decay but for all fission products.
+
+                        for fp_name, y in fission_yields.yields.items():
+                            _mode = type('', (), {})()
+                            _mode.parent_name = parent_nuclide.name
+                            _mode.daughter_name = fp_name
+                            _mode.branching_ratio = y*fiss_branching.n
+                            modes.append(_mode)
+                    else:
+                        continue
+
+                # A given decay channels (e.g. beta- -> gs or 1st excited state, also fission) can have multiple
+                # child nuclides, so loop through them all.
+                for mode in modes:
+
+                    parent_index = self.column_labels.index(mode.parent_name)
+
+                    child_nuclide = Nuclide(mode.daughter_name)
+
+                    child_lambda = child_nuclide.decay_rate.n
+
+                    try:
+                        # index of row/column for child nuclide in lambda matrix.
+                        child_index = self.column_labels.index(mode.daughter_name)
+                        child_row = self.lambda_matrix[child_index]
+
+                    except ValueError:  # First time encountering this nuclide. Add new row/column to lambda-matrix.
+                        self.column_labels.append(mode.daughter_name)
+                        child_index = len(self.column_labels) - 1
+
+                        for _list in self.lambda_matrix:
+                            _list.append(0)  # add another column to maintain an nxn matrix
+
+                        child_row = [0]*len(self.lambda_matrix[-1])  # create source(/sink) vector for current daughter nucleus
+
+                        child_row[child_index] = -child_lambda  # Set entry for decay of child (diagonal term).
+
+                        self.lambda_matrix.append(child_row)  # finally add new row to matrix.
+
+                    # Do not use += below. The parent feeding rate is a constant no matter how many times the same
+                    # parent/daughter combo is encountered.
+                    child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n  # parent feeding term
+
+                    if (max_half_life is not None) and child_nuclide.half_life.n > max_half_life:
+                        continue  # don't worry about daughter bc nucleus decays too slow according to `max_half_life`
+                    else:
+                        loop(child_nuclide, child_nuclide.decay_modes)  # recursively loop through all daughters
+
+            completed.add(parent_nuclide.name)  # Add parent to list of completed decay chains to avoid repeats
+
+        loop(nuclide, nuclide.decay_modes)  # initialize recursion.
+
+        self.lambda_matrix = np.array(self.lambda_matrix)
+
+        self.eig_vals, self.eig_vecs = np.linalg.eig(self.lambda_matrix)
+
+        self.eig_vecs = self.eig_vecs.T
+
+        b = [init_quantity] + [0.] * (len(self.eig_vals) - 1)
+
+        if self.driving_term != 0:
+            # coefficients of the particular solution (which will be added to homo. sol.)
+            self.particular_coeffs = np.linalg.solve(-self.lambda_matrix, [self.driving_term] + [0.] * (len(self.eig_vals) - 1))
+        else:
+            self.particular_coeffs = np.zeros_like(self.eig_vals)  # No driving term. Will have no effect in this case.
+
+        self.coeffs = np.linalg.solve(self.eig_vecs.T, b - self.particular_coeffs)  # solve for initial conditions
+
+
 if __name__ == '__main__':
-    n = Nuclide("Pb208")
-
-    for k, n in n.get_incident_proton_daughters().items():
-        print(k, n.xs)
-        if k == 'Bi205':
-            n.xs.plot()
-    plt.show()
-
-    # from openmc.data import NATURAL_ABUNDANCE
-    # isotopes = {}
-    # for path in Path('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/data/nuclides').iterdir():
-    #     if m := re.match("(([A-Z][a-z]*)([0-9]+).*?)\.pickle", path.name):
-    #         n_name, symbol, A = m.groups()
-    #         A = int(A)
-    #         try:
-    #             isotopes[symbol].add(A)
-    #         except KeyError:
-    #             isotopes[symbol] = set()
-    # def a(s):
-    #     try:
-    #         return ATOMIC_NUMBER[s]
-    #     except KeyError:
-    #         return 0
-    #
-    # isotopes = {k: v for k, v in sorted(isotopes.items(), key=lambda k_v: a(k_v[0]))}
-    #
-    # with open("all_isotopes.pickle", 'wb')as f:
-    #     pickle.dump(isotopes, f)
-    #
-    # for k, v in isotopes.items():
-    #     print(k, v)
+    pass
+    print(Nuclide('U235').rest_energy())
+    print(Nuclide('U235_m1').rest_energy())

@@ -6,7 +6,7 @@ from typing import Dict, List, Union, Tuple
 from JSB_tools.nuke_data_tools.nuclide.data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
 import re
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
-import JSB_tools.nuke_data_tools.nuclide as nuclide
+import JSB_tools.nuke_data_tools.nuclide as nuclide_module
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import pickle
 from logging import warning as warn
@@ -166,6 +166,33 @@ class ActivationCrossSection(CrossSection1D):
         self.__yields__ = yields
         self.mt_values = mt_values
 
+    def plot(self, ergs=None,  ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
+             plot_mts=False, **mpl_kwargs):
+
+        ax, handle = super(ActivationCrossSection, self).plot(ergs=ergs, ax=ax, fig_title=fig_title, units=units, erg_min=erg_min,
+                                                 erg_max=erg_max, return_handle=True, **mpl_kwargs)
+
+        if not plot_mts:
+            return ax if not return_handle else (ax, handle)
+
+        x = handle.get_xdata()
+
+        q = 0.4
+        alphas = [q + q * i / len(self.mt_values) for i in range(len(self.mt_values))]
+
+        for i, (a, mt) in enumerate(zip(alphas, self.mt_values)):
+            y = self.__call__(x, mt)
+
+            ax.plot(x, y, label=mt, ls='--')
+
+        # ax.legend
+        ax.legend()
+
+        if return_handle:
+            return ax, handle
+        else:
+            return ax
+
     @property
     def emin(self):
         out = None
@@ -186,14 +213,21 @@ class ActivationCrossSection(CrossSection1D):
 
         return 1E-6 * out
 
-    def __call__(self, ergs):
+    def __call__(self, ergs, mt=None):
         out = np.zeros_like(ergs)
         ergs = 1E6 * ergs
-        for xs, yield_ in zip(self.__xss__, self.__yields__):
+
+        for _mt, xs, yield_ in zip(self.mt_values, self.__xss__, self.__yields__):
+            if mt is not None:
+                if _mt != mt:
+                    continue
             x = xs(ergs)
+
             if yield_ is not None:
                 x *= yield_(ergs)
+
             out += x
+
         return out
 
 
@@ -403,8 +437,8 @@ class ActivationReactionContainer:
     @staticmethod
     def __get_product_name__(n1, n2, projectile) -> str:
         """For a reaction like C13(p, X) -> B10, find X (e.g. a in this case for alpha). """
-        _1 = nuclide.Nuclide.from_symbol(n1)
-        _2 = nuclide.Nuclide.from_symbol(n2)
+        _1 = nuclide_module.Nuclide(n1)
+        _2 = nuclide_module.Nuclide(n2)
         z1, n1 = _1.Z, _1.N
         z2, n2 = _2.Z, _2.N
         z = z1-z2
@@ -497,7 +531,7 @@ class ActivationReactionContainer:
 
         """
         m = re.match(".+_e([0-9]+)", name)
-        assert m
+        if not m: return None
         base_name = name.replace(f"_e{m.groups()[0]}", '')
         level = int(m.groups()[0])
 
@@ -507,13 +541,26 @@ class ActivationReactionContainer:
             return None
 
         erg, hl = level.energy, level.half_life.n
-        for i in range(1, 12):
-            n = Nuclide.from_symbol(f"{base_name}_m{i}")
+
+        for i in range(1, 4):
+            n = nuclide_module.Nuclide(f"{base_name}_m{i}")
             if n.is_valid:
                 if np.isclose(n.excitation_energy, erg, rtol=0.05):
                     return n.name
 
-        return None
+        return name  # leave name as is
+
+    def pickle_fission_xs(self, r: Reaction):
+        assert r.mt == 18
+
+        fission_xs = list(r.xs.values())[0]
+
+        xs_fig_label = f'{self.nuclide_name}({self.projectile[0].upper()},F)'
+        xs = CrossSection1D(fission_xs.x / 1E6, fission_xs.y, xs_fig_label, self.projectile)
+        path = self.pickle_path.parent / 'fission_xs'
+        path.mkdir(exist_ok=True, parents=True)
+        with open(path / '{0}.pickle'.format(self.nuclide_name), 'wb') as f:
+            pickle.dump(xs, f)
 
     def _get_activation_products(self, e: Evaluation, projectile, debug=False) -> Dict[str, ActivationCrossSection]:
         """
@@ -536,11 +583,7 @@ class ActivationReactionContainer:
             from JSB_tools import TabPlot
 
         target = e.gnd_name
-        s, z, a, m = Nuclide.get_s_z_a_m_from_string(target)
-        z = ATOMIC_NUMBER[s]
-
-        def to_string(z_, a_, m_=None):
-            return f"{ATOMIC_SYMBOL[z_]}{a_}" + ("" if (m_ is None or m_ == 0) else f"_m{m_}")
+        s, z, a, m = nuclide_module.Nuclide.get_s_z_a_m_from_string(target)
 
         outs = {}
 
@@ -558,6 +601,10 @@ class ActivationReactionContainer:
                     warn(f"openmc bug: Creating Reaction for {projectile} on {e.target['zsymam']}")
                     continue
 
+                if mt == 18:
+                    self.pickle_fission_xs(r)
+                    continue
+
                 xs: Tabulated1D = r.xs['0K']
 
                 if all(xs.y == 0):
@@ -566,21 +613,19 @@ class ActivationReactionContainer:
 
                 for prod in r.products:
                     yield_: Tabulated1D = prod.yield_
-
+                    _old = prod.particle
                     if hasattr(yield_, 'y') and all(yield_.y == 0):
-                        print(
-                            f"Zero yield: interpolations: {yield_.interpolation}, breakpoints: {yield_.breakpoints}")
                         continue
 
                     if prod.particle == target:  # Not sure how to interpret this, so ignore.
                         continue
 
                     if '_e' in prod.particle:  # Handle this in a special case
-                        if m := re.match(".+_e([0-9]+)", prod.particle):
-                            iso = int(m.groups()[0])
-                            prod.particle = to_string(z, a, iso)
-                        else:
+                        new_name = self.find_isomeric_gdr_name(prod.particle)
+                        if new_name is None:
                             continue
+                        else:
+                            prod.particle = new_name
 
                     try:
                         activation_cross_section = outs[prod.particle]
@@ -654,7 +699,7 @@ class ActivationReactionContainer:
 
         nuclide_name = e.gnd_name
 
-        print(f'Reading data from {data_source} for {projectile}s on {nuclide_name}')
+        # print(f'Reading data from {data_source} for {projectile}s on {nuclide_name}')
 
         try:
             all_instances = ActivationReactionContainer.all_instances[projectile][data_source]
@@ -706,8 +751,10 @@ class ActivationReactionContainer:
             pickle.dump(self, f)
 
     @staticmethod
-    def pickle_all(projectile):
+    def pickle_all(projectile, library=None):
         for _data_source, _dict in ActivationReactionContainer.all_instances[projectile].items():
+            if (library is not None) and (library.lower() != _data_source.lower()):
+                continue
             for nuclide_name, reaction in _dict.items():
                 if len(reaction.product_nuclide_names_xss) > 0:
                     reaction.__pickle__()
@@ -749,4 +796,19 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    ActivationReactionContainer.find_isomeric_gdr_name('Pt193_e5')
+    from openmc.data import Evaluation, Reaction
+    e = Evaluation('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl')
+    mts = [1, 17, 33, 42]
+    for mt in mts:
+        print(f"MT: {mt}")
+        for p in Reaction.from_endf(e, mt).products:
+            print('\t', p.particle, p)
+
+
+    from JSB_tools.nuke_data_tools import Nuclide
+    # for k, v in Nuclide("U238").get_incident_proton_daughters(data_source='all').items():
+    #     print(k, v.xs.mt_values)
+
+    xs = Nuclide("U238").get_incident_proton_daughters(data_source='all')['U238_m1'].xs
+    xs.plot(plot_mts=True)
+    plt.show()

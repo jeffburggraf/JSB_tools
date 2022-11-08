@@ -1,18 +1,14 @@
 from __future__ import annotations
-import datetime
 import pickle
-import warnings
 from JSB_tools import ProgressReport
-import matplotlib.pyplot as plt
 from openmc.data.endf import Evaluation
-from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER, FissionProductYields
 from openmc.data import Reaction, Decay
 from pathlib import Path
 import re
 import marshal
 from warnings import warn
 from uncertainties import ufloat, ufloat_fromstr
-from numbers import Number
+from endf_to_pickle import iter_paths
 import numpy as np
 from data_directories import decay_data_dir, DECAY_PICKLE_DIR
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
@@ -32,7 +28,7 @@ stable_match = re.compile('Parent half-life: STABLE.+')
 def get_hl_from_ednf_file(path_to_file):
     """
     Used to correct for bug in openmc where the ENDF evaluation of some stable isotopes return a half life of zero.
-    Also, very very long half-lives, e.g. 1E12 years, were also returning a half life of zero.
+    Also, very long half-lives, e.g. 1E12 years, were also returning a half life of zero.
     """
 
     with open(path_to_file) as f:
@@ -76,10 +72,14 @@ def get_hl_from_ednf_file(path_to_file):
     return ufloat(hl*scale, err*scale)
 
 
-def set_nuclide_attributes(_self: nuclide_module.Nuclide, open_mc_decay):
+def set_nuclide_attributes(_self: nuclide_module.Nuclide, ev: Evaluation, open_mc_decay: Decay):
     _self.half_life = open_mc_decay.half_life
     _self.mean_energies = open_mc_decay.average_energies
     _self.spin = open_mc_decay.nuclide["spin"]
+
+    _self.excitation_energy = ev.target['excitation_energy'] * 1E-3  # eV -> keV
+    _self.nuclear_level = ev.target['state']
+    _self.fissionable = ev.target['fissionable']
 
     if np.isinf(_self.half_life.n) or open_mc_decay.nuclide["stable"]:
         _self.is_stable = True
@@ -87,7 +87,7 @@ def set_nuclide_attributes(_self: nuclide_module.Nuclide, open_mc_decay):
     else:
         _self.is_stable = False
 
-    _self.decay_radiation_types.extend(open_mc_decay.spectra.keys())
+    # _self.decay_radiation_types.extend(open_mc_decay.spectra.keys())
 
     for mode in open_mc_decay.modes:
         decay_mode = nuclide_module.DecayMode(mode, _self.half_life)
@@ -125,8 +125,9 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
     if nuclides_to_process is not None:
         assert hasattr(nuclides_to_process, '__iter__')
         assert isinstance(nuclides_to_process[0], str)
+        pickle_nuclides = pickle_spectra = False  # Don't save to pickle file in this case.
 
-    directory_endf = decay_data_dir/'decay_ENDF'  # Path to downloaded ENDF decay data
+    directory_endf = decay_data_dir  # Path to downloaded ENDF decay data
 
     prog = ProgressReport(len(list(directory_endf.iterdir())), 5)
 
@@ -135,40 +136,38 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
 
     openmc_decays = {}
 
-    endf_decay_file_match = re.compile(r'([A-z]+)([0-9]+)([mnoprs])?')
-    misc_evaluation_data = {'excitation_energy': {}}
     i = 0
-    for endf_file_path in directory_endf.iterdir():
+    # for endf_file_path in directory_endf.iterdir():
+    for endf_file_path in iter_paths(directory_endf):
         i += 1
         prog.log(i)
-        file_name = endf_file_path.name
-        if not endf_decay_file_match.match(file_name):
-            print(endf_file_path.name)
-        if _m := endf_decay_file_match.match(file_name):
-            print('Reading ENDSF decay data from {}...'.format(endf_file_path.name))
+
+        try:
             e = Evaluation(endf_file_path)
-            nuclide_name = e.gnd_name
 
-            if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
-                continue
-
-            d = Decay(e)
-
-            misc_evaluation_data['excitation_energy'][nuclide_name] = e.target['excitation_energy']*1E-3  #eV -> keV
-
-            if d.nuclide["stable"]:
-                half_life = ufloat(np.inf, 0)
-            elif d.half_life.n == 0:
-                half_life = get_hl_from_ednf_file(endf_file_path)
-            else:
-                half_life = d.half_life
-
-            openmc_decays[nuclide_name] = {'decay': d, 'half_life': half_life}
-        else:
+        except (KeyError, ValueError):
+            print(f"Failed for {endf_file_path.name}")
             continue
+
+        nuclide_name = e.gnd_name
+
+        if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
+            continue
+
+        d = Decay(e)
+
+        if d.nuclide["stable"]:
+            half_life = ufloat(np.inf, 0)
+        elif d.half_life.n == 0:
+            half_life = get_hl_from_ednf_file(endf_file_path)
+        else:
+            half_life = d.half_life
+
+        openmc_decays[nuclide_name] = {'evaluation': e, 'decay': d, 'half_life': half_life}
 
     for parent_nuclide_name, openmc_dict in openmc_decays.items():
         openmc_decay = openmc_dict['decay']
+        openmc_evaluation = openmc_dict['evaluation']
 
         openmc_decay.half_life = openmc_dict['half_life']
 
@@ -194,7 +193,7 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
                 daughter_nuclide.__decay_parents_str__.append(parent_nuclide_name)
                 parent_nuclide.__decay_daughters_str__.append(daughter_nuclide_name)
 
-        set_nuclide_attributes(parent_nuclide, openmc_decay)
+        set_nuclide_attributes(parent_nuclide, openmc_evaluation, openmc_decay)
 
         if pickle_spectra:
             for spectra_mode, spec_data in openmc_decay.spectra.items():
