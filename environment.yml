@@ -6,6 +6,7 @@ dependencies:
   - openmc  # Problem on Windows
   - python=3.9
   - numpy
+  - numba
   - scipy
   - uncertainties
   - matplotlib

@@ -187,31 +187,10 @@ class Nuclide(Element):
         "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
 
     all_instances = {}  # keeping track of all Nuclides to save time on loading
-    default_values = {'excitation_energy': 0,
-                      'nuclear_level': 0,
-                      'fissionable': False,
-                      'half_life': None,
-                      'spin': 0,
-                      'is_stable': None,
-                      '__decay_daughters_str__': list,
-                      'decay_modes': dict,
-                      '__decay_parents_str__': list,
-                      '__decay_mode_for_print__': None,
-                      'self.mean_energies': None,
-                      'is_valid': False
-                      }
-
-    @staticmethod
-    def __get_default_atrib(name):
-        val = Nuclide.default_values[name]
-        if isinstance(val, Callable):
-            val = val()
-
-        return val
 
     @classmethod
     def _from_e(cls, symbol, z, a, e: int) -> Nuclide:
-        # todo: Decay modes. and return isomer is exists.
+        # todo: Decay modes. and return isomer if exists.
 
         self = Nuclide(symbol, _default=True)
         self.__decay_gamma_lines = []
@@ -231,13 +210,16 @@ class Nuclide(Element):
 
         return self
 
+    def copy(self) -> Nuclide:
+        return Nuclide(self.name, _copy=True)
+
     def __new__(cls, symbol=None, *args, **kwargs):
         """
 
         Args:
             symbol:
-            *args:
-            **kwargs: if _default in kwargs, run __init__, setting all values to default.
+            *args: unused
+            **kwargs: if _default in kwargs, set all values to default. if _copy in kwargs, don't pull sintance from RAM
         """
         if symbol is None:  # deal with call to __new__ during unpickling.
             return object.__new__(cls)
@@ -248,13 +230,12 @@ class Nuclide(Element):
             symbol = symbol.replace(f'_e{m}', '')  # remove "_ei" from symbol
             return Nuclide._from_e(symbol, z, a, m)
 
-        if symbol not in Nuclide.all_instances:
+        if symbol not in Nuclide.all_instances or '_copy' in kwargs:
             pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
             if '_default' in kwargs or not pickle_file.exists():
                 self = super().__new__(cls)
                 self.__Z_A_iso_state__ = z, a, m
-                # self.__init__(symbol)
-
+                self.is_valid = False  # triggers default routine in __init__
             else:
                 with open(pickle_file, "rb") as pickle_file:
                     self = CustomUnpickler(pickle_file).load()
@@ -264,28 +245,9 @@ class Nuclide(Element):
 
         else:
             self = Nuclide.all_instances[symbol]
+            self.is_valid = True
 
         return self
-
-    def _get_default_attrib(self, name):
-        """
-        Sets attrib to default value unless the attrib is already defined
-        Args:
-            name:
-
-        Returns:
-
-        """
-        if hasattr(self, name):
-            return getattr(self, name)
-        else:  # set default
-            try:
-                val = Nuclide.default_values[name]
-                if isinstance(val, Callable):
-                    val = val()
-                return val
-            except KeyError:
-                return None
 
     def __init__(self, symbol, **kwargs):
         """
@@ -329,27 +291,25 @@ class Nuclide(Element):
 
         self.__decay_mode_for_print__ = None
 
-        if '_default' not in kwargs:  # means instances were set in __new__
+        if self.is_valid:  # means instances were set in __new__
             return
 
-        self.excitation_energy: float = self._get_default_attrib('excitation_energy')
+        self.excitation_energy: float = None
 
-        self.nuclear_level: float = self._get_default_attrib('nuclear_level')
+        self.nuclear_level: float = None
 
-        self.fissionable: bool = self._get_default_attrib('fissionable')
+        self.fissionable: bool = None
 
-        self.half_life: Union[None, UFloat] = self._get_default_attrib('half_life')
-        self.spin: int = self._get_default_attrib('spin')
+        self.half_life: Union[None, UFloat] = None
+        self.spin: int = None
 
-        self.is_stable: Union[None, bool] = self._get_default_attrib('is_stable')
+        self.is_stable: Union[None, bool] = None
 
-        self.__decay_daughters_str__: List[str] = self._get_default_attrib('__decay_daughters_str__')
+        self.__decay_daughters_str__: List[str] = None
 
-        self.decay_modes: Dict[Tuple[str], List[DecayMode]] = self._get_default_attrib('decay_modes')
+        self.decay_modes: Dict[Tuple[str], List[DecayMode]] = None
 
-        self.__decay_parents_str__: List[str] = self._get_default_attrib('__decay_parents_str__')
-
-        self.is_valid = self._get_default_attrib('is_valid')
+        self.__decay_parents_str__: List[str] = None
 
     @staticmethod
     def get_z_a_m_from_name(name: str):
@@ -606,6 +566,8 @@ class Nuclide(Element):
             return None
         elif np.isinf(self.half_life.n):
             return 'inf'
+        elif self.half_life == 0:
+            return ufloat(0, 0)
 
         dts = [('ns', 1E-9), ('us', 1E-6), ('ms', 1E-3), ('s', 1), ('min', 60), ('hr', 60 ** 2), ('day', 24 * 60 ** 2),
                ('month', 30 * 24 * 60 ** 2), ('year', 365 * 24 * 60 ** 2)]
@@ -951,7 +913,7 @@ class Nuclide(Element):
             if self.excitation_energy == 0:
                 ext_print = " (? keV)"
             else:
-                ext_print = f" ({self.excitation_energy * 1E-3:.6g} keV)"
+                ext_print = f" ({self.excitation_energy * 1E-3:.3g} keV)"
         else:
             ext_print = ""
 
@@ -1025,38 +987,43 @@ class Nuclide(Element):
         """
         return self.__get_parents__('proton', a_z_hl_cut, is_stable_only, data_source)
 
-    def get_incident_proton_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+    def get_incident_proton_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False, no_levels=True) -> Dict[
         str, InducedDaughter]:
-        return self.__get_daughters__('proton', a_z_hl_m_cut, is_stable_only, data_source)
+        return self.__get_daughters__('proton', a_z_hl_m_cut, is_stable_only, data_source, no_levels)
 
-    def get_incident_gamma_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+    def get_incident_gamma_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False, no_levels=True) -> Dict[
         str, InducedDaughter]:
-        return self.__get_daughters__('gamma', a_z_hl_m_cut, is_stable_only, data_source)
+        return self.__get_daughters__('gamma', a_z_hl_m_cut, is_stable_only, data_source, no_levels)
 
     def get_incident_gamma_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
         str, InducedParent]:
-        return self.__get_parents__('gamma', a_z_hl_m_cut, is_stable_only, data_source)
+        return self.__get_parents__('gamma', a_z_hl_m_cut, is_stable_only, data_source, )
 
-    def get_incident_neutron_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
+    def get_incident_neutron_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False, no_levels=True) -> Dict[
         str, InducedDaughter]:
-        return self.__get_daughters__('neutron', a_z_hl_m_cut, is_stable_only, data_source)
+        return self.__get_daughters__('neutron', a_z_hl_m_cut, is_stable_only, data_source, no_levels)
 
     def get_incident_neutron_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
         str, InducedParent]:
         return self.__get_parents__('neutron', a_z_hl_m_cut, is_stable_only, data_source)
 
     def __get_daughters__(self, projectile, a_z_hl_m_cut='', is_stable_only=False,
-                          data_source: Union[str, None] = None):
+                          data_source: Union[str, None] = None, no_levels=True):
         """
         Get all product nuclides (and cross-sections, ect.) from a  reaction specified by the path to the nuclide's
         pickle file for the given reaction.
         Args:
             projectile: eg 'proton', 'photon', 'neutron'
+
             a_z_hl_m_cut: Filter reaction products. The string will be evaluated as python code.
+
             is_stable_only:
+
             data_source: None uses ONLY the default library.
                          'all' uses all of them, where higher priority libraries take precedence.
                          'endf' uses ENDF, 'talys' uses TALYS, etc.
+
+            no_levels: If True, short-liveed excited nuclides, like Ta180_e2, are not included.
 
         Returns:
 
@@ -1068,13 +1035,23 @@ class Nuclide(Element):
         for daughter_name, xs in reaction.product_nuclide_names_xss.items():
             if daughter_name == 'photon':  # todo: Dont pickle these
                 continue
+
+            if no_levels:
+                if '_e' in daughter_name:
+                    continue
+
             daughter_nuclide = Nuclide(daughter_name)
-            a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, \
-                          daughter_nuclide.isometric_state
-            if __nuclide_cut__(a_z_hl_m_cut, a, z, hl, is_stable_only, m):
-                daughter = InducedDaughter(daughter_nuclide, self, projectile)
-                daughter.xs = xs
-                out[daughter_name] = daughter
+
+            if a_z_hl_m_cut != '' or is_stable_only:
+                a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, \
+                              daughter_nuclide.isometric_state
+
+                if not __nuclide_cut__(a_z_hl_m_cut, a, z, hl, is_stable_only, m):
+                    continue
+
+            daughter = InducedDaughter(daughter_nuclide, self, projectile)
+            daughter.xs = xs
+            out[daughter_name] = daughter
 
         return out
 
@@ -1084,13 +1061,15 @@ class Nuclide(Element):
         assert isinstance(daughter_reaction, ActivationReactionContainer)
         out: Dict[str, InducedParent] = {}
 
-        parent_nuclides = [Nuclide(name) for name in daughter_reaction.parent_nuclide_names if name != 'photon']
+        parent_nuclides = [Nuclide(name) for name in daughter_reaction.parent_nuclide_names if name not in
+                           ['photon', 'neutron']]
 
         for parent_nuclide in parent_nuclides:
             a, z, hl, m = parent_nuclide.A, parent_nuclide.Z, parent_nuclide.half_life, parent_nuclide.isometric_state
             if __nuclide_cut__(a_z_hl_cut, a, z, hl, is_stable_only, m):
                 parent = InducedParent(self, parent_nuclide, inducing_particle=projectile)
-                parent.xs = ActivationReactionContainer.fetch_xs(parent_nuclide.name, self.name, projectile)
+                parent.xs = ActivationReactionContainer.fetch_xs(parent_nuclide.name, self.name, projectile,
+                                                                 data_source=data_source)
                 out[parent.name] = parent
 
         return out
@@ -1218,7 +1197,8 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=
 class InducedDaughter(Nuclide):
     """
     A subclass of Nuclide representing a nucleus that was the result of an induced reaction.
-    This adds some cross section attributes
+    This adds cross-section info
+
     Attributes:
         xs: CrossSection1D instance
         parent: Parent nuclide
@@ -1226,7 +1206,7 @@ class InducedDaughter(Nuclide):
     """
 
     def __new__(cls, daughter_nuclide, parent_nuclide, inducing_particle, *args, **kwargs):
-        return daughter_nuclide
+        return daughter_nuclide.copy()
 
     def __init__(self, daughter_nuclide, parent_nuclide, inducing_particle):
         assert isinstance(daughter_nuclide, Nuclide)

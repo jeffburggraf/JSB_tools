@@ -1,21 +1,18 @@
 from __future__ import annotations
 import pickle
 from openmc.data.endf import Evaluation
-from openmc.data import ATOMIC_SYMBOL, FissionProductYields
-from openmc.data import Reaction, Decay
+from openmc.data import FissionProductYields
+from openmc.data import Decay
 from pathlib import Path
 import re
 from typing import Union, List
 import marshal
-from JSB_tools.nuke_data_tools. nuclide import Nuclide
 from warnings import warn
 from JSB_tools.nuke_data_tools.nuclide.data_directories import GAMMA_PICKLE_DIR,\
      PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH, DECAY_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationReactionContainer
 from data_directories import parent_data_dir, decay_data_dir, proton_enfd_b_data_dir,\
-    gamma_endf_dir, neutron_fission_yield_data_dir_endf, neutron_fission_yield_data_dir_gef, sf_yield_data_dir_gef,\
-    proton_fiss_yield_data_dir_ukfy, gamma_fiss_yield_data_dir_ukfy, neutron_enfd_b_data_dir, gamma_tendl_dir,\
-    neutron_fission_yield_data_dir_ukfy, neutron_tendl_data_dir, proton_tendl_data_dir
+    gamma_endf_dir, neutron_enfd_b_data_dir, gamma_tendl_dir, neutron_tendl_data_dir, proton_tendl_data_dir
 from JSB_tools import ProgressReport
 from multiprocessing import Process
 cwd = Path(__file__).parent
@@ -50,23 +47,40 @@ def iter_paths(path):
 
 
 def _run(data_directory, incident_projectile, library_name, _pickle, paths=None):  # for parallel
+
     if paths is None:
+        save_parents = True
         paths = [p for p in iter_paths(data_directory)]
+    else:
+        save_parents = False
+        paths = [Path(p) for p in paths]
 
     p = ProgressReport(len(paths), 5)
     i = 0
 
+    parents_dict = {}  # dict of the form {'nuclide': [parent_name1, parent_name2, ...]}
+    parent_path = None
+
     for file_path in paths:
         try:
             i += 1
-            ActivationReactionContainer.from_endf(file_path, incident_projectile, library_name)
+            act = ActivationReactionContainer.from_endf(file_path, incident_projectile, library_name, parents_dict)
+            parent_path = act.parents_dict_path
+
         except ActivationReactionContainer.EvaluationException:  # invalid/not an ENDF file. Continue
             continue
 
-        p.log(i, f'{library_name}-{incident_projectile}')
+        if _pickle:
+            act.__pickle__()
 
-    if _pickle:
-        ActivationReactionContainer.pickle_all(incident_projectile, library_name, paths)
+        act.delete()
+
+        p.log(i, f'{library_name}-{incident_projectile} (Currently on {file_path.name})')
+
+    if save_parents:
+        if parent_path is not None:  # pickle parent information
+            with open(parent_path, 'wb') as f:
+                pickle.dump(parents_dict, f)
 
 
 def run(data_directory, incident_projectile, library_name, _pickle=True, parallel=False,
@@ -101,21 +115,6 @@ def run(data_directory, incident_projectile, library_name, _pickle=True, paralle
 
     else:
         _run(data_directory, incident_projectile, library_name, _pickle, paths)
-
-
-def quick_nuclide_lookup():
-
-    with open(DECAY_PICKLE_DIR / 'quick_nuclide_lookup.pickle', 'wb') as f:
-        data = {}
-
-        for path in DECAY_PICKLE_DIR.iterdir():
-            if path.is_file():
-                if Nuclide.NUCLIDE_NAME_MATCH.match(path.name):
-                    nuclide = Nuclide(path.stem)
-                    key = nuclide.A, nuclide.Z, nuclide.half_life, nuclide.isometric_state
-                    data[key] = nuclide.name
-
-        pickle.dump(data, f)
 
 
 #  Special case implemented in pickle_proton_fission_xs_data() for proton induced fission cross-sections.
@@ -245,7 +244,7 @@ def _run_fission_yield_pickle(raw_dir, particle, library):
 def pickle_fission_product_yields(particles=None, libraries=None, parallel=False):
     """
     To add more fission yield sources/ search for the tag 'Add here for fiss yield' and make the needed changes.
-    To selectively update one type of fission yieds, look at the helpers variable below.
+    To selectively update one type of fission yields, look at the helpers variable below.
 
     Marshal'd fission yield data is a dict of the form:
         1st dump is energies:
@@ -295,57 +294,30 @@ for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_Y
         _directory.mkdir()
 
 
-def pickle_all_nuke_data():  # todo: paralellize this
-    pickle_fission_product_yields()
-    # pickle_decay_data()
-    # pickle_proton_activation_data()
-    # pickle_proton_fission_xs_data()
-    # pickle_gamma_fission_xs_data()
-    # pickle_gamma_activation_data()
-
-    pass
+def pickle_all_activation(_pickle=True, parallel=True):
+    pickle_proton_activation_data(pickle=_pickle, parallel=parallel)
+    pickle_gamma_activation_data(pickle=_pickle, parallel=parallel)
+    pickle_neutron_activation_data(pickle=_pickle, parallel=parallel)
 
 
-def debug_nuclide(n: str, library="ENDF"):
-    library = library.upper()
-    assert library in ['ENDF', 'JEFF']
+def pickle_everything(_pickle=True, parallel=True):
+    pickle_all_activation(_pickle, parallel)
 
-    m = re.match("([A-Z][a-z]{0,2})([0-9]+)", n)
-    assert m, n
+    pickle_fission_product_yields(parallel=parallel)
 
-    symbol = m.groups()[0]
-    a = f"{m.groups()[1]:0>3}"
-    path = decay_data_dir/f'decay_{library}'
-
-    if library == 'ENDF':
-        m_str = f"dec-[0-9]{{3}}_{symbol}_{a}.endf"
+    if parallel:
+        p = Process(target=pickle_proton_fission_xs_data)
+        p.start()
     else:
-        m_str = n
-    matcher = re.compile(m_str)
-
-    for p in path.iterdir():
-        fname = p.name
-        if matcher.match(fname):
-            endf_path = p
-            break
-    else:
-        raise FileNotFoundError(f"No ENDF file found for {n}")
-
-    e = Evaluation(endf_path)
-    d = Decay(e)
-
-    for m in d.modes:
-        print('\t', m)
-
-    for spec_type, spectra in d.spectra.items():
-        print(spec_type, spectra)
+        pickle_proton_fission_xs_data()
 
 
 if __name__ == '__main__':
     pass
-    pickle_proton_activation_data(True, False, True,
-                                  paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl'])
-    # pickle_fission_product_yields(parallel=True)
-    # pickle_gamma_activation_data(parallel=True)
+    pickle_all_activation(True, True)
+    # pickle_neutron_activation_data(endf=False, paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-neutrons/Pb207g.asc'])
     # pickle_neutron_activation_data(parallel=True)
-    # pickle_proton_activation_data(parallel=True) #, paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl'])
+    # p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-Yb173.tendl'
+
+    # pickle_proton_activation_data(endf=False, parallel=False, paths = [p])
+

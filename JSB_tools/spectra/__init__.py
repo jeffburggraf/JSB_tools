@@ -137,6 +137,9 @@ class EfficiencyCalMixin:
     def eval_efficiency(self, erg, nominal=False):  # todo
         return np.interp(erg, self._effs_ergs, self.effs)
 
+    def __call__(self, ergs,):
+        return self.eval_efficiency(ergs)
+
     def pickle_efficiency(self, eff_path=None):
         """
         Save efficiency cal. First uses eff_path argument, then self.eff_path, then self.path (is attribute exists)

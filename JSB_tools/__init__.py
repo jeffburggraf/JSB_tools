@@ -51,6 +51,24 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 
+def nearest_i(vals, x):
+    """
+    Given sorted array of values, `vals`, find the indices of vals are nearest to each element in x.
+    Args:
+        vals:
+        x:
+
+    Returns:
+
+    """
+    is_ = np.searchsorted(vals, x, side='right') - 1
+    midq = x < 0.5 * (vals[is_] + vals[is_ + 1])
+    out = np.where(midq, is_, is_ + 1)
+    if hasattr(midq, '__iter__'):
+        return out[0]
+    return out
+
+
 def errorbar(x, y, ax=None, **kwargs):
     if ax is None:
         _, ax = plt.subplots()
@@ -1510,18 +1528,26 @@ class ProgressReport:
         # self.__i_current__ = i_init
         self.__next_print_time__ = time.time() + sec_per_print
         self.__init_time__ = time.time()
-        self.__rolling_average__ = []
+
+        self.events_log = [self.__i_init__]
+        self.times_log = [self.__init_time__]
+        # self.__rolling_average__ = []
 
     @property
     def elapsed_time(self):
         return time.time()-self.__init_time__
 
     def __report__(self, t_now, i, added_msg):
-        evt_per_sec = (i-self.__i_init__)/(t_now - self.__init_time__)
-        self.__rolling_average__.append(evt_per_sec)
-        evt_per_sec = np.mean(self.__rolling_average__)
-        if len(self.__rolling_average__) >= 5:
-            self.__rolling_average__ = self.__rolling_average__[:5]
+
+        self.events_log.append(i)
+        self.times_log.append(t_now)
+
+        evt_per_sec = (self.events_log[-1] - self.events_log[0])/(self.times_log[-1] - self.times_log[0])
+
+        if len(self.times_log) >= max(2, int(6/self.__sec_per_print__)):
+            self.dts_log = self.times_log[:5]
+            self.events_log = self.events_log[:5]
+
         evt_remaining = self.__i_final__ - i
         sec_remaining = evt_remaining/evt_per_sec
         sec_per_day = 60**2*24

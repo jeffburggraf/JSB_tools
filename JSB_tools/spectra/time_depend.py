@@ -441,8 +441,8 @@ class InteractiveSpectra:
         """"""
         if self.print_click_coords:
             msg = ''
-            x1, x2 = interactive.ax.get_xlim()
-            y1, y2 = interactive.ax.get_ylim()
+            x1, x2 = self.ax.get_xlim()
+            y1, y2 = self.ax.get_ylim()
             if event.ydata is not None:
                 fx, fy = (event.xdata - x1) / (x2 - x1), (event.ydata - y1) / (y2 - y1)
                 # print(x1, x2, y1, y2)

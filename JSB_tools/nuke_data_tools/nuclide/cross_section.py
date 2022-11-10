@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 from matplotlib import pyplot as plt
 from pathlib import Path
-from typing import Dict, List, Union, Tuple
+from typing import Dict, List, Union, Tuple, Set
 from JSB_tools.nuke_data_tools.nuclide.data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
 import re
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
@@ -29,12 +29,12 @@ class CustomUnpickler(pickle.Unpickler):
 class CrossSection1D:
     def __init__(self, xs: Tabulated1D, yield_: Tabulated1D,
                  fig_label: str = None, incident_particle: str = 'particle', data_source='', mt_value=None,
-                 **misc_data):
+                 endf_path=None, **misc_data):
         """
         A container for energy dependent 1-D cross-section
         Args:
             # x: energies for which cross-section is evaluated.
-            # xss: Cross sections corresponding to energies.
+            # xss: Cross-sections corresponding to energies.
             fig_label: Figure label.
             incident_particle:
 
@@ -46,6 +46,7 @@ class CrossSection1D:
         self.data_source = data_source
         self.misc_data = misc_data
         self.mt_value = mt_value
+        self.endf_path: Path = endf_path
 
     @property
     def emin(self):
@@ -79,7 +80,7 @@ class CrossSection1D:
             out *= self.__yield__(1E6 * ergs)
         return out
 
-    def plot(self, ergs=None,  ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
+    def plot(self, ergs=None, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
              **mpl_kwargs):
         if ergs is None:
             ergs = self.ergs
@@ -157,35 +158,98 @@ class ActivationCrossSection(CrossSection1D):
     Behaves much like CrossSection1D instance.
 
     """
-    def __init__(self, xss: List[Tabulated1D], yields: List[Tabulated1D], fig_label: str = None,
-                 incident_particle: str = 'particle', data_source='', mt_values=None,
+
+    def __init__(self, xss: Dict[int, Tabulated1D], yields: Dict[int, List[Tabulated1D]], fig_label: str = None,
+                 incident_particle: str = 'particle', data_source='', mt_values=None, endf_path=None,
                  **misc_data):
         super().__init__(None, None, fig_label=fig_label, incident_particle=incident_particle,
-                         data_source=data_source, mt_value=None, **misc_data)
-        self.__xss__ = xss
-        self.__yields__ = yields
-        self.mt_values = mt_values
+                         data_source=data_source, mt_value=None, endf_path=endf_path, **misc_data)
+        self.__xss__: Dict[int, Tabulated1D] = xss
+        self.__yields__: Dict[int, List[Tabulated1D]] = yields
 
-    def plot(self, ergs=None,  ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
-             plot_mts=False, **mpl_kwargs):
+    def _add_xs(self, mt, xs: Tabulated1D, yield_: Union[None, Tabulated1D]):
+        try:
+            self.__yields__[mt].append(yield_)
+        except KeyError:
+            self.__yields__[mt] = [yield_]
 
-        ax, handle = super(ActivationCrossSection, self).plot(ergs=ergs, ax=ax, fig_title=fig_title, units=units, erg_min=erg_min,
-                                                 erg_max=erg_max, return_handle=True, **mpl_kwargs)
+        self.__xss__[mt] = xs
+
+    @property
+    def mt_values(self):
+        return set(self.__xss__.keys())
+
+    def debug_plot(self):
+        """
+        Plots the xs and yields for each MT
+
+        Returns:
+
+        """
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex='all')
+        self.plot(ax=ax1, plot_mts=True)
+
+        x = self.ergs * 1E6
+
+        for k, yields in self.__yields__.items():
+            for i, y in enumerate(yields):
+                ax2.scatter(x * 1E-6, y(x), label=f"MT={k} ({i})", s=2)
+
+        ax2.set_ylabel('yields')
+        ax2.set_xlabel(ax1.get_xlabel())
+        ax1.set_xlabel('')
+
+        ax2.legend()
+
+    def plot(self, ergs=None, ax=None,  plot_mts=False, fig_title=None, units="b", erg_min=None, erg_max=None,
+             return_handle=False,
+             **mpl_kwargs):
+        """
+
+        Args:
+            ergs:
+            ax:
+            plot_mts:
+            fig_title:
+            units:
+            erg_min:
+            erg_max:
+            return_handle:
+            **mpl_kwargs:
+
+        Returns:
+
+        """
+        color_ = 'black' if plot_mts else None
+        ax, handle = super(ActivationCrossSection, self).plot(ergs=ergs, ax=ax, fig_title=fig_title, units=units,
+                                                              erg_min=erg_min,
+                                                              erg_max=erg_max, return_handle=True, lw=2,
+                                                              c=color_, **mpl_kwargs)
 
         if not plot_mts:
             return ax if not return_handle else (ax, handle)
 
         x = handle.get_xdata()
 
-        q = 0.4
-        alphas = [q + q * i / len(self.mt_values) for i in range(len(self.mt_values))]
+        cmap = plt.get_cmap("tab10")
+        for c_i, mt in enumerate(self.mt_values):
+            def get_mt_label():
+                out = f"MT={mt} "
+                if len(self.__yields__[mt]) > 1:
+                    out += f" ({i})"
+                return out
 
-        for i, (a, mt) in enumerate(zip(alphas, self.mt_values)):
-            y = self.__call__(x, mt)
+            n = len(self.__yields__[mt])
 
-            ax.plot(x, y, label=mt, ls='--')
+            color = cmap(c_i)
 
-        # ax.legend
+            for i in range(n):
+                alpha = 1.0 - 0.7*i / n
+
+                y = self.__call__(x, mt, i)
+
+                ax.plot(x, y, label=get_mt_label(), ls='--', alpha=alpha, color=color)
+
         ax.legend()
 
         if return_handle:
@@ -196,7 +260,7 @@ class ActivationCrossSection(CrossSection1D):
     @property
     def emin(self):
         out = None
-        for xs in self.__xss__:
+        for xs in self.__xss__.values():
             min_ = min(xs.x)
             if out is None or min_ < out:
                 out = min_
@@ -206,27 +270,51 @@ class ActivationCrossSection(CrossSection1D):
     @property
     def emax(self):
         out = None
-        for xs in self.__xss__:
+        for xs in self.__xss__.values():
             max_ = max(xs.x)
             if out is None or max_ > out:
                 out = max_
 
         return 1E-6 * out
 
-    def __call__(self, ergs, mt=None):
+    def __call__(self, ergs, mt_value=None, ith_channel=None):
+        """
+        Evaluate the cross-section at ergs. Default is to sum all channels.
+        Can specify the ith channel of a given mt value.
+        Args:
+            ergs:
+            mt_value: If None, sum all mts.
+            ith_channel: if None, sum all channels for mt = mt_value
+
+        Returns:
+
+        """
+        if mt_value is None:
+            ith_channel = None
+
         out = np.zeros_like(ergs)
         ergs = 1E6 * ergs
 
-        for _mt, xs, yield_ in zip(self.mt_values, self.__xss__, self.__yields__):
-            if mt is not None:
-                if _mt != mt:
+        if isinstance(ergs, int):
+            ergs = float(ergs)
+
+        for _mt in self.mt_values:
+            if mt_value is not None:
+                if _mt != mt_value:
                     continue
-            x = xs(ergs)
 
-            if yield_ is not None:
-                x *= yield_(ergs)
+            xs_y = self.__xss__[_mt](ergs)
+            yield_y = np.zeros_like(xs_y)
 
-            out += x
+            for i, yield_ in enumerate(self.__yields__[_mt]):
+                if ith_channel is not None:
+                    if i != ith_channel:
+                        continue
+
+                if yield_ is not None:
+                    yield_y += yield_(ergs)
+
+            out += xs_y * yield_y
 
         return out
 
@@ -254,8 +342,11 @@ class ActivationReactionContainer:
         self.parent_nuclide_names: A list of names of all parent nuclides that can produce this residue nuclide
             (e.g. self) via activation. This allows traveling both directions in an activation chain.
     """
+    parents_ = {}  # Dict of parents grouped by data source. Loaded during cls.from_pickle.
+
     # all_instances set in code below
     all_instances: Dict[str, Dict[str, Dict[str, ActivationReactionContainer]]] = {}
+
     directories: Dict[str, Path] = \
         {'proton': PROTON_PICKLE_DIR,
          'gamma': GAMMA_PICKLE_DIR,
@@ -274,7 +365,7 @@ class ActivationReactionContainer:
         Returns:
 
         """
-        path_dir = ActivationReactionContainer.directories[projectile]/data_source
+        path_dir = ActivationReactionContainer.directories[projectile] / data_source
         outs = []
         zs = []
         for path in path_dir.iterdir():
@@ -306,7 +397,7 @@ class ActivationReactionContainer:
         self.projectile = projectile
         self.nuclide_name = nuclide_name
         self.product_nuclide_names_xss: Dict[str, ActivationCrossSection] = {}
-        self.parent_nuclide_names: List[str] = []
+        self.parent_nuclide_names: Set[str] = set()
 
         self.elastic_xs: Union[CrossSection1D, None] = None
         self.inelastic_xs: Union[CrossSection1D, None] = None
@@ -321,6 +412,14 @@ class ActivationReactionContainer:
         ActivationReactionContainer.all_instances[projectile][data_source][nuclide_name] = self
 
         self.data_source = data_source
+
+    def delete(self):
+        """
+        Remove self from cls.all_instances for garbage collection.
+        Returns:
+
+        """
+        del self.all_instances[self.projectile][self.data_source][self.nuclide_name]
 
     @classmethod
     def fetch_xs(cls, parent_name, residue_name, projectile, data_source=None) -> CrossSection1D:
@@ -355,12 +454,14 @@ class ActivationReactionContainer:
         """
         Like from_pickle, but combines multiple data_sources.
         Args:
-            nuclide_name:
+            nuclide_name: e.g. 'U238'
+
             projectile:"proton", "neutron", "gamma"
-            data_source:
-             "all" to combine all libraries, with more reliable data taking precedence,
-             None to use only the default library (usually ENDF),
-             or a specific library name to use just that library.
+
+            data_source: None or str with the following behavior:
+                 "all": Combine all libraries, with more reliable data taking precedence.
+                  None: Use only the default library (usually ENDF),
+                  'library': Use ONLY data from a specific library, e.g. 'tendl'
 
         Returns:
 
@@ -368,7 +469,7 @@ class ActivationReactionContainer:
         if isinstance(data_source, str):
             data_source = data_source.lower()
 
-        reactions = []
+        return_reaction = None
 
         if data_source is None:
             return cls.from_pickle(nuclide_name, projectile, data_source=None)
@@ -377,40 +478,31 @@ class ActivationReactionContainer:
             return cls.from_pickle(nuclide_name, projectile, data_source=data_source)
 
         elif data_source == 'all':
-            for library in cls.libraries[projectile]: # Adds reactions from library in order of priority set by the NuclearLibraries class.
+            for library in cls.libraries[projectile][::-1]:  # reversed so that higher priority xs data overwrites lower
+                # , e.g. ENDF overwrites TENDL.
+
                 try:
                     r: ActivationReactionContainer = cls.from_pickle(nuclide_name, projectile, library)
                 except FileNotFoundError:
                     continue
-                reactions.append(r)
-                # if reaction is None:  # reaction is the obj that will be returned (after possible additions below)
-                #     reaction = r
-                # else:
-                #     reactions.append(r)
+
+                if return_reaction is None:
+                    return_reaction = r
+                else:
+                    for prod, xs in r.product_nuclide_names_xss.items():
+                        return_reaction.product_nuclide_names_xss[prod] = xs  # overwrites value if already exists.
+
+            if return_reaction is None:
+                raise FileNotFoundError(f'No data found for {projectile} on {nuclide_name}')
+
+            return return_reaction
+
         else:
             if projectile not in cls.libraries:
                 raise ValueError(f'Invalid/no data for projectile, "{projectile}"')
             raise FileNotFoundError(f'`data_source, "{data_source}" not found for projectile "{projectile}". '
                                     f'Available data libraries are:\n\t{cls.libraries[projectile]}\n, '
                                     f'or, you can specify "all"')
-
-        # If we reach this far, then that means 'all' was specified as data source
-        if len(reactions) == 0:
-            raise FileNotFoundError(f'No data found for {projectile} on {nuclide_name}')
-
-        return_reaction = reactions[0]
-        reactions = reactions[1:]
-
-        for other_reaction in reactions:
-            for name, xs in other_reaction.product_nuclide_names_xss.items():
-
-                if name not in return_reaction.product_nuclide_names_xss:
-                    return_reaction.product_nuclide_names_xss[name] = xs
-
-            return_reaction.parent_nuclide_names.extend([pname for pname in other_reaction.parent_nuclide_names
-                                                         if pname not in return_reaction.parent_nuclide_names])
-
-        return return_reaction
 
     @classmethod
     def from_pickle(cls, nuclide_name, projectile, data_source) -> ActivationReactionContainer:
@@ -438,6 +530,18 @@ class ActivationReactionContainer:
 
             all_instances[nuclide_name] = existing_instance
 
+        if data_source not in cls.parents_:  # look for and  set activation parents
+            try:
+                with open(existing_instance.parents_dict_path, 'rb') as f:
+                    cls.parents_[data_source] = pickle.load(f)
+            except FileNotFoundError:
+                cls.parents_[data_source] = {}
+
+        try:  # update parents
+            existing_instance.parent_nuclide_names.update(cls.parents_[data_source][nuclide_name])
+        except KeyError:
+            pass
+
         return existing_instance
 
     @staticmethod
@@ -447,8 +551,8 @@ class ActivationReactionContainer:
         _2 = nuclide_module.Nuclide(n2)
         z1, n1 = _1.Z, _1.N
         z2, n2 = _2.Z, _2.N
-        z = z1-z2
-        n = n1-n2
+        z = z1 - z2
+        n = n1 - n2
         if projectile == 'proton':
             z += 1
         if projectile == 'neutron':
@@ -634,13 +738,15 @@ class ActivationReactionContainer:
 
                     try:
                         activation_cross_section = outs[prod.particle]
-                        activation_cross_section.__yields__.append(yield_)
-                        activation_cross_section.__xss__.append(xs)
-                        activation_cross_section.mt_values.append(mt)
+
                     except KeyError:
                         fig_label = f"{target}({projectile}, X){prod.particle}"
-                        outs[prod.particle] = ActivationCrossSection([xs], [yield_], fig_label, projectile,
-                                                                     self.data_source, mt_values=[mt])
+                        activation_cross_section = ActivationCrossSection({}, {}, fig_label,
+                                                                          projectile, self.data_source, mt_values=[mt],
+                                                                          endf_path=self.path)
+                        outs[prod.particle] = activation_cross_section
+
+                    activation_cross_section._add_xs(mt, xs, yield_)
 
                     if debug:
                         print(f"\t{prod} [included]")
@@ -678,7 +784,7 @@ class ActivationReactionContainer:
         pass
 
     @classmethod
-    def from_endf(cls, endf_path, projectile, data_source: str, debug=False):
+    def from_endf(cls, endf_path, projectile, data_source: str, parents_dict=None, debug=False):
         """
         Build the instance from ENDF file using openmc. Instance is saved to ActivationReactionContainer.all_instances
         Args:
@@ -688,6 +794,8 @@ class ActivationReactionContainer:
 
             data_source: Source of data, e.g. 'ENDF', or 'TENDL'. Default 'None'. Determines the name of directory of
                 pickled data.
+
+            parents_dict: For keeping track of activation parents.
 
             debug: Plots cross-sections and prints some useful information.
 
@@ -704,18 +812,7 @@ class ActivationReactionContainer:
 
         nuclide_name = e.gnd_name
 
-        # print(f'Reading data from {data_source} for {projectile}s on {nuclide_name}')
-
-        try:
-            all_instances = ActivationReactionContainer.all_instances[projectile][data_source]
-        except KeyError:
-            raise KeyError("Need to add particle/data_source to NuclearLibraries stucture. "
-                           "(search for NuclearLibraries)")
-
-        try:
-            self = all_instances[nuclide_name]
-        except KeyError:
-            self = ActivationReactionContainer(nuclide_name, projectile, data_source)
+        self = ActivationReactionContainer(nuclide_name, projectile, data_source)
 
         self.path = endf_path
 
@@ -727,13 +824,12 @@ class ActivationReactionContainer:
 
         for product_name, reaction_cross_section in self._get_activation_products(e, projectile, debug).items():
             self.product_nuclide_names_xss[product_name] = reaction_cross_section
-            try:
-                daughter_reaction_container = all_instances[product_name]
-            except KeyError:  # initialize fresh instance
-                daughter_reaction_container = ActivationReactionContainer(product_name, self.projectile,
-                                                                          data_source=data_source)
 
-            daughter_reaction_container.parent_nuclide_names.append(self.nuclide_name)
+            if parents_dict is not None:
+                try:
+                    parents_dict[product_name].add(self.nuclide_name)
+                except KeyError:
+                    parents_dict[product_name] = {self.nuclide_name}
 
         return self
 
@@ -745,11 +841,16 @@ class ActivationReactionContainer:
         return path
 
     @property
+    def parents_dict_path(self):
+        path = ActivationReactionContainer.directories[self.projectile] / self.data_source
+        path = path / 'parents.pickle'
+        return path
+
+    @property
     def pickle_path(self):
         return self.get_pickle_path(self.nuclide_name, self.projectile, self.data_source)
 
     def __pickle__(self):
-        print(f'Creating and writing {self.pickle_path.relative_to(self.pickle_path.parents[3])}')
         path = self.pickle_path
 
         if not path.parent.exists():
@@ -757,6 +858,8 @@ class ActivationReactionContainer:
 
         with open(path, 'wb') as f:
             pickle.dump(self, f)
+
+        return path
 
     @staticmethod
     def pickle_all(projectile, library=None, paths=None):
@@ -811,17 +914,15 @@ class ActivationReactionContainer:
         if warn_other:
             warn(f'Bad yield (ie [1., 1.])  for {nuclide_name}({incident_particle}, X){activation_product_name}')
 
-    def __len__(self):
-        return len(self.parent_nuclide_names) + len(self.product_nuclide_names_xss)
-
     def __repr__(self):
-        return '<ActivationReactionContainer: {0}, parents: {1}, daughters: {2}'\
-            .format(self.nuclide_name, self.parent_nuclide_names, self.product_nuclide_names_xss.keys())
+        return f'<ActivationReactionContainer: {self.nuclide_name}> ({self.data_source})'
 
 
 if __name__ == "__main__":
     from openmc.data import Evaluation, Reaction
-    e = Evaluation('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl')
+
+    e = Evaluation(
+        '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl')
     mts = [11, 17, 33, 42]
     for mt in mts:
         print(f"MT: {mt}")
@@ -829,9 +930,12 @@ if __name__ == "__main__":
             print('\t', p.particle, p)
 
     from JSB_tools.nuke_data_tools import Nuclide
-    # for k, v in Nuclide("U238").get_incident_proton_daughters(data_source='all').items():
-    #     print(k, v.xs.mt_values)
 
-    xs = Nuclide("U238").get_incident_proton_daughters(data_source='all')['U238_m1'].xs
-    xs.plot(plot_mts=True)
+    for k, v in Nuclide("U238").get_incident_proton_daughters(data_source='tendl').items():
+        print(k, v.xs.mt_values, v.xs.data_source)
+        if k == 'Ac222':
+            v.xs.plot(plot_mts=True)
+
+    # xs = Nuclide("Pb208").get_incident_proton_daughters(data_source='all')['He3'].xs
+    # xs.plot(plot_mts=True)
     plt.show()
