@@ -1,17 +1,14 @@
 from __future__ import annotations
-import pickle
-import time
 import warnings
 from pathlib import Path
 from datetime import datetime
-import re
-import lmfit
 from matplotlib import pyplot as plt
 import numpy as np
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
 from uncertainties.core import AffineScalarFunc
-from JSB_tools import Nuclide, mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
+from JSB_tools import mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
+from JSB_tools.nuke_data_tools import Nuclide
 from typing import List, Tuple, Union, Dict
 import marshal
 from lmfit.models import GaussianModel
@@ -1101,7 +1098,7 @@ if __name__ == '__main__':
 
     products = []
 
-    for n in [Nuclide.from_symbol('Ni58'), Nuclide.from_symbol('Ni60')]:
+    for n in [Nuclide('Ni58'), Nuclide('Ni60')]:
         for k, v in n.get_incident_gamma_daughters('all').items():
             y = np.average(v.xs.interp(tally.energies), weights=tally.fluxes)
             y *= 0.5**(10/v.half_life) - 0.5**(300/v.half_life)

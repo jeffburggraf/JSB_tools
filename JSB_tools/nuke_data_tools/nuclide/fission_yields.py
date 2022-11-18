@@ -51,7 +51,7 @@ class FissionYields:
         Returns: Tuple[(calculated energies, pre fission nucleus for to_par)]
 
         """
-        n = Nuclide.from_symbol(nuclide_name)
+        n = Nuclide(nuclide_name)
         if not hasattr(ergs, '__iter__'):
             assert isinstance(ergs, Number)
             ergs = [ergs]
@@ -70,7 +70,7 @@ class FissionYields:
             if par == 'gamma':
                 return 0, 0
             else:
-                _n = Nuclide.from_symbol(par)
+                _n = Nuclide(par)
                 assert _n.is_valid, f"Invalid particle, {par}"
                 return _n.Z, _n.A
 
@@ -451,7 +451,7 @@ class FissionYields:
 
         """
         xs: CrossSection1D
-        n = Nuclide.from_symbol(self.target)
+        n = Nuclide(self.target)
         if self.inducing_par == 'gamma':
             xs = n.gamma_induced_fiss_xs
         elif self.inducing_par == 'proton':

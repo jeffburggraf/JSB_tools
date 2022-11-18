@@ -135,7 +135,7 @@ class LevelScheme:
 
 class Coincidence:
     def __init__(self, nuclide_name, daughter_name=None):
-        self.nuclide = nuclide.Nuclide.from_symbol(nuclide_name)
+        self.nuclide = nuclide.Nuclide(nuclide_name)
         if daughter_name is None:
             br = -1
             for m in self.nuclide.decay_modes.values():
@@ -143,7 +143,7 @@ class Coincidence:
                     daughter_name = m[-1].daughter_name
                     br = m[-1].branching_ratio
         self.levels = {l.level_index: l for l in LevelScheme(daughter_name).levels}
-        self.daughter_nuclide = nuclide.Nuclide.from_symbol(daughter_name)
+        self.daughter_nuclide = nuclide.Nuclide(daughter_name)
 
         glines_ergs = [g.erg.n for g in self.nuclide.decay_gamma_lines]
 

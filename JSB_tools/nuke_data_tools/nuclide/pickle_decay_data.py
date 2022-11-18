@@ -215,7 +215,7 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
                     hl = nuclide.half_life.n
                     try:
                         i = len(d[erg][1]) - np.searchsorted(d[erg][1][::-1], intensity)
-                        # the below flow control is to avoid adding duplicates.
+                        # the below flow_pat control is to avoid adding duplicates.
                         for __name, __intensity in zip(d[erg][0], d[erg][1]):
                             if __name == nuclide.name and __intensity == intensity:
                                 break

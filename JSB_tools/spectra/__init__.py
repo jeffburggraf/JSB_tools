@@ -21,6 +21,9 @@ from matplotlib.axes import Axes
 from lmfit.model import save_modelresult
 from pickle import UnpicklingError
 from functools import cached_property
+from numba.typed import List as numba_list
+from numba import jit
+from JSB_tools.spectra.time_depend import get_erg_spec, remove_background
 np.random.seed(69)
 
 
@@ -134,8 +137,18 @@ class EfficiencyCalMixin:
             setattr(self, name, attrib)
         self.recalc_effs()
 
-    def eval_efficiency(self, erg, nominal=False):  # todo
-        return np.interp(erg, self._effs_ergs, self.effs)
+    def eval_efficiency(self, erg, nominal=False):
+        scalar_flag = False
+        if not hasattr(erg, '__iter__'):
+            scalar_flag = True
+            erg = [erg]
+
+        out = np.interp(erg, self._effs_ergs, self.effs)
+
+        if scalar_flag:
+            return out[0]
+        else:
+            return out
 
     def __call__(self, ergs,):
         return self.eval_efficiency(ergs)
@@ -354,7 +367,7 @@ class ListSpectra(EfficiencyCalMixin):
 
             out[i].append(t)
 
-        out = [np.array(ts) for ts in out]
+        out = numba_list([np.array(ts) for ts in out])
         # self._energy_spec = None  # Force _energy_spec to update on next call
         return out
 
@@ -703,10 +716,11 @@ class ListSpectra(EfficiencyCalMixin):
     def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
                          time_max: float = None, eff_corr=False, make_density=False, nominal_values=False,
                          return_bin_edges=False,
-                         remove_baseline=False, baseline_method='ROOT', baseline_kwargs=None,
+                         remove_baseline=False, median_window=40,
                          debug_plot=False):
         """
         Get energy spectrum according to provided condition.
+        Todo: Expand energy range to be >= 5 * median_window for spectrum passed to remove_baseline()
         Args:
             erg_min:
             erg_max:
@@ -718,11 +732,8 @@ class ListSpectra(EfficiencyCalMixin):
             return_bin_edges: Return the energy bins, e.g. for use in a histogram.
             remove_baseline: If True, remove baseline according to the following arguments.
 
-            baseline_method: If "ROOT" then use JSB_tools.calc_background
-                             If "median" then use JSB_tools.rolling_median
+            median_window: Window width for baseline removal routine. Should be larger than three times full peak width.
 
-            baseline_kwargs: Kwargs ot pass to either JSB_tools.calc_background or JSB_tools.rolling_median
-                (e.g. window_width (defualt = 75))
             debug_plot:
 
         Returns:
@@ -736,58 +747,73 @@ class ListSpectra(EfficiencyCalMixin):
             erg_max = self.erg_bins[-1]
         assert erg_min < erg_max, f"`erg_min` must be less than `erg_max`, not erg_min={erg_min} and erg_max={erg_max}"
 
-        time_min, time_max, erg_min, erg_max = tuple(map(_float, [time_min, time_max, erg_min, erg_max]))
+        if time_min is None:
+            time_min = self.times[0]
+        if time_max is None:
+            time_max = self.times[-1]
 
-        b = (time_min is not None, time_max is not None)
+        # time_min, time_max, erg_min, erg_max = tuple(map(_float, [time_min, time_max, erg_min, erg_max]))
 
-        if b == (0, 0):
-            get_n_events = len
-        elif b == (1, 0):
-            def get_n_events(x):
-                return len(x) - np.searchsorted(x, time_min, side='left')
-        elif b == (0, 1):
-            def get_n_events(x):
-                return np.searchsorted(x, time_max, side='right')
-        else:
-            def get_n_events(x):
-                return np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min,
-                                                                                    side='left')
+        # b = (time_min is not None, time_max is not None)
+        #
+        # if b == (0, 0):
+        #     get_n_events = len
+        # elif b == (1, 0):
+        #     def get_n_events(x):
+        #         return len(x) - np.searchsorted(x, time_min, side='left')
+        # elif b == (0, 1):
+        #     def get_n_events(x):
+        #         return np.searchsorted(x, time_max, side='right')
+        # else:
+        #     def get_n_events(x):
+        #         return np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min,
+        #                                                                             side='left')
 
         erg_index0 = self.__erg_index__(erg_min)
         erg_index1 = self.__erg_index__(erg_max)
 
         time_arrays = self.energy_binned_times[erg_index0: erg_index1]
 
-        out = np.fromiter(map(get_n_events, time_arrays), dtype=float)
+        # out = np.fromiter(map(get_n_events, time_arrays), dtype=float)
+        time_range = np.array([time_min, time_max])
+        out = get_erg_spec(time_arrays, time_range)
+
+        if not nominal_values:
+            yerr = np.sqrt(out)
+        else:
+            yerr = None
 
         bins = self.erg_bins_cut(erg_min, erg_max)
 
-        if not nominal_values:
-            out = unp.uarray(out, np.sqrt(out))
-
         if remove_baseline:
-            full_y = np.fromiter(map(get_n_events, self.energy_binned_times), dtype=float)
+            out = remove_background(out, median_window=median_window)
 
-            if baseline_kwargs is None:
-                baseline_kwargs = {}
-            baseline_method = baseline_method.lower()
-            if baseline_method == 'root':
-                bg = calc_background(full_y, **baseline_kwargs)
-                # out = out - calc_background(full_y, **baseline_kwargs)
-            elif baseline_method == 'median':
-                if 'window' not in baseline_kwargs:
-                    baseline_kwargs['window_width'] = 75  # size of rolling window in keV
-                # out = out - rolling_median(values=full_y, **baseline_kwargs)
-                bg = rolling_median(values=full_y, **baseline_kwargs)
-            else:
-                raise TypeError(f"Invalid `baseline_method`, '{baseline_method}'")
+        if not nominal_values:
+            out = unp.uarray(out, yerr)
 
-            bg = bg[erg_index0: erg_index1]
 
-            try:
-                out -= bg
-            except UFuncTypeError:
-                out = out - bg
+            # full_y = np.fromiter(map(get_n_events, self.energy_binned_times), dtype=float)
+            #
+            # if baseline_kwargs is None:
+            #     baseline_kwargs = {}
+            # baseline_method = baseline_method.lower()
+            # if baseline_method == 'root':
+            #     bg = calc_background(full_y, **baseline_kwargs)
+            #     # out = out - calc_background(full_y, **baseline_kwargs)
+            # elif baseline_method == 'median':
+            #     if 'window' not in baseline_kwargs:
+            #         baseline_kwargs['window_width'] = 75  # size of rolling window in keV
+            #     # out = out - rolling_median(values=full_y, **baseline_kwargs)
+            #     bg = rolling_median(values=full_y, **baseline_kwargs)
+            # else:
+            #     raise TypeError(f"Invalid `baseline_method`, '{baseline_method}'")
+            #
+            # bg = bg[erg_index0: erg_index1]
+            #
+            # try:
+            #     out -= bg
+            # except UFuncTypeError:
+            #     out = out - bg
 
         if make_density:
             out = out/(bins[1:] - bins[:-1])
@@ -798,8 +824,7 @@ class ListSpectra(EfficiencyCalMixin):
 
             if nominal_values:
                 effs = unp.nominal_values(effs)
-                # if not out.dtype == 'float64':
-                #     out = out.astype('float64')
+
             effs = np.where(effs > 0, effs, 1)
             out /= effs
 

@@ -1028,31 +1028,22 @@ class MPLStyle:
     fig_size = (15, 10)
 
     @staticmethod
-    def seaborn():
-        import seaborn as sns
-        # plt.rcParams
+    def set_bold_axes_labels():
+        def new_func(axis):
+            orig_func = getattr(Axes, f'set_{axis}label')
 
-        # kwargs = {}
-        # for k, v in plt.rcParams.items():
-        #     print(k)
-        #
-        # for k, v in plt.rcParams.items():
-        #     if k[0] == '_':
-        #         continue
-        #
-        #     for name in ['backend', 'agg']:
-        #         if name in k:
-        #             break
-        #     else:
-        #         kwargs[k] = v
-        #
-        #     try:
-        #         sns.set(k=v)
-        #     except TypeError:
-        #         pass
+            def f(self, *args, **kwargs):
+                args = list(args)
+                args[0] = fr"\textbf{{{args[0]}}}"
+                return orig_func(self, *args, **kwargs)
 
-    # @staticmethod
-    def __init__(self, usetex=True, fontscale=None):
+            return f
+
+        for x in ['x', 'y']:
+            setattr(Axes, f'set_{x}label', new_func(x))
+
+    def __init__(self, minor_xticks=True, minor_yticks=True, bold_ticklabels=True, bold_axes_labels=True,
+                 usetex=True, fontscale=None):
         """
 
             Args:
@@ -1063,13 +1054,21 @@ class MPLStyle:
 
             """
         plt.style.use(style_path)
+
+        if bold_ticklabels:
+            plt.rcParams['text.latex.preamble'] = r'\usepackage{sfmath} \boldmath'
+
+        plt.rcParams['xtick.minor.visible'] = minor_xticks
+        plt.rcParams['ytick.minor.visible'] = minor_yticks
+
+        if bold_axes_labels and usetex:
+            self.set_bold_axes_labels()
+
         if not usetex:
             plt.rcParams.update({
                 "text.usetex": False, })
         else:
-            # plt.rcParams.update({'text.latex.preamble': r'\boldmath'})
-            # plt.rcParams['text.latex.preamble'] = [r'\boldmath']
-            plt.rcParams['text.latex.preamble'] = [r'\usepackage{sfmath} \boldmath']
+            pass
 
         if fontscale is not None:
             for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
@@ -2065,53 +2064,5 @@ if __name__ == '__main__':
     d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
     for h in flatten_dict_values(d):
         print(h)
-    # y = unp.uarray([4, 4], [2,2])
-    # bins = [0, 2, 4]
-    # newy = rebin(bins, y, [0, 4])
-    #
-    # ax = mpl_hist(bins, y)
-    # mpl_hist([0, 4], newy, ax=ax)
-    # plt.show()
-
-   # pass
-    #
-    # f = TabPlot()
-    #
-    # for i in range(1, 20):
-    #     ax = f.new_ax(i)
-    #     y1, y2 = np.sin(x * i), np.sin(x * i) ** 2
-    #     l1 = ax.plot(x, y1, label='label 1')[0]
-    #     l2 = ax.plot(x,  y2, label='label 2')[0]
-    #     f_handle = ax.fill_between(x, y2 - y1, label=f'label 3')
-    #
-    #     ax.legend([(l1, l2)], ['wtf'], title='Independent nucleus ($t_{1/2}$ [s])')
-    #
-    #     ax.set_title(str(i))
-    #
-    #
-    # plt.show()
-    # for n in Nuclide.from_symbol('Y99').decay_daughters:
-    #     print(n)
-    #
-    # import numpy as np
-    # from matplotlib import pyplot as plt
-    #
-    # x = np.linspace(0, np.pi * 2, 1000)
-    # y, edges = np.histogram(np.random.randn(10000), 100)
-    # y = unp.uarray(y, np.sqrt(y))
-    # mpl_hist(edges, y, stats_box=True)
-    #
-    # plt.show()
-    # # f = TabPlot()
-    # #
-    # # for i in range(1, 20):
-    # #     ax = f.new_ax(i)
-    # #     ax.plot(x, np.sin(x * i), label='label 1')
-    # #     ax.plot(x, np.sin(x * i) ** 2, label='label 2')
-    # #     ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
-    # #     ax.legend()
-    # #     ax.set_title(str(i))
-    #
-    # plt.show()
 
 

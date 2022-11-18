@@ -5,17 +5,16 @@ from pathlib import Path
 import re
 from logging import warning as warn
 from typing import Dict, List, Tuple, Union, Callable
-from uncertainties import UFloat, ufloat
 from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
     NEUTRON_PICKLE_DIR
-# import JSB_tools.nuke_data_tools.nuclide.cross_section as cross_section
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
 import pickle
 from datetime import datetime, timedelta
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import functools
 import uncertainties.unumpy as unp
-
+from uncertainties import UFloat, ufloat
+from uncertainties.core import Variable
 try:
     from openmc.data.endf import Evaluation
     from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
@@ -75,18 +74,13 @@ def get_abundance():
 
 class CustomUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
-        if name == 'GammaLine':
-            return GammaLine
-        elif name == 'DecayMode':
-            return DecayMode
-        elif name == 'Nuclide':
-            return Nuclide
-        elif name == '_DiscreteSpectrum':
-            return _DiscreteSpectrum
-        # else:
-        #     assert False
-
-        return super().find_class(module, name)
+        try:
+            return {'GammaLine': GammaLine,
+                     'DecayMode': DecayMode,
+                     'Nuclide': Nuclide,
+                     '_DiscreteSpectrum': _DiscreteSpectrum}[name]
+        except KeyError:
+            return super().find_class(module, name)
 
 
 class Element:
@@ -219,10 +213,13 @@ class Nuclide(Element):
         Args:
             symbol:
             *args: unused
-            **kwargs: if _default in kwargs, set all values to default. if _copy in kwargs, don't pull sintance from RAM
+            **kwargs: if _default in kwargs, set all values to default. if _copy in kwargs, don't pull intance from RAM
         """
-        if symbol is None:  # deal with call to __new__ during unpickling.
+        if symbol is None:  # Handles call to __new__ which occurs during unpickling.
             return object.__new__(cls)
+        else:
+            if not isinstance(symbol, str):
+                raise TypeError(f"Invalid type, '{type(symbol)}', for argument `symbol`, which must have type==str.")
 
         symbol, z, a, m, m_or_e = get_symbol_etc(symbol)
 
@@ -232,22 +229,25 @@ class Nuclide(Element):
 
         if symbol not in Nuclide.all_instances or '_copy' in kwargs:
             pickle_file = DECAY_PICKLE_DIR / (symbol + '.pickle')
+
             if '_default' in kwargs or not pickle_file.exists():
                 self = super().__new__(cls)
                 self.__Z_A_iso_state__ = z, a, m
                 self.is_valid = False  # triggers default routine in __init__
+                return self
             else:
                 with open(pickle_file, "rb") as pickle_file:
                     self = CustomUnpickler(pickle_file).load()
                 self.is_valid = True
 
                 Nuclide.all_instances[symbol] = self
+                return self
 
         else:
             self = Nuclide.all_instances[symbol]
             self.is_valid = True
 
-        return self
+            return self
 
     def __init__(self, symbol, **kwargs):
         """
@@ -300,7 +300,7 @@ class Nuclide(Element):
 
         self.fissionable: bool = None
 
-        self.half_life: Union[None, UFloat] = None
+        self.half_life: Union[None, Variable] = None
         self.spin: int = None
 
         self.is_stable: Union[None, bool] = None
@@ -601,7 +601,7 @@ class Nuclide(Element):
             except KeyError:
                 raise KeyError(f"No nuclear data for library, '{library}'")
 
-        dir_var = f'{projectile.upper}_PICKLE_DIR'
+        dir_var = f'{projectile.upper()}_PICKLE_DIR'
 
         try:
             pickle_dir = eval(dir_var)
@@ -1657,6 +1657,77 @@ class DecayNuclide:
             self.particular_coeffs = np.zeros_like(self.eig_vals)  # No driving term. Will have no effect in this case.
 
         self.coeffs = np.linalg.solve(self.eig_vecs.T, b - self.particular_coeffs)  # solve for initial conditions
+
+    def __call__(self, ts, scale=1, decay_rate=False, threshold=None, plot=False) -> Dict[str, np.ndarray]:
+        """
+        Evaluates the diff. eq. solution for all daughter nuclides at the provided times (`ts`).
+        Can determine, as a function of time, the quantity of all decay daughters or the decay rate.
+        This is controlled by the `decay_rate` argument.
+        Args:
+            ts: Times at which to evaluate the specified quantity
+            scale: Scalar to be applied to the yield of all daughters.
+            decay_rate: If True, return decays per second instead of fraction remaining. I.e. return y[i]*lambda_{i}
+            threshold: Fraction of the total integrated yield below which solution arent included. None includes all.
+            plot: Plot for debugging.
+        Returns: dict of the form, e.g.:
+            {'U235': [1., 0.35, 0.125],
+             'Pb207': [0, 0.64, 0.87],
+              ...}
+        """
+        if hasattr(scale, '__iter__'):
+            assert len(scale) == 1
+            scale = scale[0]
+
+        if isinstance(scale, UFloat):
+            warn("`scale` argument is a UFloat. This reduces performance by a factor of ~1000. `")
+
+        if self.return_default_func:
+            return decay_default_func(self.nuclide_name)(ts, scale=scale, decay_rate=decay_rate)
+
+        if threshold is not None:
+            raise NotImplementedError("Todo")
+
+        if hasattr(ts, '__iter__'):
+            iter_flag = True
+        else:
+            iter_flag = False
+            ts = [ts]
+
+        #
+        # yields = [np.sum([c * vec * np.e ** (val * t) for c, vec, val in
+        #                   zip(self.coeffs, self.eig_vecs, self.eig_vals)], axis=0) for t in ts]  # old
+        yields = np.matmul((self.coeffs.reshape((len(self.coeffs), 1)) * self.eig_vecs).T,
+                           np.e ** (self.eig_vals.reshape((len(self.coeffs), 1)) * ts))  # New
+        if self.driving_term != 0:
+            yields += self.particular_coeffs[:, np.newaxis]  # new
+            # yields += self.particular_coeffs  # old
+
+        # yields = np.array(yields).T  # old
+
+        if not decay_rate:
+            out = {name: scale*yield_ for name, yield_ in zip(self.column_labels, yields)}
+        else:
+            out = {name: scale*yield_*lambda_ for name, yield_, lambda_ in
+                    zip(self.column_labels, yields, np.abs(np.diagonal(self.lambda_matrix)))}
+
+        if not iter_flag:
+            for k, v in out.items():
+                out[k] = v[0]
+
+        if plot:
+            # if not (plot is True)
+            assert iter_flag, 'Cannot plot for only one time'
+            plt.figure()
+            for k, v in out.items():
+                plt.plot(ts, v, label=k)
+            if decay_rate:
+                plt.ylabel("Decays/s")
+            else:
+                plt.ylabel("Rel. abundance")
+            plt.xlabel('Time [s]')
+            plt.legend()
+
+        return out
 
 
 if __name__ == '__main__':

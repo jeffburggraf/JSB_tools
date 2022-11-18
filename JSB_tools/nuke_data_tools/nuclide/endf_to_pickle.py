@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Union, List
 import marshal
+from openmc.data import Tabulated1D
 from warnings import warn
 from JSB_tools.nuke_data_tools.nuclide.data_directories import GAMMA_PICKLE_DIR,\
      PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH, DECAY_PICKLE_DIR
@@ -157,7 +158,10 @@ def pickle_proton_fission_xs_data():
                     erg, xs = line.split()
                     ergs.append(float(erg))
                     xss.append(float(xs))
-            xs_obj = CrossSection1D(ergs, xss, reaction_name, 'proton')
+
+            yield_ = Tabulated1D([ergs[0], ergs[-1]], [1, 1])
+            xs = Tabulated1D(ergs, xss)
+            xs_obj = CrossSection1D(xs, yield_, reaction_name, 'proton')
             proton_fission_xs[nuclide_name] = xs_obj
 
     if len(proton_fission_xs):
@@ -314,7 +318,10 @@ def pickle_everything(_pickle=True, parallel=True):
 
 if __name__ == '__main__':
     pass
-    pickle_all_activation(True, True)
+    # pickle_proton_fission_xs_data()
+    # pickle_all_activation(False, False)
+    pickle_gamma_activation_data(False, tendl=False)
+    pickle_neutron_activation_data(False, tendl=False)
     # pickle_neutron_activation_data(endf=False, paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-neutrons/Pb207g.asc'])
     # pickle_neutron_activation_data(parallel=True)
     # p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-Yb173.tendl'

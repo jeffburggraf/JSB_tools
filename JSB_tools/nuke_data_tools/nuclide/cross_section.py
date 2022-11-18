@@ -27,7 +27,7 @@ class CustomUnpickler(pickle.Unpickler):
 
 
 class CrossSection1D:
-    def __init__(self, xs: Tabulated1D, yield_: Tabulated1D,
+    def __init__(self, xs: Tabulated1D, yield_: Tabulated1D = None,
                  fig_label: str = None, incident_particle: str = 'particle', data_source='', mt_value=None,
                  endf_path=None, **misc_data):
         """
@@ -202,7 +202,7 @@ class ActivationCrossSection(CrossSection1D):
         ax2.legend()
 
     def plot(self, ergs=None, ax=None,  plot_mts=False, fig_title=None, units="b", erg_min=None, erg_max=None,
-             return_handle=False,
+             return_handle=False, color=None,
              **mpl_kwargs):
         """
 
@@ -220,7 +220,7 @@ class ActivationCrossSection(CrossSection1D):
         Returns:
 
         """
-        color_ = 'black' if plot_mts else None
+        color_ = 'black' if plot_mts else mpl_kwargs.pop('c', color)
         ax, handle = super(ActivationCrossSection, self).plot(ergs=ergs, ax=ax, fig_title=fig_title, units=units,
                                                               erg_min=erg_min,
                                                               erg_max=erg_max, return_handle=True, lw=2,
@@ -665,7 +665,8 @@ class ActivationReactionContainer:
         fission_xs = list(r.xs.values())[0]
 
         xs_fig_label = f'{self.nuclide_name}({self.projectile[0].upper()},F)'
-        xs = CrossSection1D(fission_xs.x / 1E6, fission_xs.y, xs_fig_label, self.projectile)
+        xs = CrossSection1D(fission_xs, None, fig_label=xs_fig_label, incident_particle=self.projectile,
+                            data_source=self.data_source, mt_value=18, endf_path=self.path)
         path = self.pickle_path.parent / 'fission_xs'
         path.mkdir(exist_ok=True, parents=True)
         with open(path / '{0}.pickle'.format(self.nuclide_name), 'wb') as f:
@@ -710,7 +711,7 @@ class ActivationReactionContainer:
                     warn(f"openmc bug: Creating Reaction for {projectile} on {e.target['zsymam']}")
                     continue
 
-                if mt == 18:
+                if mt == 18:  # fission is done separately
                     self.pickle_fission_xs(r)
                     continue
 

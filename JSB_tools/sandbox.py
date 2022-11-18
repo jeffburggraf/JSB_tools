@@ -1,8 +1,10 @@
 import matplotlib.pyplot as plt
-from JSB_tools import TabPlot
+from JSB_tools import TabPlot, mpl_style
 from JSB_tools.nuke_data_tools.nuclide import Nuclide
 
-n_endf = Nuclide('Pb208').get_incident_proton_daughters('tendl')['Hg200'].xs.debug_plot()
+mpl_style()
+n_endf = Nuclide('Pb208').get_incident_proton_daughters('tendl')['Hg200'].xs.plot()
+plt.show()
 # n_endf = Nuclide('Pb208').get_incident_proton_daughters('endf')
 # n_tendl = Nuclide('Pb208').get_incident_proton_daughters('tendl')
 #
