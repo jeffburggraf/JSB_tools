@@ -1043,7 +1043,7 @@ class MPLStyle:
             setattr(Axes, f'set_{x}label', new_func(x))
 
     def __init__(self, minor_xticks=True, minor_yticks=True, bold_ticklabels=True, bold_axes_labels=True,
-                 usetex=True, fontscale=None):
+                 usetex=True, fontscale=None, fig_size=(15,8)):
         """
 
             Args:
@@ -1060,6 +1060,8 @@ class MPLStyle:
 
         plt.rcParams['xtick.minor.visible'] = minor_xticks
         plt.rcParams['ytick.minor.visible'] = minor_yticks
+
+        plt.rcParams['figure.figsize'] = fig_size
 
         if bold_axes_labels and usetex:
             self.set_bold_axes_labels()

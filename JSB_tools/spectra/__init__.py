@@ -3,6 +3,7 @@ import sys
 import datetime
 import marshal
 import pickle
+import time
 import warnings
 from pathlib import Path
 from typing import List, Callable, Union, Tuple, Iterable
@@ -357,7 +358,13 @@ class ListSpectra(EfficiencyCalMixin):
         Returns:
 
         """
-        out = [[] for _ in range(len(self.erg_bins) - 1)]
+        if hasattr(self, '_energy_binned_times'):  # for direct pickling/unpickling. See __set_state__
+            out = getattr(self, '_energy_binned_times')
+            delattr(self, '_energy_binned_times')
+            return out
+
+        n = len(self.erg_bins) - 1
+        out = [[] for _ in range(n)]
 
         assert len(self.adc_channels) == len(self.times), "This is not allowed. There is a bug."
 
@@ -367,8 +374,8 @@ class ListSpectra(EfficiencyCalMixin):
 
             out[i].append(t)
 
-        out = numba_list([np.array(ts) for ts in out])
-        # self._energy_spec = None  # Force _energy_spec to update on next call
+        out = numba_list([np.array(ts) for ts in out])  # numba_list helps in cases where numba.jit is used.
+        # out = [np.array(ts) for ts in out]  #
         return out
 
     def erg_bins_cut(self, erg_min, erg_max):
@@ -853,7 +860,7 @@ class ListSpectra(EfficiencyCalMixin):
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
                           time_max: float = None, eff_corr=False, make_density=False, remove_baseline=False,
-                          baseline_method='ROOT', baseline_kwargs=None,
+                          median_window=40,
                           ax=None,
                           label=None,
                           return_bin_values=False,
@@ -869,9 +876,6 @@ class ListSpectra(EfficiencyCalMixin):
 
             remove_baseline: If True, remove baseline.
             remove_baseline: If True, remove baseline according to the following arguments.
-
-            baseline_method: If "ROOT" then use JSB_tools.calc_background
-                             If "median" then use JSB_tools.rolling_median
 
             make_density: Divide by bin widths.
             ax:
@@ -893,9 +897,8 @@ class ListSpectra(EfficiencyCalMixin):
             fig.suptitle(self.path.name)
 
         bin_values, bins = self.get_erg_spectrum(erg_min, erg_max, time_min, time_max, eff_corr=eff_corr,
-                                                 make_density=make_density,
-                                                 return_bin_edges=True, remove_baseline=remove_baseline,
-                                                 baseline_method=baseline_method, baseline_kwargs=baseline_kwargs)
+                                                 make_density=make_density, return_bin_edges=True,
+                                                 remove_baseline=remove_baseline, median_window=median_window)
         if scale != 1:
             bin_values *= scale
 
@@ -956,12 +959,21 @@ class ListSpectra(EfficiencyCalMixin):
 
         return out
 
+    def __getstate__(self):  # numba_list object cannot be pickled.
+        out = {k: v for k, v in self.__dict__.items()}
+        out['_energy_binned_times'] = list(self.energy_binned_times)  # avoids issues ith setting property attribute.
+        return out
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        energy_binned_times = getattr(self, '_energy_binned_times')
+        setattr(self, '_energy_binned_times', numba_list(energy_binned_times))
+
     def pickle(self, path=None, meta_data: dict = None):
         """
 
         Args:
             path: path_to_pickle_file. None will use self.path.
-            pickle_eff: Pickle efficiency? Or no?
             meta_data: dict of attribute_name:attribute pairs. will be pickled into seperate
             file and unpickled as expected.
 

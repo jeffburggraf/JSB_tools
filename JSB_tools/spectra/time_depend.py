@@ -929,18 +929,21 @@ class InteractiveSpectra:
         self._draw()
 
     @staticmethod
-    def _help(*args):
+    def _help(*args): # todo: doesnt work.
         plt.figure()
         fix, ax = plt.subplots()
         plt.text(0.9, 0.9, instructions)
 
-    def __init__(self, init_window_width=35, window_max=None, delta_t=5):
+    def __init__(self, init_window_width=35, init_time_center=None, window_max=None, delta_t=5, fig_title=None):
         """
 
         Args:
             init_window_width: Initial time-integration window width
+            init_time_center:  Initial time-integration center
             window_max: Max width of time integration window possible to choose using the slider
             delta_t: time step for the slider determining the center time of the integration time range
+            fig_title: Title at top of window.
+
         """
         self.fit_settings = {}
         self.set_fit_settings()
@@ -957,6 +960,10 @@ class InteractiveSpectra:
         self.titles = []
 
         fig, ax = plt.subplots(figsize=(16, 9))
+
+        if fig_title is not None:
+            fig.suptitle(str(fig_title))
+
         a = 16/9  # aspect ratio: x : y
 
         self.fig = fig
@@ -1015,8 +1022,10 @@ class InteractiveSpectra:
         self.radiobutton_active_select_ax.set_axis_off()
         self.checkbox_bg_subtract_ax.set_axis_off()
 
-        self.window_width = init_window_width
-        self.slider_pos = init_window_width / 2
+        self._init_window_width = init_window_width
+        if init_time_center is None:
+            init_time_center = init_window_width/2
+        self._init_slider_pos = init_time_center
 
         # The Widgets below will be declared once the number of spectra is being simultaneously plotted is known
         self.slider_time_center: Slider = None  # cant define until range is
@@ -1039,8 +1048,6 @@ class InteractiveSpectra:
 
         self.keys_currently_held_down = {}
         # \end GUI state variables.
-
-        # self.check_boxes = CheckButtons
 
         self.checkbox_time_integrated = CheckButtons(self.checkbox_time_integrated_ax, ['All\nevents'], actives=[True])
         self.checkbox_time_integrated.on_clicked(self._on_checked_time_integrated)
@@ -1092,7 +1099,7 @@ class InteractiveSpectra:
             return
 
         self.slider_time_center = plt.Slider(self.slider_erg_center_ax, "Center time", valmin=self._events_times_range[0],
-                                             valmax=self._events_times_range[1], valinit=self.window_width / 2,
+                                             valmax=self._events_times_range[1], valinit=self._init_slider_pos,
                                              valstep=self.delta_t)
 
         self.current_fits = {i: [] for i in range(len(self))}
@@ -1101,7 +1108,7 @@ class InteractiveSpectra:
             self.window_max = 0.75 * self._events_times_range[-1]
 
         self.slider_window = plt.Slider(self.slider_window_ax, 'Time\nwindow', valmin=0,
-                                        valmax=self.window_max, valinit=self.window_width)
+                                        valmax=self.window_max, valinit=self._init_window_width)
 
         # radio_labels = [str(i + 1) for i in range(len(self))]
         self.radiobutton_active_select = RadioButtons(self.radiobutton_active_select_ax, labels=self.titles,

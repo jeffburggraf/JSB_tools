@@ -363,6 +363,10 @@ class F4Tally(Tally):
         return self.cell.volume*self.cell.density
 
     @property
+    def atom_density(self):
+        return self.cell.atom_density
+
+    @property
     def cell(self) -> OutpCell:
         assert len(self.cells) == 1,\
             'Multiple cells are used for this tally_n since __add__, ect was used. Use self.cells instead'
@@ -1002,19 +1006,21 @@ class StoppingPowerData:
                 m.add_nuclide(element, fraction, percent_type)
             else:
                 m.add_element(element, fraction, percent_type)
+
         m.set_density('g/cm3', density)
         mcnp_zaids = []
         mcnp_atom_percents = []
-        for key, value in m.get_nuclide_atom_densities().items():
-            s = value[0]
-            d = value[1]
+
+        for s, d in m.get_nuclide_atom_densities().items():
             mcnp_zaids.append(get_zaid(s))
             mcnp_atom_percents.append(d)
+
         mcnp_atom_percents = np.array(mcnp_atom_percents)
         mcnp_atom_percents /= sum(mcnp_atom_percents)
         mat_card = 'M1000\n' + '\n'.join(['{s}{zaid} {atomic_fraction:.5E}'
                              .format(s=' '*5, zaid=zaid,atomic_fraction=atomic_fraction)
                               for zaid, atomic_fraction in zip(mcnp_zaids, mcnp_atom_percents)])
+
         cwd = Path(__file__).parent
         if gas:
             mat_card += '\n     GAS=1'
