@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numbers
 import re
 import time
@@ -24,11 +25,19 @@ from numba.typed import List as numba_list
 from numba import jit, prange
 from math import erf
 from logging import warning
-
-
 instructions = """
 Instructions
 
+Selecting Spectra:
+    The radio buttons on the center right can be used to select the active spectrum. All other spectra (if any) besides 
+    the selected spectrum will be grey, while the active spectrum blue.
+
+Setting spectra time cuts:
+    The time cuts possible are of the form
+        c-w/2 <= time <= c + w/2
+    where c and w are set by the sliders titled 'Center time' and 'Time window', respectively.
+    To disable time cuts, select the check box in the lower left titled "All events" (this is the default).
+    
 Performing fits:
     While holding the space key, click the canvas one or more times to select peaks to be fit with Gaussians. 
     A multi-gaussian fit is performed for all selected peaks upon release of the space bar. When clicking peaks, 
@@ -43,20 +52,22 @@ Performing fits:
     Click the "Clear fits" button in the upper right to clear all fits of current selected spectrum.
     Click a second time to clear all fits.
 
-Selecting Spectra:
-    The radio buttons on the center right can be used to select the active spectrum. All other spectra (if any) besides 
-    the selected spectrum will be grey, while the active spectrum blue.
-
-Setting spectra time cuts:
-    The time cuts possible are of the form
-        c-w/2 <= time <= c + w/2
-    where c and w are set by the sliders titled 'Center time' and 'Time window', respectively.
-    To disable time cuts, select the check box in the lower left titled "All events" (this is the default).
 
 "Rescale y" button:
     Rescale y to the min/max of selected spectrum. 
     
+"All events" button:
+    Selecting this button will force all events to be displayed regardless of the state of the time cute sliders.
+    
+"Make density" button:
+    divides the bin values by the bin widths. Automatically selected when a fit is performed. 
 
+"Remove baseline" button:
+    This button, along with the corresponding "width (keV)" input field, control the subtraction of background routine.
+    The width should be a number that is 4-10x larger than the typical width of the peaks. 
+    
+Other features:
+    - Setting InteractiveSpectra.VERBOSE = True will print a fit report of each fi to cout. 
 """
 
 
@@ -137,9 +148,6 @@ def get_erg_spec(erg_binned_times: numba_list, time_range: np.ndarray, n: int=No
             i1, i2 = np.searchsorted(erg_binned_times[i], time_range)
             val: float = i2 - i1
 
-        # if scales[i] != 1:
-        #     val *= scales[i]
-
         out[i] = val
 
     if bg_subtract:
@@ -208,10 +216,100 @@ def linear(x, slope, bg):
     return slope * (x - x[len(x) // 2]) + bg
 
 
-def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yerr=None, share_sigma=True,
-                    sigma_guesses: Union[list, float] = None, fix_sigmas: bool = False, fix_centers: bool = False,
-                    fix_bg: float = None) \
-        -> ModelResult:
+class GausFitResult(ModelResult):
+    """
+    Wrapper for lmfit.ModelResult.
+
+    """
+    def __new__(cls, model_result: ModelResult, *args, **kwargs) -> GausFitResult:
+        out = object.__new__(cls)
+        for k, v in model_result.__dict__.items():
+            if k[:2] == '__':
+                continue
+            try:
+                setattr(out, k, v)
+            except Exception as e:
+                continue
+        return out
+
+    def __init__(self, *args, **kwargs):
+        self.fit_x = self.userkws['x']
+
+    @property
+    def fit_y(self):
+        y = self.data
+        return y
+
+    @property
+    def fit_yerr(self):
+        errs = 1.0/self.weights
+        return errs
+
+    @staticmethod
+    def _get_param(param):
+        if param.stderr is None:
+            err = np.nan
+        else:
+            err = param.stderr
+        return ufloat(param.value, err)
+
+    def centers(self, i=None):
+        if i is None:
+            return [self.centers(i) for i in range(len(self))]
+
+        param = self.params[f'_{i}_center']
+        return self._get_param(param)
+
+    def amplitudes(self, i=None) -> Union[List[UFloat], UFloat]:
+        if i is None:
+            return [self.amplitudes(i) for i in range(len(self))]
+
+        param = self.params[f'_{i}_amplitude']
+        return self._get_param(param)
+
+    def sigmas(self, i=None):
+        if i is None:
+            return [self.sigmas(i) for i in range(len(self))]
+
+        param = self.params[f'_{i}_sigma']
+        return self._get_param(param)
+
+    def bg(self):
+        return self._get_param(self.params['bg'])
+
+    def slope(self):
+        return self._get_param(self.params['slope'])
+
+    def plot_fit_curve(self, ax, fill_between=True, npoints=300, **plt_kwargs):
+        x = np.linspace(self.fit_x[0], self.fit_x[-1], npoints)
+        y = self.eval(x=x)
+        if fill_between:
+            yerr = self.eval_uncertainty(x=x, **plt_kwargs)
+        else:
+            yerr = None
+
+        color = plt_kwargs.get('color', plt_kwargs.get('c', None))
+
+        ax.plot(x, y, **plt_kwargs)
+
+        if yerr is not None:
+            ax.fill_between(x, y - yerr, y + yerr, alpha=0.6, color=color)
+
+    def __len__(self):
+        out = 0
+        for k in self.params.keys():
+            if m := re.match("_([0-9]+)_.+", k):
+                i = int(m.groups()[0])
+                if i > out:
+                    out = i
+
+        return out + 1
+
+
+def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, make_density=False, yerr=None,
+                    share_sigma=True, sigma_guesses: Union[list, float] = None, fix_sigmas: bool = False,
+                    fix_centers: bool = False, fix_bg: float = None, fit_buffer_window: Union[int, None] = 5,
+                    **kwargs) -> GausFitResult:
     """
     Perform multi-gaussian fit to data.
 
@@ -233,6 +331,12 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
         fixed_in_binQ: List of bool. True means energy is constrained to the energy bin according to the
             corresponding element in `center_guesses`. Must be same len as center_guesses.
 
+        make_density:
+            In order for the gaussian amplitude to have the correct physical meaning, the units of y must be in per
+            bin width. E.g. counts/keV instead of counts. This is remedied by dividing each bin value by the
+            corresponding bin width before fitting, or, by dividing the final amplitude parameter by the mean bin
+            width (less accurate).
+
         yerr: Error in y.
 
         share_sigma: If True, all peaks share the same sigma (as determined by fit).
@@ -245,9 +349,35 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
 
         fix_bg: Fix background to this value
 
+        fit_buffer_window:
+            The data will be truncated around peak centers with a buffer of this value (in keV) to the left and right
+            Use None to not truncate.
+
     Returns: lmfit.ModelResult
 
+    TODO:
+        -Expand debugging interface:
+            Allow for fits to be performed via command that mimic mouse click fits
+            Consider using pythons logging module for degubn msgs
+        -Add energy rebin input box.
+        -Optimize:
+            Save calculated energy_binned_times
+            Maybe only calculate for current view?
+            Figure out why it's slow. Maybe profiler?
+        -Option to Draw error bars.
     """
+    assert len(y) == len(bins) - 1
+    if fit_buffer_window is not None:
+        bins_slice, y_slice = get_fit_slice(bins=bins, center_guesses=center_guesses,
+                                            fit_buffer_window=fit_buffer_window)
+
+        if (y_slice[1] - y_slice[0]) <= 1 + 2 + 3 * len(center_guesses):  # more params than data points. widen window
+            print(f"Fit window being increased from {fit_buffer_window} to {fit_buffer_window * 2}")  # todo: make log?
+            fit_buffer_window *= 2
+            return multi_guass_fit(**locals())
+
+        bins = bins[slice(*bins_slice)]
+        y = y[slice(*y_slice)]
 
     if fix_sigmas:
         assert sigma_guesses is not None, "Use of fix_sigmas requires sigma_guesses argument. "
@@ -265,9 +395,18 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
 
     b_width = 0.5 * ((bins[1] - bins[0]) + (bins[-1] - bins[-2]))  # ~mean bin width
 
+    if sigma_guesses is None:
+        sigma_guesses = b_width * 3
+
     if isinstance(y[0], UFloat):
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
+
+    if make_density:  # divide bin values by bin widths.
+        _bws = (bins[1:] - bins[:-1])  # bin widths
+        y = y / _bws
+        if yerr is not None:
+            yerr = yerr / _bws
 
     if yerr is None:
         weights = np.ones_like(y)
@@ -278,19 +417,15 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
     params: Parameters = None
 
     max_slope = np.abs(max(y) - min(y)) / (x[-1] - x[0])
-    quarter = int(len(y)//4)  # 1/4 length of y/x
-    slope_guess = (np.mean(y[-quarter:]) - np.mean(y[:quarter]))/(x[-1] - x[0])
+    max_slope = max(0.01, max_slope)  # zero max_slope will cause error bc range is ser to (-max_slope, max_slope)
+
+    slope_guess = np.median(np.gradient(y))
     bg_guess = fix_bg if fix_bg is not None else min([np.mean([y[i-1], y[i], y[i + 1]]) for i in range(1, len(y) - 1)])
 
     min_sigma, max_sigma = 1.75*b_width, b_width * len(y)/3
 
     def set_sigma(param: Parameter):
         kwargs = {'min': min_sigma, 'max': max_sigma}
-
-        if sigma_guesses is None:
-            kwargs['value'] = b_width * 3
-        else:
-            kwargs['value'] = sigma_guesses[i]
 
         if fix_sigmas:
             kwargs['vary'] = False
@@ -305,6 +440,9 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
                 kwargs['value'] = None
                 kwargs['min'] = None
                 kwargs['max'] = None
+        else:
+            kwargs['value'] = sigma_guesses[i]
+
         param.set(**kwargs)
 
     def set_center(param: Parameter):
@@ -319,6 +457,8 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
             assert bins[i0] < center_guess <= bins[i0 + 1], (bins[i0], center_guess, bins[i0 + 1])
         else:
             kwargs['value'] = x[find_local_max(y, i0)]
+            kwargs['min'] = bins[0]
+            kwargs['max'] = bins[-1]
 
         param.set(**kwargs)
 
@@ -348,14 +488,13 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool]=None, yer
 
         _amp_guess = amp_guess(y[i0], params[f'{prefix}sigma'].value)
 
-        params[f'{prefix}amplitude'].set(value=amp_guess(y[i0], params[f'{prefix}sigma'].value),
-                                         min=_amp_guess/10)
+        params[f'{prefix}amplitude'].set(value=amp_guess(y[i0], params[f'{prefix}sigma'].value))
 
     fit_result = model.fit(data=y, params=params, weights=weights, x=x, )
 
     fit_result.userkws['b_width'] = b_width
 
-    return fit_result
+    return GausFitResult(fit_result)
 
 
 def get_param_ufloat(name, params):
@@ -376,6 +515,8 @@ def get_param_ufloat(name, params):
 
 class InteractiveSpectra:
     print_click_coords = False  # If True, print mouse click points in fractional Axes coords (used for dev)
+    VERBOSE = False  # print fit_report (and other things?)
+    FIT_VERBOSE = False  # print fit stuff for debugging
 
     default_fit_window = 6  # in keV
     default_n_convolve_bins = 3  # amount to convolve signal when guessing guass fit centers.
@@ -403,14 +544,29 @@ class InteractiveSpectra:
             effs = None
         else:
             effs = spec.effs
-        self.add_spectra(spec.energy_binned_times, spec.erg_bins, effs=effs, scale=scale, title=title,
-                         erg_min=erg_min, erg_max=erg_max)
+        self.add_spectra(energy_binned_times=spec.energy_binned_times, energy_bins=spec.erg_bins, effs=effs,
+                         scale=scale, title=title, erg_min=erg_min, erg_max=erg_max)
+
+    def add_static_spectra(self, erg_bins, counts, effs=None, scale=1, title=None, erg_min=80, erg_max=None):
+        """
+        Sdd spectra that has no time depedance.
+        Returns:
+
+        """
+        assert len(erg_bins) - 1 == len(counts)
+        energy_binned_times = [np.zeros(int(i)) for i in counts]
+        return self.add_spectra(energy_binned_times, energy_bins=erg_bins, effs=effs, scale=scale, title=title,
+                                erg_min=erg_min, erg_max=erg_max)
 
     def add_spectra(self, energy_binned_times, energy_bins, effs=None, scale=1, title=None, erg_min=80, erg_max=None):
         """
 
         Args:
-            energy_binned_times: See ... todo
+            energy_binned_times:
+                A list of lists, such as [[t1_1, t1_2, t1_3], [[t2_1, t2_2, t2_3, t2_4], ... [tn_1, tn_2]]
+                Where each ti_j refers to the time of the jth event falling in the ith energy bin.
+                I.e, the times are grouped byu energy bin in the order in which they occured.
+
             energy_bins: Energy bin edges
             effs: Array of efficiencies. len(effs) == len(energy_bins) - 1
             scale: Scale the spectrum. Can be scalar or array.
@@ -423,25 +579,33 @@ class InteractiveSpectra:
         """
         if isinstance(scale, np.ndarray):
             assert len(scale) == len(energy_binned_times)
-        else:
-            assert isinstance(scale, (float, int))
+        elif isinstance(scale, (float, int)):
             scale = scale * np.ones(len(energy_binned_times), dtype=float)
+        else:
+            raise ValueError(f"Invalid type, '{type(scale)}', for argument `scale`. Must be a number or an np.ndarray")
 
-        i0 = (-1 + np.searchsorted(energy_bins, erg_min, side='right')) if erg_min is not None else 0
+        i0 = max(0, (-1 + np.searchsorted(energy_bins, erg_min, side='right'))) if erg_min is not None else 0
         i1 = (np.searchsorted(energy_bins, erg_max, side='right')) if erg_max is not None else \
             (len(energy_bins) - 1)
 
         energy_binned_times = energy_binned_times[i0: i1]
         effs = effs[i0: i1] if effs is not None else None
         scale = scale[i0: i1] if isinstance(scale, np.ndarray) else scale
-        energy_bins = energy_bins[i0: i1 + 1]
+        energy_bins = np.array(energy_bins[i0: i1 + 1])
 
         if effs is not None:
-            scale /= effs
+            scale = scale/effs
+
+        if hasattr(scale, '__iter__') and isinstance(scale[0], UFloat):
+            scale = unp.nominal_values(scale)
+        elif isinstance(scale, UFloat):
+            scale = scale.n
 
         self.scales.append(scale)
         self.energy_binned_timess.append(numba_list(energy_binned_times))
         self.erg_binss.append(energy_bins)
+
+        self.erg_bin_widths.append(energy_bins[1:] - energy_bins[:-1])
 
         if self._events_times_range[0] is None:
             self._events_times_range[0] = min([ts[0] for ts in energy_binned_times if len(ts)])
@@ -524,13 +688,13 @@ class InteractiveSpectra:
         assert len(y) == len(self.erg_binss[index]), "Bad trouble!"
         line: Line2D = self.handles[index]
         line._yorig = y
-        line._yerr = yerr  # custom attribute for now. todo: Draw error bars?
+        line._yerr = yerr  # custom attribute for now.
 
         line.stale = True
         line._invalidy = True
 
     @property
-    def min_time(self):
+    def time_cut_min(self):
         """
         Min time according to the two time cut sliders
         Returns:
@@ -539,7 +703,7 @@ class InteractiveSpectra:
         return self.slider_time_center.val - self.slider_window.val / 2
 
     @property
-    def max_time(self):
+    def time_cut_max(self):
         """
         Max time according to the two time cut sliders
 
@@ -548,15 +712,46 @@ class InteractiveSpectra:
         """
         return self.slider_time_center.val + self.slider_window.val / 2
 
-    def _set_ylims(self, *args, **kwargs):
+    @property
+    def time_range(self):
+        """
+        Return max and min times in spectrum
+
+        Returns: [min_time, max_time]
+
+        """
+        return self._events_times_range
+
+    def _set_ylims(self, all_spectraQ=True, *args, **kwargs):
+        """
+        Rescale y-axis to fit y-data in current view.
+        Use either the current spectra or all spectra for y-data.
+        Args:
+            all_spectraQ: If True, only scale y to data of current spectra.
+            *args:
+            **kwargs:
+
+        Returns:
+
+        """
         xlim = self.ax.get_xlim()
         ylim = np.inf, -np.inf
 
-        x, y = self.handles[self._active_spec_index].get_data()
-        # faster, but assumes that x is sorted
-        start, stop = np.searchsorted(x, xlim)
-        yc = y[max(start - 1, 0):(stop + 1)]
-        ylim = min(ylim[0], np.nanmin(yc)), max(ylim[1], np.nanmax(yc))
+        if all_spectraQ:
+            xs, ys = [], []
+            for index in range(len(self)):
+                x, y = self.handles[index].get_data()
+                xs.append(x)
+                ys.append(y)
+        else:
+            x, y = self.handles[self._active_spec_index].get_data()
+            xs, ys = [x], [y]
+
+        for x, y in zip(xs, ys):
+            # faster, but assumes that x is sorted
+            start, stop = np.searchsorted(x, xlim)
+            yc = y[max(start - 1, 0):(stop + 1)]
+            ylim = min(ylim[0], np.nanmin(yc)), max(ylim[1], np.nanmax(yc))
 
         self.ax.set_xlim(xlim, emit=False)
 
@@ -621,6 +816,9 @@ class InteractiveSpectra:
         if bg_subtractQ:  # purposely after out_err declaration
             out = remove_background(out, bg_window)
 
+        if self.checkbox_make_density.get_status()[0]:
+            out[:-1] /= self.erg_bin_widths[index]
+
         out[:-1] *= scales
         out_err[:-1] *= scales
 
@@ -632,9 +830,9 @@ class InteractiveSpectra:
     def _update_time_cut_display(self):
         def get_text():
             if self._time_integratedQ:
-                return "No time cuts applied."
+                t0, t1 = self.time_range
             else:
-                t0, t1 = self.min_time, self.max_time
+                t0, t1 = self.time_cut_min, self.time_cut_max
 
             return f'{t0:.1f} < t < {t1:.1f}'
 
@@ -646,11 +844,16 @@ class InteractiveSpectra:
 
     def _update_plot(self, *args):
         for index in range(len(self)):
-            y, yerr = self._calc_y(index, self.min_time, self.max_time, True)
+            y, yerr = self._calc_y(index, self.time_cut_min, self.time_cut_max, True)
             self.update_line(y, yerr, index)
 
         if self.checkbox_track_fits.get_status()[0]:
             self._re_perform_fits()
+
+        if self.checkbox_make_density.get_status()[0]:
+            self.ax.set_ylabel('[(keV)$^{-1}$]')
+        else:
+            self.ax.set_ylabel('[()]')
 
         self._update_time_cut_display()
         self._draw()
@@ -738,6 +941,7 @@ class InteractiveSpectra:
 
     def _perform_fits(self, center_guesses=None, fixed_binsQs=None, sigma_guesses=None, force_centers=None,
                       force_sigma=False, index=None):
+        fit_verbose = InteractiveSpectra.FIT_VERBOSE
         if center_guesses is None:
             center_guesses = self.fit_clicks['x_points']
 
@@ -758,28 +962,43 @@ class InteractiveSpectra:
             logging.warning("Space bar pressed but no peaks were selected!")
             return
 
-        bins_slice, y_slice = get_fit_slice(self.erg_binss[index], center_guesses, self.fit_settings['fit_buffer_window'])
+        if not self.checkbox_make_density.get_status()[0]:
+            self.checkbox_make_density.set_active(0)
+
+        bins_slice_range, y_slice = get_fit_slice(self.erg_binss[index], center_guesses,
+                                            self.fit_settings['fit_buffer_window'])
 
         y_slice = slice(*y_slice)
-        bins_slice = slice(*bins_slice)
+        bins_slice = slice(*bins_slice_range)
         bins = self.erg_binss[index][bins_slice]
 
         y, yerr = self.get_y(index)
         y = y[y_slice]
         yerr = yerr[y_slice]
 
-        fit_result: ModelResult = multi_guass_fit(bins=bins, y=y,
-                                                  center_guesses=center_guesses,
-                                                  fixed_in_binQ=fixed_binsQs,
-                                                  yerr=yerr,
-                                                  sigma_guesses=sigma_guesses,
-                                                  fix_centers=force_centers,
-                                                  fix_sigmas=force_sigma,
-                                                  share_sigma=self.fit_settings['only_one_sigma'])
+        try:
+            if fit_verbose:
+                print(f"Initial peak centers: {center_guesses}")
+                print(f"Fit range is {bins[0]} <= x <= {bins[-1]}")
+            fit_result: GausFitResult = multi_guass_fit(bins=bins, y=y,
+                                                      center_guesses=center_guesses,
+                                                      fixed_in_binQ=fixed_binsQs,
+                                                      yerr=yerr,
+                                                      sigma_guesses=sigma_guesses,
+                                                      fix_centers=force_centers,
+                                                      fix_sigmas=force_sigma,
+                                                      share_sigma=self.fit_settings['only_one_sigma'],
+                                                      fit_buffer_window=None)
+        except Exception as e:
+            warning(f"Fit failed:\n{e}")
+            self._reset_fit_clicks()
+            return
+
+        if self.VERBOSE:
+            print(fit_result.fit_report())
 
         x = fit_result.userkws[fit_result.model.independent_vars[0]]
-        y = fit_result.data
-        b_width = fit_result.userkws['b_width']
+        # y = fit_result.data
 
         params = fit_result.params
 
@@ -801,8 +1020,8 @@ class InteractiveSpectra:
             xpos = fit_center
 
             text = self.ax.text(xpos, 1.01,
-                                f"E=${get_param_ufloat(f'{prefix}center', params):.2fL}$ keV\n"
-                                f"N=${get_param_ufloat(f'{prefix}amplitude', params) / b_width:.2L}$",
+                                f"E=${fit_result.centers(i):.2fL}$ keV\n"
+                                f"N=${fit_result.amplitudes(i):.2L}$",
                                 rotation=46, fontdict={'fontsize': 8.5},
                                 transform=text_trans)
 
@@ -820,9 +1039,13 @@ class InteractiveSpectra:
 
         self.current_fits[index].append(fit_info)
         self._reset_fit_clicks()  # self._draw is called here.
+        self._set_ylims()
 
     def _key_release(self, event):
-        del self.keys_currently_held_down[event.key]
+        try:
+            del self.keys_currently_held_down[event.key]
+        except KeyError:
+            pass
         if event.key == ' ':
             # do fitting stuff
             self._perform_fits()
@@ -929,22 +1152,51 @@ class InteractiveSpectra:
         self._draw()
 
     @staticmethod
-    def _help(*args): # todo: doesnt work.
-        plt.figure()
-        fix, ax = plt.subplots()
-        plt.text(0.9, 0.9, instructions)
+    def _help(*args):
+        """
+        Print manual to std:out.
+        Args:
+            *args:
 
-    def __init__(self, init_window_width=35, init_time_center=None, window_max=None, delta_t=5, fig_title=None):
+        Returns:
+
+        """
+        print(instructions)
+
+    def set_erg_window(self, erg_min, erg_max):
+        """
+        Set x-axis limit that will be set upon opening.
+        Data outside (erg_min, erg_max) is still available via zoom.
+        Args:
+            erg_min:
+            erg_max:
+
+        Returns: None
+
+        """
+        self.ax.set_xlim(erg_min, erg_max)
+
+    def __init__(self, init_tmin=None, init_tmax=None, init_bg_subtractQ=False, window_max=None, delta_t=5,
+                 fig_title=None):
         """
 
         Args:
-            init_window_width: Initial time-integration window width
-            init_time_center:  Initial time-integration center
-            window_max: Max width of time integration window possible to choose using the slider
+            init_tmin: initial min time cut
+            init_tmax:  Initial max time cut
+            init_bg_subtractQ: If True, baseline subtract will turned on initially.
+            window_max: Max width of time integration window accessible with to the slider
             delta_t: time step for the slider determining the center time of the integration time range
             fig_title: Title at top of window.
 
         """
+        old_show = plt.show
+
+        def new_show(*args, **wkargs):
+            self._prepare()
+            return old_show(*args, **wkargs)
+
+        plt.show = new_show  # link calls to plt.show to a function that includes a call to self._prepare
+
         self.fit_settings = {}
         self.set_fit_settings()
 
@@ -958,6 +1210,8 @@ class InteractiveSpectra:
         self.energy_binned_timess = []
         self.scales = []  # scale each spectrum by a value.
         self.titles = []
+
+        self.erg_bin_widths = []
 
         fig, ax = plt.subplots(figsize=(16, 9))
 
@@ -1001,6 +1255,7 @@ class InteractiveSpectra:
         self.slider_erg_center_ax = fig.add_axes([0.1, 0.06, 0.8, 0.05])
         self.slider_window_ax = fig.add_axes([0.1, 0.01, 0.8, 0.05])
         self.checkbox_time_integrated_ax = fig.add_axes([0.91, 0.1, 0.15, 0.15 * 2])
+        self.checkbox_make_density_ax = fig.add_axes([0.91, 0.05, 0.15, 0.15])
         self.checkbox_track_fits_ax = fig.add_axes([0.1, self.ax.get_position().y1 - 0.02, 0.15, 0.15 * 2])
 
         self.checkbox_bg_subtract_ax = fig.add_axes([0.83, 0.81, 0.1, 0.2])
@@ -1008,7 +1263,7 @@ class InteractiveSpectra:
 
         vanilla_button('Clear fits', self._clear_fits)
 
-        vanilla_button('rescale y (Y)', self._set_ylims)
+        vanilla_button('rescale Y (y)', self._set_ylims)
         self.key_press_events['y'] = self._set_ylims
 
         vanilla_button('help', self._help)
@@ -1018,14 +1273,16 @@ class InteractiveSpectra:
         self.slider_erg_center_ax.set_axis_off()
         self.slider_window_ax.set_axis_off()
         self.checkbox_time_integrated_ax.set_axis_off()
+        self.checkbox_make_density_ax.set_axis_off()
         self.checkbox_track_fits_ax.set_axis_off()
         self.radiobutton_active_select_ax.set_axis_off()
         self.checkbox_bg_subtract_ax.set_axis_off()
 
-        self._init_window_width = init_window_width
-        if init_time_center is None:
-            init_time_center = init_window_width/2
-        self._init_slider_pos = init_time_center
+        if init_tmax is None or init_tmin is None:
+            self._init_window_width = self._init_slider_pos = None
+        else:
+            self._init_window_width = init_tmax - init_tmin
+            self._init_slider_pos = 0.5 * (init_tmax + init_tmin)
 
         # The Widgets below will be declared once the number of spectra is being simultaneously plotted is known
         self.slider_time_center: Slider = None  # cant define until range is
@@ -1049,12 +1306,17 @@ class InteractiveSpectra:
         self.keys_currently_held_down = {}
         # \end GUI state variables.
 
-        self.checkbox_time_integrated = CheckButtons(self.checkbox_time_integrated_ax, ['All\nevents'], actives=[True])
+        self.checkbox_time_integrated = CheckButtons(self.checkbox_time_integrated_ax, ['All\nevents'],
+                                                     actives=[init_tmin is None])
         self.checkbox_time_integrated.on_clicked(self._on_checked_time_integrated)
+
+        self.checkbox_make_density = CheckButtons(self.checkbox_make_density_ax, ['make\ndensity'], actives=[False])
+        self.checkbox_make_density.on_clicked(self._update_plot)
 
         self.checkbox_track_fits = CheckButtons(self.checkbox_track_fits_ax, ['Track fits'], actives=[False])
 
-        self.checkbox_bg_subtract = CheckButtons(self.checkbox_bg_subtract_ax, ['Remove\nbaseline'], actives=[False])
+        self.checkbox_bg_subtract = CheckButtons(self.checkbox_bg_subtract_ax, ['Remove\nbaseline'],
+                                                 actives=[init_bg_subtractQ])
         self.checkbox_bg_subtract.on_clicked(self._update_plot)
 
         self.bg_textbox = TextBox(self.bg_textbox_ax, "width (keV): ", '40', )
@@ -1093,10 +1355,18 @@ class InteractiveSpectra:
         """
         return len(self.handles)
 
-    def show(self):
+    def _prepare(self):
         if not len(self):
-            warning("Cannot show InteractiveSpectra plot because no spectra have been added. Use self.add_spectra().")
             return
+
+        if self._events_times_range[0] == self._events_times_range[1]:
+            self._events_times_range[1] += 0.01
+
+        if self._init_window_width is None:
+            _time_range = self.time_range
+            dt = _time_range[1] - _time_range[0]
+            self._init_window_width = dt / 2
+            self._init_slider_pos = _time_range[0] + dt / 4
 
         self.slider_time_center = plt.Slider(self.slider_erg_center_ax, "Center time", valmin=self._events_times_range[0],
                                              valmax=self._events_times_range[1], valinit=self._init_slider_pos,
@@ -1105,12 +1375,11 @@ class InteractiveSpectra:
         self.current_fits = {i: [] for i in range(len(self))}
 
         if self.window_max is None:
-            self.window_max = 0.75 * self._events_times_range[-1]
+            self.window_max = self.time_range[-1] - self.time_range[0]
 
         self.slider_window = plt.Slider(self.slider_window_ax, 'Time\nwindow', valmin=0,
                                         valmax=self.window_max, valinit=self._init_window_width)
 
-        # radio_labels = [str(i + 1) for i in range(len(self))]
         self.radiobutton_active_select = RadioButtons(self.radiobutton_active_select_ax, labels=self.titles,
                                                       activecolor='black')
 
@@ -1129,12 +1398,94 @@ class InteractiveSpectra:
         self._on_checked_time_integrated('')
 
 
+def trest_gassian(peaks, rel_amplitudes, N, slope_ratio=3, xmin=0, xmax=100, sigma=2.5, nbins=None, non_uniform_bins=False,
+                  i: InteractiveSpectra = None):
+    def linear_rnd(x0, x1, ratio, n):
+        """
+        Generate data set following linear curve.
+        Args:
+            x0: min value
+            x1: max value
+            ratio: Ratio between number of events in minimum and maximum bins
+            n: number of samples
+
+        Returns:
+
+        """
+        y = np.random.rand(n)
+        r = ratio
+        out = (-np.sqrt((1 + r) ** 2) + np.sqrt(1 + (-1 + r ** 2) * y) + r * np.sqrt(1 + (-1 + r ** 2) * y)) / (
+                    (-1 + r) * np.sqrt((1 + r) ** 2))
+        out *= (x1 - x0)
+        out += x0
+        return out
+
+    data = linear_rnd(xmin, xmax, slope_ratio, int(N/2))
+
+    rel_amplitudes = np.array(rel_amplitudes)/np.sum(rel_amplitudes)
+
+    amplitudes = []
+    for peak, A in zip(peaks, rel_amplitudes):
+        data = np.concatenate([data, np.random.normal(peak, sigma, int(A*N))])
+        amplitudes.append(int(A*N))
+
+    if nbins is None:
+        nbins = 2 * (xmax - xmin)
+
+    if non_uniform_bins:
+        bins = np.cumsum(np.linspace(0, 1, 150)/2 + 1)
+        bins = (bins - bins[0])/(bins[-1] - bins[0])
+        bins *= xmax - xmin
+        bins += xmin
+    else:
+        bins = np.linspace(xmin, xmax, )
+
+    y, _ = np.histogram(data, bins)
+    fit_result = multi_guass_fit(bins, y, [884.2], make_density=True)
+    # fit_result.plot_fit()
+
+    if i is None:
+        i = InteractiveSpectra()
+
+    i.add_static_spectra(bins, y, erg_min=xmin)
+    # i._prepare()
+
+    # for amp_fit, amp_true, peak in zip(fit_result.amplitudes(), amplitudes, peaks):
+    #     print(f"{peak} keV: True: {amp_true:.2e}, fit: {amp_fit:.2e}")
+
+
+
 if __name__ == '__main__':
-    n = int(1E6)
-    is_ = np.random.randint(0, n, n)
-    times = np.arange(0, n)
-    erg_binned_timnes = make_energy_binned_times(3000, is_, times)
-    print('hi')
+    np.random.seed(0)
+    n_peaks = 6
+    xmin=100
+    xmax=1200
+    N=10000
+    nbins = 350
+
+    InteractiveSpectra.VERBOSE = True
+    InteractiveSpectra.FIT_VERBOSE = True
+
+    interactive = InteractiveSpectra()
+    for i in range(11):
+        peaks = np.random.uniform(xmin, xmax, n_peaks)
+        amps = np.random.uniform(0, 1, n_peaks)
+        trest_gassian(peaks=peaks, rel_amplitudes=amps, N=N, xmin=xmin, xmax=xmax, i=interactive, sigma=4,
+                      nbins=nbins)
+
+    plt.show()
+    # from lmfit.models import LinearModel
+    # model = LinearModel()
+    # x = np.array([1,2,3,4,5,6])
+    # y = 2 * x + 3 + np.random.randn(len(x))
+    # fit_Result = model.fit(data=y, x=x, )
+    # fit_Result = FitResult(fit_Result)
+    # print()
+    # n = int(1E6)
+    # is_ = np.random.randint(0, n, n)
+    # times = np.arange(0, n)
+    # erg_binned_timnes = make_energy_binned_times(3000, is_, times)
+    # print('hi')
     # from JSB_tools import mpl_hist_from_data, TabPlot
     # erg_binned_times = [[] for i in range(10)]
     # n = 10000
@@ -1174,10 +1525,7 @@ if __name__ == '__main__':
     #
     # from analysis import Shot
     # # times_ = None
-    # # #  todo:
-    # # #   Add energy rebin input box.
-    # # #   Add titles to replace default radio button lables of "1", "2", etc.
-    # # #   Add button for turning off fit tracking with slider.
+    # # #
     # #
     # #
     # # def phelix_list():

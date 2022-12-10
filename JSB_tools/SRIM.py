@@ -39,6 +39,7 @@ import numpy as np
 import pickle
 from matplotlib import pyplot as plt
 from scipy.interpolate import interp1d
+from JSB_tools.nuke_data_tools import Nuclide
 
 srim_dir = Path(__file__).parent / "SRIM-2013"
 
@@ -160,7 +161,7 @@ def _save_output(target_atoms, fractions, density, projectile, gas, save_SR_OUTP
             except ValueError:
                 return s
 
-        dist_units = {'A': 1E-8, 'um': 1E-6, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1 * 100 * 1000}
+        dist_units = {'A': 1E-8, 'um': 1E-4, 'mm': 0.1, 'cm': 1, "m": 100, "km": 1 * 100 * 1000}
         erg_units = {"eV": 1E-6, "keV": 1E-3, "MeV": 1, "GeV": 1E3}
         while not re.match("-+", line := f.readline()):
             erg, erg_unit, elec, nuclear, range_, range_unit, lon_strag, lon_strag_unit, lat_strag, lat_strag_unit \
@@ -359,6 +360,10 @@ class _SRIMTable:
             outs.append(f'{a}({float(f)})')
         return ' '.join(outs)
 
+    def get_range(self, erg):
+        out = np.interp(erg, self.ergs, self.ranges)
+        return out
+
     def plot_dedx(self, ax=None, use_density=True):
         if ax is None:
             _, ax = plt.subplots()
@@ -451,8 +456,10 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, s
     proj_symbol, a = projectile_info
 
     # Deal with the pesky astropy.Unit object (it has no float method?!?! blasphemy)
-    proj_mass = float(re.match('([0-9.]+e[-+0-9]+)', str(particles.Particle(f"{proj_symbol}-{a}").mass)).groups()[0]) \
-                / 1.66053906660E-27  # convert kg to amu
+    # proj_mass = float(re.match('([0-9.]+e[-+0-9]+)', str(particles.Particle(f"{proj_symbol}-{a}").mass)).groups()[0]) \
+    #             / 1.66053906660E-27  # convert kg to amu
+
+    proj_mass = Nuclide(projectile).atomic_mass(unit='u')
 
     layer_arg = {}
     max_erg *= 1E6

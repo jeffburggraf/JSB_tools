@@ -1,23 +1,4 @@
-#  SPDX-License-Identifier: GPL-3.0+
-#
-# Copyright © 2019 O. Papst.
-#
-# This file is part of nudel.
-#
-# nudel is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# nudel is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with nudel.  If not, see <http://www.gnu.org/licenses/>.
-
-"""Python interface for ENSDF nuclear data"""
+from __future__ import annotations
 import re
 import warnings
 from uncertainties import ufloat, UFloat
@@ -28,18 +9,45 @@ from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 
 import JSB_tools.nuke_data_tools.nuclide as nuclide
 from JSB_tools.nuke_data_tools.nudel.core import get_active_ensdf
-# from JSB_tools.nuke_data_tools.nudel.core import (get_active_ensdf, LevelRecord, GammaRecord, DecayRecord, Quantity)
 from JSB_tools.nuke_data_tools.nudel.core import LevelRecord as _LevelRecord
 from JSB_tools.nuke_data_tools.nudel.core import GammaRecord as _GammaRecord
 from JSB_tools.nuke_data_tools.nudel.core import DecayRecord as _DecayRecord
 from JSB_tools.nuke_data_tools.nudel.core import Quantity as _Quantity
 from JSB_tools.nuke_data_tools.nudel.core import Nuclide as _NudelNuclide
-# from .core import (get_active_ensdf, LevelRecord, GammaRecord, DecayRecord)
-# from .core import Nuclide as NudelNuclide
 from JSB_tools.nuke_data_tools.nudel.util import Dimension
 from typing import List, Dict, Tuple
 
 ensdf = get_active_ensdf()
+
+
+class GammaRecord:
+    def __init__(self, level_scheme: LevelScheme, decay_record: _GammaRecord):
+        self.nuclide_name = level_scheme.nuclide_name
+        erg = decay_record.energy
+        self.energy = ufloat(erg.cast_to_unit('keV').val, erg.cast_to_unit('keV').pm)
+
+        orig_level = decay_record.orig_level
+
+        if orig_level is not None:
+            self.orig_level = level_scheme.levels[orig_level.level_index]
+        else:
+            self.orig_level = None
+
+        dest_level = decay_record.dest_level
+
+        if dest_level is not None:
+            self.dest_level = level_scheme.levels[dest_level.level_index]
+        else:
+            self.dest_level = None
+
+        self.rel_intensity = decay_record.rel_intensity.val
+
+    @property
+    def half_life(self):
+        return self.orig_level.half_life
+
+    def __repr__(self):
+        return f"{self.nuclide_name} GammaDecay ({self.rel_intensity}%) ({self.energy} keV, {self.half_life} s) {self.orig_level.energy} to {self.dest_level.energy}"
 
 
 class Level:
@@ -95,7 +103,7 @@ class Level:
         return out
 
     def __repr__(self):
-        return f"<Level: {self.nuclide_name}, {self.energy} keV, hl: {self.pretty_half_life()}>"
+        return f"<Level: {self.nuclide_name}, {self.energy:.2f} keV, hl: {self.pretty_half_life()}>"
 
 
 class LevelScheme:
@@ -117,6 +125,26 @@ class LevelScheme:
         self.nudel_nuclide = _NudelNuclide(a, z)
 
         self.levels: List[Level] = [Level(nuclide_name, l) for l in self.nudel_nuclide.adopted_levels.levels]
+
+        self.gamma_decays = []
+
+        for level in self.levels:
+            gamma_records = [GammaRecord(self, r) for r in level.decays if isinstance(r, _GammaRecord)]
+            if not len(gamma_records):
+                continue
+
+            rel_intensities = [r.rel_intensity for r in gamma_records]
+
+            if not any([(np.isnan(x) for x in rel_intensities)]):
+                tot = sum(rel_intensities)
+
+                if tot > 0:
+                    norm = 1.0/tot
+
+                    for r in gamma_records:
+                        r.rel_intensity *= norm
+
+            self.gamma_decays.extend(gamma_records)
 
     def find_level(self, erg) -> Tuple[int, Level]:
         assert isinstance(erg, (float, int)), type(erg)
@@ -169,14 +197,13 @@ class Coincidence:
         feeding_probs = np.zeros(len(self.levels))
 
         for i in range(len(feeding_probs))[::-1]:
-
-
-
-
             print()
 
 
-
 if __name__ == '__main__':
-
-    Coincidence("Ni57")
+    n = nuclide.Nuclide('Xe140')
+    n = n.decay_daughters[0]
+    l = LevelScheme(n.name)
+    decays = []
+    for g in l.gamma_decays:
+        print(g)

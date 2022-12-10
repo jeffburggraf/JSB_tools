@@ -5,6 +5,7 @@ pwd = Path(__file__).parent
 
 # Done change the values below.
 DECAY_PICKLE_DIR = pwd/'data'/'nuclides'  # rel. dir. of pickled nuclide data (half lives, ect)
+LEVEL_PICKLE_DIR = pwd/'data'/'nuclides'/'levels'  # rel. dir. of pickled nuclide data (half lives, ect)
 PROTON_PICKLE_DIR = pwd / "data" / "incident_proton"  # rel. dir. of pickled proton/fission data
 GAMMA_PICKLE_DIR = pwd / "data" / "incident_gamma"  # rel. dir. of pickled photon/fission  data
 NEUTRON_PICKLE_DIR = pwd / 'data' / 'incident_neutron'  # rel. dir. of pickled neutron activation/fission data

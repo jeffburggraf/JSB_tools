@@ -3,7 +3,7 @@ from typing import Tuple, Dict, List, Union, Collection
 import numpy as np
 from numbers import Number
 from JSB_tools import TabPlot
-from JSB_tools.nuke_data_tools.nuclide import DecayNuclide
+from JSB_tools.nuke_data_tools.nuclide import DecayNuclide, Nuclide
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D
 from scipy.interpolate import interp1d
 from warnings import warn
@@ -457,10 +457,10 @@ class FissionYields:
         elif self.inducing_par == 'proton':
             xs = n.proton_induced_fiss_xs
         elif self.inducing_par == 'neutron':
-            xs = n.neutron_induced_xs
+            xs = n.neutron_induced_fiss_xs
         else:
             assert False, f"Cannot weight by fission cross-section for inducing particle '{self.inducing_par}'"
-        xs_values = xs.interp(self.energies)
+        xs_values = xs(self.energies)
         self.weight_by_erg(xs_values)
         self.__weighted_by_xs = True
         return xs_values

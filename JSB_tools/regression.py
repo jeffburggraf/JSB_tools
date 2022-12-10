@@ -614,7 +614,7 @@ class ExponentialMLL:
         self.params.add('_lambda', lambda_guess,min=0, max=max(self.times))
         # self.params.add('noise', noise_guess, min=0, max=sum(self.times))
         m = minimize(self.likelihood, self.params, args=(self.times,),
-                     kws={'_weights': self.weights, 'max_time': self.max_time}, method='cobyla')
+                     kws={'_weights': self.weights, 'time_cut_max': self.max_time}, method='cobyla')
         print(m.params)
 
 

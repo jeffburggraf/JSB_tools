@@ -21,6 +21,7 @@ from copy import deepcopy
 from matplotlib.axes import Axes
 from lmfit.model import save_modelresult
 from pickle import UnpicklingError
+from JSB_tools.spectra.time_depend import InteractiveSpectra
 from functools import cached_property
 from numba.typed import List as numba_list
 from numba import jit
@@ -97,7 +98,11 @@ class EfficiencyCalMixin:
 
         if eff_path is None:  # search for path in subclass
             assert hasattr(self, "erg_centers"), "Must provide `eff_path` arg since there is no Spectrum subclass."
-            eff_path = Path(getattr(self, 'path')).with_suffix('.eff')
+            path = getattr(self, 'path')
+            if path is None:
+                return None
+
+            eff_path = Path(path)
 
         eff_path = Path(eff_path).with_suffix('.eff')
 
@@ -118,6 +123,9 @@ class EfficiencyCalMixin:
                                                      "eff = EfficiencyCalMixin()\neff.unpickle_efficiency()"
 
         eff_path = self._get_pickle_eff_path(eff_path)
+
+        if eff_path is None:
+            raise FileNotFoundError
 
         if not eff_path.is_absolute():
             assert hasattr(self, 'path'), f"Relative eff_path, '{eff_path}', with no subclass to anchor to. "
@@ -234,6 +242,8 @@ class EfficiencyCalMixin:
 
 
 class ListSpectra(EfficiencyCalMixin):
+    REFS = []  # references to prevent garbage collection
+
     datetime_format = '%m/%d/%Y %H:%M:%S'
 
     _cached = set()  # a set of the names of cached attributes (automatically poopulated).
@@ -331,13 +341,80 @@ class ListSpectra(EfficiencyCalMixin):
         except FileNotFoundError:
             pass
 
+    def time_cut(self, tmin=None, tmax=None) -> ListSpectra:
+        """
+        Remove all event with time outside of range.
+        Args:
+            tmin:
+            tmax:
+
+        Returns:
+
+        """
+        if tmax is None:
+            tmax = self.times[-1]
+        if tmin is None:
+            tmin = self.times[0]
+
+        i0, i1 = np.searchsorted(self.times, [tmin, tmax])
+        self.times = self.times[i0: i1]
+        self.adc_channels = self.adc_channels[i0: i1]
+
+        try:
+            del self.energies
+        except AttributeError:
+            pass
+
+        try:
+            del self.energy_binned_times
+        except AttributeError:
+            pass
+        return self
+
+    def plot(self, interactive_spec_instance: InteractiveSpectra = None, init_tmin=None, init_tmax=None,
+             init_bg_subtractQ=False, window_max=None, delta_t=5, fig_title=None,
+             scale=1, eff_corr=True, erg_min=None, erg_max=None) -> InteractiveSpectra:
+        """
+        Example:
+            # Plot two spectra:
+                i = l1.plot()
+                l2.plot(i)
+
+        Args:
+            interactive_spec_instance:
+            init_tmin:
+            init_tmax:
+            init_bg_subtractQ:
+            window_max:
+            delta_t:
+            fig_title:
+            scale:
+            eff_corr:
+            erg_min:
+            erg_max:
+
+        Returns:
+
+        """
+
+        if fig_title is None and self.path is not None:
+            fig_title = Path(self.path).name
+
+        if interactive_spec_instance is None:
+            interactive_spec_instance = InteractiveSpectra(init_tmin=init_tmin, init_tmax=init_tmax,
+                                                           init_bg_subtractQ=init_bg_subtractQ, window_max=window_max,
+                                                           delta_t=delta_t, fig_title=fig_title)
+
+            ListSpectra.REFS.append(interactive_spec_instance)
+
+        interactive_spec_instance.add_list(self, scale=scale, disable_eff_corr=not eff_corr, title=fig_title,
+                                           erg_min=erg_min, erg_max=erg_max)
+
+        return interactive_spec_instance
+
     @cached_decorator
     def energies(self):
         return self.erg_centers[self.adc_channels]
-
-    # @energies.setter
-    # def energies(self, val):
-    #     self._energies = val
 
     @property
     def erg_centers(self):
@@ -721,7 +798,7 @@ class ListSpectra(EfficiencyCalMixin):
         return ax
 
     def get_erg_spectrum(self, erg_min: float = None, erg_max: float = None, time_min: float = None,
-                         time_max: float = None, eff_corr=False, make_density=False, nominal_values=False,
+                         time_max: float = None, eff_corr=False, scale=1, make_density=False, nominal_values=False,
                          return_bin_edges=False,
                          remove_baseline=False, median_window=40,
                          debug_plot=False):
@@ -735,6 +812,7 @@ class ListSpectra(EfficiencyCalMixin):
             time_max:
             eff_corr: If True, correct for efficiency to get absolute counts.
             make_density: If True, divide by bin widths.
+            scale: Multiplicative constant
             nominal_values: If False, return unp.uarray
             return_bin_edges: Return the energy bins, e.g. for use in a histogram.
             remove_baseline: If True, remove baseline according to the following arguments.
@@ -759,29 +837,11 @@ class ListSpectra(EfficiencyCalMixin):
         if time_max is None:
             time_max = self.times[-1]
 
-        # time_min, time_max, erg_min, erg_max = tuple(map(_float, [time_min, time_max, erg_min, erg_max]))
-
-        # b = (time_min is not None, time_max is not None)
-        #
-        # if b == (0, 0):
-        #     get_n_events = len
-        # elif b == (1, 0):
-        #     def get_n_events(x):
-        #         return len(x) - np.searchsorted(x, time_min, side='left')
-        # elif b == (0, 1):
-        #     def get_n_events(x):
-        #         return np.searchsorted(x, time_max, side='right')
-        # else:
-        #     def get_n_events(x):
-        #         return np.searchsorted(x, time_max, side='right') - np.searchsorted(x, time_min,
-        #                                                                             side='left')
-
         erg_index0 = self.__erg_index__(erg_min)
         erg_index1 = self.__erg_index__(erg_max)
 
         time_arrays = self.energy_binned_times[erg_index0: erg_index1]
 
-        # out = np.fromiter(map(get_n_events, time_arrays), dtype=float)
         time_range = np.array([time_min, time_max])
         out = get_erg_spec(time_arrays, time_range)
 
@@ -798,30 +858,6 @@ class ListSpectra(EfficiencyCalMixin):
         if not nominal_values:
             out = unp.uarray(out, yerr)
 
-
-            # full_y = np.fromiter(map(get_n_events, self.energy_binned_times), dtype=float)
-            #
-            # if baseline_kwargs is None:
-            #     baseline_kwargs = {}
-            # baseline_method = baseline_method.lower()
-            # if baseline_method == 'root':
-            #     bg = calc_background(full_y, **baseline_kwargs)
-            #     # out = out - calc_background(full_y, **baseline_kwargs)
-            # elif baseline_method == 'median':
-            #     if 'window' not in baseline_kwargs:
-            #         baseline_kwargs['window_width'] = 75  # size of rolling window in keV
-            #     # out = out - rolling_median(values=full_y, **baseline_kwargs)
-            #     bg = rolling_median(values=full_y, **baseline_kwargs)
-            # else:
-            #     raise TypeError(f"Invalid `baseline_method`, '{baseline_method}'")
-            #
-            # bg = bg[erg_index0: erg_index1]
-            #
-            # try:
-            #     out -= bg
-            # except UFuncTypeError:
-            #     out = out - bg
-
         if make_density:
             out = out/(bins[1:] - bins[:-1])
 
@@ -835,6 +871,9 @@ class ListSpectra(EfficiencyCalMixin):
             effs = np.where(effs > 0, effs, 1)
             out /= effs
 
+        if scale != 1:
+            out *= scale
+
         if debug_plot:
             if isinstance(debug_plot, Axes):
                 _ax = debug_plot
@@ -845,9 +884,7 @@ class ListSpectra(EfficiencyCalMixin):
             window = [erg_min-0.75*erg_width, erg_max+0.75*erg_width]
 
             _ax = self.plot_erg_spectrum(erg_min=window[0], erg_max=window[1], ax=_ax, time_min=time_min,
-                                         time_max=time_max,
-                                         remove_baseline=remove_baseline, baseline_method=baseline_method,
-                                         baseline_kwargs=baseline_kwargs,
+                                         time_max=time_max, remove_baseline=remove_baseline,
                                          make_density=make_density, eff_corr=eff_corr)
 
             _ax.set_title(f"{_ax.get_title()}\n" + rf"$\Sigma$ = {sum(out)}")

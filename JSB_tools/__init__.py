@@ -50,6 +50,8 @@ cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
 
+markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
 
 def nearest_i(vals, x):
     """
@@ -320,6 +322,18 @@ class TabPlot:
     """
     _instnaces = []
 
+    old_show = plt.show
+
+    def new_show(*args, **wkargs):
+        for self in TabPlot._instnaces:
+            try:
+                self.button_funcs[0]()
+            except IndexError:
+                pass
+        return TabPlot.old_show(*args, **wkargs)
+
+    plt.show = new_show  # link calls to plt.show to a function that initiates all TabPlots
+
     def __init__(self, figsize=(10, 8), *fig_args, **fig_kwargs):
         TabPlot._instnaces.append(self)
 
@@ -374,7 +388,7 @@ class TabPlot:
         """
         index = len(self.plt_axs) - 1
 
-        def set_vis(event):
+        def set_vis(event=None):
             for axs_group in self.plt_axs:
                 if axs_group is self.plt_axs[index]:
                     [ax.set_visible(1) for ax in axs_group]
@@ -411,7 +425,25 @@ class TabPlot:
             ax.set_visible(0)
             # [ax.set_visible(0) for ax in axs_flat]
 
-    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None, *args, **kwargs) -> Axes:
+    def _set_new_twinx(self):
+        # old_f = Axes.twinx
+        axes_group_index = len(self.plt_axs) - 1
+
+        def get_f(ax):
+            def new_f(*args, **kwargs):
+                twin_ax = Axes.twinx(ax, *args, **kwargs)
+                axis_group = self.plt_axs[axes_group_index]
+                self.plt_axs[axes_group_index] = np.concatenate([axis_group, [twin_ax]])
+
+                return twin_ax
+
+            return new_f
+
+        for ax in self.plt_axs[axes_group_index]:
+            ax.twinx = get_f(ax)
+
+    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None,
+               *args, **kwargs) -> Union[np.ndarray, Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:
@@ -503,6 +535,7 @@ class TabPlot:
         else:
             [ax.set_visible(0) for ax in axs_flat]
 
+        self._set_new_twinx()
         return axs if len(axs_flat) > 1 else axs[0]
 
     def legend(self):
@@ -1057,6 +1090,8 @@ class MPLStyle:
 
         if bold_ticklabels:
             plt.rcParams['text.latex.preamble'] = r'\usepackage{sfmath} \boldmath'
+        else:
+            plt.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
 
         plt.rcParams['xtick.minor.visible'] = minor_xticks
         plt.rcParams['ytick.minor.visible'] = minor_yticks
@@ -1632,6 +1667,11 @@ class FileManager:
     root_files: Dict[Path, ROOT.TFile] = {}
     # todo: make gui for deleting files
 
+    def _load_from_file(self):
+        with open(self._save_path, 'rb') as f:
+            for k, v in pickle.load(f).items():
+                self.file_lookup_data[k] = v
+
     def __init__(self, path_to_root_dir: Union[str, Path] = None, recreate=False):
         """
         Creates a human friendly link between file and a dictionary of descriptive attributes that make it easy to
@@ -1699,15 +1739,16 @@ class FileManager:
             print(f'Creating directory for FileContainer:\n{self.root_directory}')
             self.root_directory.mkdir()
 
-        self.file_lookup_data: Dict[Path, dict] = {}
+        self._file_lookup_data: Dict[Path, dict] = {}
 
         # path to file that stores association information
         self._save_path = self.root_directory / "__file_lookup__.pickle"
 
         if not recreate:
             try:
-                with open(self._save_path, 'rb') as f:
-                    self.file_lookup_data: Dict[Path, Dict] = pickle.load(f)
+                self._load_from_file()
+                # with open(self._save_path, 'rb') as f:
+                #     self.file_lookup_data: Dict[Path, Dict] = pickle.load(f)
             except (EOFError, FileNotFoundError) as e:
                 recreate = True
 
@@ -1716,6 +1757,14 @@ class FileManager:
             self._save_path.unlink(missing_ok=True)
 
         register(self.__at_exit__)
+
+    @property
+    def file_lookup_data(self):
+        return self._file_lookup_data
+
+    @file_lookup_data.setter
+    def file_lookup_data(self, val):
+        self._file_lookup_data = val
 
     def remove_path(self, path):
         del self.file_lookup_data[path]
@@ -1827,6 +1876,7 @@ class FileManager:
         Returns:
 
         """
+        self._load_from_file()
         assert isinstance(missing_ok, int), f'Invalid `missing_ok` arg:\n\t"{missing_ok}"'
         for path, attribs in self.file_lookup_data.items():
             if lookup_attributes == attribs:
@@ -1860,6 +1910,7 @@ class FileManager:
         Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
         Todo: Find a way to make debugging not found easier.
         """
+        self._load_from_file()
         lookup_kwargs = lookup_attributes  #.items()
         matches = {}
 

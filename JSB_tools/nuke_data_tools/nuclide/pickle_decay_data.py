@@ -10,9 +10,9 @@ from warnings import warn
 from uncertainties import ufloat, ufloat_fromstr
 from endf_to_pickle import iter_paths
 import numpy as np
-from data_directories import decay_data_dir, DECAY_PICKLE_DIR
+from data_directories import decay_data_dir, DECAY_PICKLE_DIR, LEVEL_PICKLE_DIR
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
-
+from JSB_tools.nuke_data_tools.nudel import LevelScheme
 
 cwd = Path(__file__).parent
 
@@ -23,6 +23,10 @@ _seconds_in_year = _seconds_in_month*12
 hl_match_1 = re.compile(r'Parent half-life: +([0-9.E+-]+) ([a-zA-Z]+) ([0-9A-Z]+).*')
 hl_match_2 = re.compile(r'T1\/2=([0-9.decE+-]+) ([A-Z]+).*')
 stable_match = re.compile('Parent half-life: STABLE.+')
+
+
+LEVEL_PICKLE_DIR.mkdir(exist_ok=True)
+DECAY_PICKLE_DIR.mkdir(exist_ok=True)
 
 
 def get_hl_from_ednf_file(path_to_file):
@@ -232,5 +236,21 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
                 marshal.dump(d, f)
 
 
+def pickle_levels(): # todo: Improve this. All of it.
+    all_nuclides = nuclide_module.Nuclide.get_all_nuclides()
+    prog = ProgressReport(len(all_nuclides))
+
+    for i, nuclide in enumerate(all_nuclides):
+        prog.log(i)
+        try:
+            level = LevelScheme(nuclide.name)
+        except FileNotFoundError:
+            continue
+        path = LEVEL_PICKLE_DIR/f'{nuclide.name}.pickle'
+        with open(path, 'wb') as f:
+            pickle.dump(level, f)
+
+
 if __name__ == '__main__':
-    pickle_decay_data(True, False, nuclides_to_process=None)
+    # pickle_levels()
+    pickle_decay_data(True, True, nuclides_to_process=None)

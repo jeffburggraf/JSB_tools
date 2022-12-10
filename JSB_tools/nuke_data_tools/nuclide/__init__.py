@@ -305,11 +305,11 @@ class Nuclide(Element):
 
         self.is_stable: Union[None, bool] = None
 
-        self.__decay_daughters_str__: List[str] = None
+        self.__decay_daughters_str__: List[str] = []
 
-        self.decay_modes: Dict[Tuple[str], List[DecayMode]] = None
+        self.decay_modes: Dict[Tuple[str], List[DecayMode]] = {}
 
-        self.__decay_parents_str__: List[str] = None
+        self.__decay_parents_str__: List[str] = []
 
     @staticmethod
     def get_z_a_m_from_name(name: str):
@@ -953,7 +953,7 @@ class Nuclide(Element):
             return list([Nuclide(name) for name in self.__decay_parents_str__])
 
     @property
-    def decay_daughters(self):
+    def decay_daughters(self) -> List[Nuclide]:
         out = list([Nuclide(name) for name in self.__decay_daughters_str__])
         for nuclide in out:
             for decay_modes in self.decay_modes.values():
