@@ -17,6 +17,7 @@ from jax.scipy.stats import norm
 from scipy.stats import norm as sci_norm
 from uncertainties import ufloat
 
+
 def log_n_factorial(n):
     # i0 = np.searchsorted(ns, 0.2)
     if n > 0.2:
@@ -60,7 +61,7 @@ def gaus_fit(bins, counts, center_guesses, scales: Union[np.ndarray, float] = 1,
 
         fit_buffer_window:
 
-        center_playN: The number of bins that defins the allowab le range for a given peak center
+        center_playN: The number of bins that defines the allowable range for a given peak center
         **kwargs:
 
     Returns:
@@ -83,6 +84,7 @@ def gaus_fit(bins, counts, center_guesses, scales: Union[np.ndarray, float] = 1,
         sel = jnp.where(model_rates > 0)
         model_rates = model_rates[sel]
         out = -jnp.sum(model_rates) + jnp.sum(counts[sel] * jnp.log(model_rates))
+        # print(params['sigma'])
         return -out
 
     def _logProb(args_dict):
@@ -107,18 +109,23 @@ def gaus_fit(bins, counts, center_guesses, scales: Union[np.ndarray, float] = 1,
     ax.set_xlabel("x")
 
     I = np.sum(bin_widths * counts)
+    center_is = np.searchsorted(bins, center_guesses, side='right') - 1
 
     bg_guess = np.median(counts)
     amp_guess = I - np.sum(bg_guess * bin_widths)
-    sigma_guess = np.mean(bin_widths)
+    # sigma_guess = 3*np.mean(bin_widths)
+    max_guess = np.mean(counts[center_is[0] - center_playN: center_is[0] + center_playN]) - bg_guess
 
     center_min, center_max = center_guesses[0] - mean_bwidth * center_playN, \
                              center_guesses[0] + mean_bwidth * center_playN
+    # sigma_min = 0.756 * mean_bwidth
+
     init_params = Parameters()
     init_params.add('amplitude', value=amp_guess, min=np.sqrt(bg_guess), max=I,)
                     # brute_step=amp_guess/100)  # , min=np.sqrt(bg_guess))
     init_params.add('center', value=center_guesses[0], min=center_min, max=center_max)
-    init_params.add('sigma', value=sigma_guess, min=0.9 * sigma_guess, max=(x[-1] - x[0])*0.75)# brute_step=mean_bwidth*0.5)
+    init_params.add('max', value=max_guess/mean_bwidth, min=0, max=max(counts))#, brute_step=mean_bwidth*0.5)
+    init_params.add('sigma', expr='amplitude*0.398942/max') #, value=sigma_guess, min=sigma_min, max=(x[-1] - x[0])*0.5) #, brute_step=mean_bwidth*0.5)
     init_params.add('bg', value=bg_guess, min=np.sqrt(bg_guess)/10, max=max(counts),)  # brute_step=max(counts)/20)
 
     ax.plot(x, model(init_params), label='initial model')
@@ -132,17 +139,32 @@ def gaus_fit(bins, counts, center_guesses, scales: Union[np.ndarray, float] = 1,
 
     fit_params = result.params
 
-    H = hessian(_logProb)({k: v.value for k, v in fit_params.items()})
+    H = hessian(_logProb)({k: v.value for k, v in fit_params.items() if k != 'max'})
     m = np.array([[x for x in v.values()] for v in H.values()])
-    errs = [np.sqrt(np.abs(f)) for f in np.diag(np.linalg.inv(m))]
+    errs = {k: np.sqrt(np.abs(f)) for k, f in zip(H.keys(), np.diag(np.linalg.inv(m)))}
+
+    true_params = {"sigma": sigma, 'center': center, 'amplitude': amp}
 
     for i, (k, v) in enumerate(fit_params.items()):
-        param = ufloat(v.value, errs[i])
-        v.stderr = errs[i]
-        print(k, param)
+        if k in true_params:
+            true = true_params[k]
+        else:
+            true = None
 
+        try:
+            err = errs[k]
+        except KeyError:
+            err = 0
+
+        param = ufloat(v.value, err)
+        v.stderr = err
+        print(k, param, f'{true}')
+        # print(k, v)
+
+    other_params = fit_params.copy()
     print(f"init log_prob: {logProb(init_params)}")
     print(f"Final log_prob: {logProb(fit_params)}")
+    print(f"init - final: {logProb(init_params) - logProb(fit_params)}")
 
     ax.plot(x, model(fit_params), label='fit')
     ax.legend()
@@ -152,14 +174,15 @@ def gaus_fit(bins, counts, center_guesses, scales: Union[np.ndarray, float] = 1,
 
 np.random.seed(0)
 # # ==============================
-bins = np.linspace(0, 100, 89)
+bins = np.linspace(0, 100, 100)
 x = 0.5 * (bins[1:] + bins[:-1])
-amp = 95000
-bf_frac = 240
-center, center_guess = 16.5, 20
-sigma, sigma_guess = 10, 1
+amp = 10000
+bf_frac = 10
+center, center_guess = 36.5, 20
+sigma, sigma_guess = 11, 1
 bg_guess_scale = 0.6
 #==================================
+
 
 data = np.random.normal(center, sigma, amp)
 data = np.concatenate([data, np.random.uniform(bins[0], bins[-1], int(bf_frac * amp))])

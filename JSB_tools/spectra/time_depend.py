@@ -21,7 +21,7 @@ from matplotlib.lines import Line2D
 from matplotlib.axes import Axes
 import logging
 import matplotlib.transforms as transforms
-from numba.typed import List as numba_list
+from numba.typed import List as numbaList
 from numba import jit, prange
 from math import erf
 from logging import warning
@@ -108,7 +108,7 @@ def remove_background(values: np.ndarray, median_window=None):
 
 
 @jit(nopython=True)
-def get_erg_spec(erg_binned_times: numba_list, time_range: np.ndarray, n: int=None, bg_subtract=False, bg_window=40):
+def get_erg_spec(erg_binned_times: numbaList, time_range: np.ndarray, arr: np.ndarray=None, bg_subtract=False, bg_window=40):
     """
     Return compiled function for generating energy spectrum with time cuts.
     Args:
@@ -116,8 +116,7 @@ def get_erg_spec(erg_binned_times: numba_list, time_range: np.ndarray, n: int=No
 
         time_range: array like [min_time, max_time]. A value of np.array([]) means no time cuts.
 
-        n: Size of array to be filled with result (when larger than len(erg_binned_times), 0's are
-            padded onto end of return array)
+        arr: Array to be filled.
 
         bg_subtract:
 
@@ -126,10 +125,14 @@ def get_erg_spec(erg_binned_times: numba_list, time_range: np.ndarray, n: int=No
     Returns: array of shape len(erg_binned_times) representing counts for each energy bin
 
     """
-    if n is None:
-        out = np.zeros(len(erg_binned_times))
-    else:
-        out = np.zeros(n)
+    if arr is None:
+        arr = np.zeros(len(erg_binned_times), dtype=float)
+
+    assert len(arr) == len(erg_binned_times)
+    # if n is None:
+    #     out = np.zeros(len(erg_binned_times))
+    # else:
+    #     out = np.zeros(n)
 
     if len(time_range) == 0:
         full_spec = True
@@ -148,12 +151,12 @@ def get_erg_spec(erg_binned_times: numba_list, time_range: np.ndarray, n: int=No
             i1, i2 = np.searchsorted(erg_binned_times[i], time_range)
             val: float = i2 - i1
 
-        out[i] = val
+        arr[i] = val
 
     if bg_subtract:
-        out = remove_background(out, median_window=bg_window)
+        arr = remove_background(arr, median_window=bg_window)
 
-    return out
+    return arr
 
 
 def erg_cut(bins, erg_binned_times, effs, emin=None, emax=None):
@@ -513,6 +516,17 @@ def get_param_ufloat(name, params):
     return ufloat(params[name].value, err)
 
 
+class EnergyBinnedTimes:
+    def __init__(self, arr):
+        # super().__init__(arr)
+        self.arr = numbaList(arr)
+        self.i0 = 0
+        self.i1 = len(arr)
+
+    def view(self):
+        return self[self.i0: self.i1]
+
+
 class InteractiveSpectra:
     print_click_coords = False  # If True, print mouse click points in fractional Axes coords (used for dev)
     VERBOSE = False  # print fit_report (and other things?)
@@ -602,7 +616,8 @@ class InteractiveSpectra:
             scale = scale.n
 
         self.scales.append(scale)
-        self.energy_binned_timess.append(numba_list(energy_binned_times))
+        self.energy_binned_timess.append(energy_binned_times)
+        self.views.append([0, len(energy_binned_times)])  # initial view is max
         self.erg_binss.append(energy_bins)
 
         self.erg_bin_widths.append(energy_bins[1:] - energy_bins[:-1])
@@ -781,7 +796,7 @@ class InteractiveSpectra:
         """
         return self.handles[index].get_ydata()[:-1], self.handles[index]._yerr[:-1]
 
-    def _calc_y(self, index, tmin, tmax, append_last_value=False):
+    def _calc_y(self, index, tmin, tmax, append_last_value=False, truncate_xrange=True):
         """
 
         Args:
@@ -789,6 +804,7 @@ class InteractiveSpectra:
             tmin:
             tmax:
             append_last_value: Last bin value can be duplicated in order to draw histogram.
+            truncate_xrange: Only calculate spectra current within plot view.
 
         Returns: y, yerr
 
@@ -801,15 +817,30 @@ class InteractiveSpectra:
         bg_subtractQ = self.checkbox_bg_subtract.get_status()[0]
         bg_window = int(self.bg_textbox.text)
 
-        energy_binned_times = self.energy_binned_timess[index]
-        scales = self.scales[index]
+        energy_binned_times = self.energy_binned_timess[index]  # here
 
         n = len(energy_binned_times)
-
         if append_last_value:
             n += 1  # array will have one extra value at end.
 
-        out = get_erg_spec(energy_binned_times, time_range, n=n)
+        out = np.zeros(n)
+
+        scales = self.scales[index]
+
+        if truncate_xrange:
+            I0, I1 = np.searchsorted(self.erg_binss[index], self.ax.get_xlim(), side='right') - 1
+            I0 -= 1
+            I1 += 1
+
+            I0 = max(0, I0)
+            I1 = min(len(energy_binned_times), I1)
+        else:
+            I0 = 0
+            I1 = len(energy_binned_times)
+
+        energy_binned_times = energy_binned_times[I0: I1]
+
+        get_erg_spec(energy_binned_times, time_range, arr=out[I0: I1])  # modifies out
 
         out_err = np.sqrt(out)
 
@@ -857,6 +888,13 @@ class InteractiveSpectra:
 
         self._update_time_cut_display()
         self._draw()
+
+    def _xlim_changed(self, event=None):
+        ax_range = self.ax.get_xlim()
+        i = self._active_spec_index
+        if self.views[i][1] - ax_range[1] < self.slider_window.val*0.1:
+            new_v = np.searchsorted(ax_range[1], self.erg_binss[i], side='right')
+            self.views[i][1] = min(len(self.energy_binned_timess[i]))
 
     @property
     def _time_integratedQ(self):
@@ -1208,6 +1246,7 @@ class InteractiveSpectra:
         self.handles: List[Line2D] = []
         self.erg_binss = []
         self.energy_binned_timess = []
+        self.views = []  # indices for the energy range being calculated. Same len of energy_binned_timess
         self.scales = []  # scale each spectrum by a value.
         self.titles = []
 
@@ -1378,7 +1417,8 @@ class InteractiveSpectra:
             self.window_max = self.time_range[-1] - self.time_range[0]
 
         self.slider_window = plt.Slider(self.slider_window_ax, 'Time\nwindow', valmin=0,
-                                        valmax=self.window_max, valinit=self._init_window_width)
+                                        valmax=self.window_max, valinit=self._init_window_width,
+                                        valstep=self.delta_t/2)
 
         self.radiobutton_active_select = RadioButtons(self.radiobutton_active_select_ax, labels=self.titles,
                                                       activecolor='black')
@@ -1396,6 +1436,7 @@ class InteractiveSpectra:
         self.radiobutton_active_select.set_active(0)
 
         self._on_checked_time_integrated('')
+        self.ax.callbacks.connect('xlim_changed', self._xlim_changed)
 
 
 def trest_gassian(peaks, rel_amplitudes, N, slope_ratio=3, xmin=0, xmax=100, sigma=2.5, nbins=None, non_uniform_bins=False,
@@ -1455,25 +1496,26 @@ def trest_gassian(peaks, rel_amplitudes, N, slope_ratio=3, xmin=0, xmax=100, sig
 
 
 
-if __name__ == '__main__':
-    np.random.seed(0)
-    n_peaks = 6
-    xmin=100
-    xmax=1200
-    N=10000
-    nbins = 350
+if __name__ == '__main__':pass
 
-    InteractiveSpectra.VERBOSE = True
-    InteractiveSpectra.FIT_VERBOSE = True
-
-    interactive = InteractiveSpectra()
-    for i in range(11):
-        peaks = np.random.uniform(xmin, xmax, n_peaks)
-        amps = np.random.uniform(0, 1, n_peaks)
-        trest_gassian(peaks=peaks, rel_amplitudes=amps, N=N, xmin=xmin, xmax=xmax, i=interactive, sigma=4,
-                      nbins=nbins)
-
-    plt.show()
+    # np.random.seed(0)
+    # n_peaks = 6
+    # xmin=100
+    # xmax=1200
+    # N=10000
+    # nbins = 350
+    #
+    # InteractiveSpectra.VERBOSE = True
+    # InteractiveSpectra.FIT_VERBOSE = True
+    #
+    # interactive = InteractiveSpectra()
+    # for i in range(11):
+    #     peaks = np.random.uniform(xmin, xmax, n_peaks)
+    #     amps = np.random.uniform(0, 1, n_peaks)
+    #     trest_gassian(peaks=peaks, rel_amplitudes=amps, N=N, xmin=xmin, xmax=xmax, i=interactive, sigma=4,
+    #                   nbins=nbins)
+    #
+    # plt.show()
     # from lmfit.models import LinearModel
     # model = LinearModel()
     # x = np.array([1,2,3,4,5,6])

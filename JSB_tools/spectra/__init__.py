@@ -843,7 +843,8 @@ class ListSpectra(EfficiencyCalMixin):
         time_arrays = self.energy_binned_times[erg_index0: erg_index1]
 
         time_range = np.array([time_min, time_max])
-        out = get_erg_spec(time_arrays, time_range)
+
+        out = get_erg_spec(time_arrays, time_range, )
 
         if not nominal_values:
             yerr = np.sqrt(out)
