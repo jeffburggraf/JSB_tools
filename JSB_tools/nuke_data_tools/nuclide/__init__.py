@@ -17,7 +17,6 @@ from uncertainties import UFloat, ufloat
 from uncertainties.core import Variable
 try:
     from openmc.data.endf import Evaluation
-    # from openmc.data import ATOMIC_SYMBOL, ATOMIC_NUMBER
     from openmc.data import Reaction, Decay, Product
     from openmc.data.data import atomic_mass, atomic_weight, AVOGADRO
 except ModuleNotFoundError:
