@@ -18,7 +18,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from datetime import timezone
 from typing import List, Union, Tuple, Iterable, Callable, Dict
-import winfiletime
+# import winfiletime
 from functools import cached_property
 import time
 from uncertainties.core import UFloat, ufloat
@@ -27,7 +27,7 @@ from JSB_tools import ProgressReport, convolve_gauss, mpl_hist, calc_background,
     rolling_median, InteractivePlot, _float
 from numpy.core._exceptions import UFuncTypeError
 from JSB_tools.spe_reader import SPEFile
-
+import filetime
 OLE_TIME_ZERO = datetime.datetime(1899, 12, 30, 0, 0, 0)
 cwd = Path(__file__).parent
 
@@ -423,7 +423,7 @@ class MaestroListFile(ListSpectra):
             wintime[0] = word3[-16:-8]
             w_time = "".join(wintime)
             w_time = BitStream(bin=w_time).unpack('uintbe:64')[0]
-            w_time = winfiletime.to_datetime(w_time)
+            w_time = filetime.to_datetime(w_time)
             w_time = w_time.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
             if self.start_time is None:  # only set this for the first time we see a Win64 time.

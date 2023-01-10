@@ -53,17 +53,23 @@ class InteractiveSpectra:
     def show(self):
         self.slider_left = plt.Slider(self.slider_ax_left, "l", valmin=self.times_range[0],
                                          valmax=self.times_range[1], valinit=self.times_range[0])
-        self.slider_right = plt.Slider(self.slider_ax, '', valmin=self.times_range[0],
+        self.slider_right = plt.Slider(self.slider_ax_right, '', valmin=self.times_range[0],
                                  valmax=self.times_range[1], valinit=self.times_range[0] + 0.5*self.slider_width)
 
-        self.slider.on_changed(self._slider_func)
-        self.ranged_slider.on_changed(self._ranged_func)
+        # self.slider.on_changed(self._slider_func)
+        # self.ranged_slider.on_changed(self._ranged_func)
 
 
 
 if __name__ == '__main__':
+    # for dir_ in Path(r'C:\Users\jeffb\PycharmProjects\IACExperiment\exp_data').iterdir():
+    #     if dir_.is_dir():
+    #         for path in dir_.iterdir():
+    #             if path.suffix in ['.pylist', '.list_meta', '.marshal', '.marshalSpe']:
+    #                 path.unlink()
     from JSB_tools.spectra import ListSpectra
     from analysis import Shot
+
     l = Shot(134).list
     i = InteractiveSpectra()
     i.add_spectra(l.energy_binned_times, l.erg_bins)

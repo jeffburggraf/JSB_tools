@@ -16,5 +16,6 @@ dependencies:
   - lmfit
   - pip
   - pip:
-    - winfiletime
+    - filetime
     - sortednp
+    - bitstring
