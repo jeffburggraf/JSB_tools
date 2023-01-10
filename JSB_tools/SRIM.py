@@ -447,17 +447,27 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, s
         max_erg: Energy in MeV
         gas: True if gas, else False
         save_SR_OUTPUT: If True, preserve the SRIM output text file. Used for debugging.
+
+    Example:
+        g = IdealGasProperties(['He', 'Ar'])
+
+        density = g.get_density_from_atom_fractions([1, 1], pressure=1.5, )
+
+        run_srim(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', max_erg=120, gas=True)
+
+        # Now, the results can from now on be accessed by
+        data = find_SRIM_run(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', gas=True)
+
+        # Plot, if you want
+        data.plot_dedx()
+
+        plt.show()
     """
     from srim import SR, Ion, Layer
-    from plasmapy import particles
 
     target_atoms, fractions, density, projectile_info, max_erg, gas = \
         _check_args(target_atoms, fractions, density, projectile, max_erg, gas)
     proj_symbol, a = projectile_info
-
-    # Deal with the pesky astropy.Unit object (it has no float method?!?! blasphemy)
-    # proj_mass = float(re.match('([0-9.]+e[-+0-9]+)', str(particles.Particle(f"{proj_symbol}-{a}").mass)).groups()[0]) \
-    #             / 1.66053906660E-27  # convert kg to amu
 
     proj_mass = Nuclide(projectile).atomic_mass(unit='u')
 
@@ -484,17 +494,23 @@ if __name__ == '__main__':
     from JSB_tools.MCNP_helper.materials import IdealGasProperties
 
     # Run SRIM for 1:1 atom ratio of Argon + He at 1.5 bar pressure
-
     g = IdealGasProperties(['He', 'Ar'])
+    for he_frac in [0.1, 0.3]:
+        density = g.get_density_from_atom_fractions([he_frac, 0.5 - he_frac], pressure=1)
+        for ff in ['Xe139', 'Sb132', 'Sr94', 'La144', 'Rb90', 'Mo104', 'Nb98', 'Pr148']:
+            run_srim(target_atoms=['He', 'Ar'], fractions=[he_frac, 0.5 - he_frac], density=density, projectile=ff,
+                     max_erg=120, gas=True)
 
-    density = g.get_density_from_atom_fractions([1, 1], pressure=1.5, )
-
-    run_srim(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', max_erg=120, gas=True)
-
-    # Now, the results can from now on be accessed by
-    data = find_SRIM_run(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', gas=True)
-
-    # Plot, if you want
-    data.plot_dedx()
-
-    plt.show()
+    # g = IdealGasProperties(['He', 'Ar'])
+    #
+    # density = g.get_density_from_atom_fractions([1, 1], pressure=1.5, )
+    #
+    # run_srim(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', max_erg=120, gas=True)
+    #
+    # # Now, the results can from now on be accessed by
+    # data = find_SRIM_run(target_atoms=['He', 'Ar'], fractions=[1, 1], density=density, projectile='Xe139', gas=True)
+    #
+    # # Plot, if you want
+    # data.plot_dedx()
+    #
+    # plt.show()
