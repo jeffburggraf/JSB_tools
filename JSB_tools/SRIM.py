@@ -197,14 +197,26 @@ class _SRIMConfig:
     """
     __all_instances: List[_SRIMConfig] = []
 
+    @property
+    def _target_atoms(self):
+        return np.array([s.lower() for s in self.target_atoms])
+
     def __init__(self, target_atoms, fractions, density, projectile: Union[str, None], gas: int = 0, srim_file_name=None):
+
         arg_srt = np.argsort(target_atoms)
-        self._target_atoms = np.array([target_atoms[i].lower() for i in arg_srt])
         self.target_atoms = np.array([target_atoms[i] for i in arg_srt])
 
+        if sum(fractions) == 0:
+            raise ValueError(f"Zero fractions! target_atoms={target_atoms}, fractions={fractions}")
+
         fractions = np.array(fractions, dtype=float)[arg_srt]
-        fractions /= fractions
+        fractions /= np.sum(fractions)
         self.fractions = fractions
+
+        sel = np.where(fractions > 0)
+
+        self.fractions = self.fractions[sel]
+        self.target_atoms = self.target_atoms[sel]
 
         self.density = float(density)
 
@@ -217,12 +229,13 @@ class _SRIMConfig:
         self.srim_file_name = srim_file_name
 
     def __repr__(self):
-        return f'{self.target_atoms}, {self.fractions}, {self.density}, {self.projectile}, {self.gas}'
+        return f'target_atoms={self.target_atoms}, fractions={self.fractions}, density={self.density}, ' \
+               f'projectile={self.projectile}, gas={self.gas}'
 
     def __eq__(self, other):
         assert isinstance(other, _SRIMConfig)
 
-        if not (self.projectile is None or other.projectile is None):
+        if not (self.projectile is None or other.projectile is None):  # neither are None
             if not self.projectile == other.projectile:
                 return False
 

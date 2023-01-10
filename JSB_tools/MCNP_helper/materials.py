@@ -231,7 +231,7 @@ class Material:
             i += 1
         return f"_{mat}_{i}.txt"
 
-    def set_srim_dedx(self, particles: List[str] = None, dedx_path=Path.expanduser(Path("~"))/'phits'/'data'/'dedx',
+    def set_srim_dedx(self, projectiles: List[str] = None, dedx_path=Path.expanduser(Path("~")) / 'phits' / 'data' / 'dedx',
                       scaling=None, file_number=None):
         """
         Todo: Make seperate set-dedx function.
@@ -241,7 +241,7 @@ class Material:
             by `file_number` or automatically incremented.
 
         Args:
-            particles: Which particle(s) to include? None will do all available. Otherwise, raise error if all particles
+            projectiles: Which particle(s) to include? None will do all available. Otherwise, raise error if all particles
                 data aren't available
             dedx_path: Path where PHITS looks for user supplied stopping powers
             scaling: A function or a constant. If a constant, scale sopping powers by this value.
@@ -271,13 +271,13 @@ class Material:
         srim_outputs = find_all_SRIM_runs(target_atoms=elements, fractions=fractions, density=self.density,
                                           gas=self.is_gas)
 
-        if particles is not None:
-            particles = list(map(str.lower, particles))
+        if projectiles is not None:  # filter by list of projectiles
+            projectiles = list(map(str.lower, projectiles))
 
-            assert all([p in srim_outputs for p in particles]), f"Particle(s) " \
-                                                                f"{[p for p in particles if p not in srim_outputs]} " \
+            assert all([p in srim_outputs for p in projectiles]), f"Particle(s) " \
+                                                                f"{[p for p in projectiles if p not in srim_outputs]} " \
                                                                 f"not available!"
-            srim_outputs = {k: srim_outputs[k] for k in particles}
+            srim_outputs = {k: srim_outputs[k] for k in projectiles}
 
         for proj, table in srim_outputs.items():
             lines.append(f"kf = {Nuclide(proj).phits_kfcode()}")

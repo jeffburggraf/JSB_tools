@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 import re
 import numpy as np
+from typing import Tuple
 from JSB_tools import TBrowser, ProgressReport, mpl_hist
 import time
 from typing import Union
@@ -644,7 +645,7 @@ class PrevParameters:
 
 def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str, None] = None,
                   output_directory: Union[str, None] = None, max_histories=None, tree_name="tree",
-                  overwrite=True, max_time=None) -> ROOT.TTree:
+                  overwrite=True, max_time=None) -> Tuple[Path, ROOT.TTree]:
     """
 
     Args:
@@ -656,7 +657,8 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
         overwrite: If false, don't overwrite existing file.
         max_time: Maximum time to run in seconds.
 
-    Returns: Root tree of simulation data.
+    Returns:
+        (path to TFile containing Tree, TTree object)
 
     """
 
@@ -816,7 +818,7 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
     f = ROOT.TFile(str(container.root_file_path))
     Container.root_files.append(f)
     tree = f.Get(container.tree_name)
-    return tree
+    return container.root_file_path, tree
 
 
 if __name__ == "__main__":

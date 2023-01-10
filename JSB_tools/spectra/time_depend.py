@@ -359,15 +359,18 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     Returns: lmfit.ModelResult
 
     TODO:
-        -Expand debugging interface:
+        -Expand debugging capabilities:
             Allow for fits to be performed via command that mimic mouse click fits
-            Consider using pythons logging module for degubn msgs
+            Consider using pythons logging module for degub msgs
         -Add energy rebin input box.
-        -Optimize:
+        - Add option to fit all peaks at a given energy in one click
+        - Add button to toggle visibility of peak fits (gets busy with lots of overlapping peaks)
+        - Inpout box to manually specify time range.
+        - Option to Draw error bars.
+        - Optimize:
             Save calculated energy_binned_times
             Maybe only calculate for current view?
             Figure out why it's slow. Maybe profiler?
-        -Option to Draw error bars.
     """
     assert len(y) == len(bins) - 1
     if fit_buffer_window is not None:
@@ -827,7 +830,7 @@ class InteractiveSpectra:
 
         scales = self.scales[index]
 
-        if truncate_xrange:
+        if truncate_xrange and False:  # disabled for now.
             I0, I1 = np.searchsorted(self.erg_binss[index], self.ax.get_xlim(), side='right') - 1
             I0 -= 1
             I1 += 1
@@ -890,6 +893,7 @@ class InteractiveSpectra:
         self._draw()
 
     def _xlim_changed(self, event=None):
+        print("_xlim_changed")
         ax_range = self.ax.get_xlim()
         i = self._active_spec_index
         if self.views[i][1] - ax_range[1] < self.slider_window.val*0.1:
@@ -1395,7 +1399,9 @@ class InteractiveSpectra:
         return len(self.handles)
 
     def _prepare(self):
-        if not len(self):
+        if not hasattr(self, '__has_called_prepare'):
+            self.__has_called_prepare = True
+        else:
             return
 
         if self._events_times_range[0] == self._events_times_range[1]:
