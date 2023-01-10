@@ -10,7 +10,7 @@ from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR,
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
 import pickle
 from datetime import datetime, timedelta
-from JSB_tools.nuke_data_tools.nudel import LevelScheme
+# from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import functools
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat

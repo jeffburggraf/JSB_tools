@@ -5,11 +5,15 @@ from pathlib import Path
 from typing import Dict, List, Union, Tuple, Set
 from JSB_tools.nuke_data_tools.nuclide.data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
 import re
-from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
-from JSB_tools.nuke_data_tools.nudel import LevelScheme
+# from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import pickle
 from logging import warning as warn
+try:
+    from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
+except ModuleNotFoundError:
+    openmc = None
+    warn("No OpenMC, some functionality limited. ")
 
 
 class CustomUnpickler(pickle.Unpickler):

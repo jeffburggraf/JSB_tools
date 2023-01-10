@@ -493,7 +493,6 @@ def run_srim(target_atoms, fractions, density, projectile, max_erg, gas=False, s
 if __name__ == '__main__':
     from JSB_tools.MCNP_helper.materials import IdealGasProperties
 
-    # Run SRIM for 1:1 atom ratio of Argon + He at 1.5 bar pressure
     g = IdealGasProperties(['He', 'Ar'])
     for he_frac in [0.1, 0.3]:
         density = g.get_density_from_atom_fractions([he_frac, 0.5 - he_frac], pressure=1)
