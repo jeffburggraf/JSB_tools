@@ -15,6 +15,10 @@ class Distribution:
     def __get_kwargs__(self):
         pass
 
+    @abstractmethod
+    def __mul__(self, other):
+        pass
+
 
 @dataclass
 class CylindricalSource(Distribution):
@@ -227,7 +231,7 @@ class NucleusSource:
         NucleusSource.__all_sources__.append(self)
         if not isinstance(nuclide_or_name, Nuclide):
             assert isinstance(nuclide_or_name, str)
-            self.nuclide = Nuclide.from_symbol(nuclide_or_name)
+            self.nuclide = Nuclide(nuclide_or_name)
         else:
             assert isinstance(nuclide_or_name, Nuclide)
             self.nuclide = nuclide_or_name

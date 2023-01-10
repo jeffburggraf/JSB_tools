@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from os import system
 from functools import cached_property
-from JSB_tools.nuke_data_tools import CrossSection1D, Nuclide
+from JSB_tools.nuke_data_tools import Nuclide
+from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D
 from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 from typing import Dict
 
@@ -327,7 +328,7 @@ class ReadResult:
 
     @cached_property
     def nuclide(self):
-        return Nuclide.from_symbol(self.nuclide_name)
+        return Nuclide(self.nuclide_name)
 
     def fission(self, res=None) -> CrossSection1D:
         """
@@ -344,7 +345,7 @@ class ReadResult:
             fig_label = f"{self.nuclide_name}({self.projectile}, F)"
         else:
 
-            n = Nuclide.from_symbol(res)
+            n = Nuclide(res)
             f_name = f'rp{n.Z:0>3}{n.A:0>3}.fis'
             fig_label = f"{self.nuclide_name}({self.projectile}, ({n.name})F)"
 
@@ -653,7 +654,7 @@ class ReadResult:
         if nucleus is None:
             nucleus = self.nuclide_name
 
-        n = Nuclide.from_symbol(nucleus)
+        n = Nuclide(nucleus)
         z = n.Z
         a = n.A
 
@@ -668,7 +669,7 @@ class ReadResult:
         if nucleus is None:
             nucleus = self.nuclide_name
 
-        n = Nuclide.from_symbol(nucleus)
+        n = Nuclide(nucleus)
         z = n.Z
         a = n.A
         f_name = f"gam{z:0>3}{a:0>3}L{init_level:0>2}L{final_level:0>2}.tot"

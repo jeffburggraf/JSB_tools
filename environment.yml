@@ -6,6 +6,8 @@ dependencies:
   - openmc  # Problem on Windows
   - python=3.9
   - numpy
+  - numba
+  - numdifftools  # for lmfit internal
   - scipy
   - uncertainties
   - matplotlib

@@ -2,8 +2,9 @@ from __future__ import annotations
 from typing import Tuple, Dict, List, Union, Collection
 import numpy as np
 from numbers import Number
-from JSB_tools import TabPlot, Nuclide
-from JSB_tools.nuke_data_tools import rest_mass, CrossSection1D, DecayNuclide
+from JSB_tools import TabPlot
+from JSB_tools.nuke_data_tools.nuclide import DecayNuclide, Nuclide
+from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D
 from scipy.interpolate import interp1d
 from warnings import warn
 from uncertainties import ufloat
@@ -11,7 +12,7 @@ from uncertainties import unumpy as unp
 import re
 import matplotlib.pyplot as plt
 from pathlib import Path
-from JSB_tools.nuke_data_tools.global_directories import FISS_YIELDS_PATH
+from JSB_tools.nuke_data_tools.nuclide.data_directories import FISS_YIELDS_PATH
 import marshal
 from functools import cached_property
 
@@ -50,7 +51,7 @@ class FissionYields:
         Returns: Tuple[(calculated energies, pre fission nucleus for to_par)]
 
         """
-        n = Nuclide.from_symbol(nuclide_name)
+        n = Nuclide(nuclide_name)
         if not hasattr(ergs, '__iter__'):
             assert isinstance(ergs, Number)
             ergs = [ergs]
@@ -69,7 +70,7 @@ class FissionYields:
             if par == 'gamma':
                 return 0, 0
             else:
-                _n = Nuclide.from_symbol(par)
+                _n = Nuclide(par)
                 assert _n.is_valid, f"Invalid particle, {par}"
                 return _n.Z, _n.A
 
@@ -450,16 +451,16 @@ class FissionYields:
 
         """
         xs: CrossSection1D
-        n = Nuclide.from_symbol(self.target)
+        n = Nuclide(self.target)
         if self.inducing_par == 'gamma':
             xs = n.gamma_induced_fiss_xs
         elif self.inducing_par == 'proton':
             xs = n.proton_induced_fiss_xs
         elif self.inducing_par == 'neutron':
-            xs = n.neutron_induced_xs
+            xs = n.neutron_induced_fiss_xs
         else:
             assert False, f"Cannot weight by fission cross-section for inducing particle '{self.inducing_par}'"
-        xs_values = xs.interp(self.energies)
+        xs_values = xs(self.energies)
         self.weight_by_erg(xs_values)
         self.__weighted_by_xs = True
         return xs_values

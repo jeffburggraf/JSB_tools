@@ -1,0 +1,19 @@
+ This type of data is only needed for proton induced fission cross-sections due to bugs in (P, F) cross-sections for the ENDF6 format.
+
+ How to get teh data:
+   Go to URL https://www-nds.iaea.org/exfor/endf.htm
+
+   Type in the desired target, e.g. "Pb208"
+
+   Look for the row begionning with the fission cross-section (e.g. "PB-208(G,F),SIG,") and click the tiny folder on the far left.
+
+   You should not see a button labeled 'plot', click it.
+
+   Then, in the upper right somewhere there is a button with the text 'See: plotted data', click it.
+
+   Then, copy past text into a file and name the file according to the reaction,
+      e.g., "U-235(P,F)" for proton induced fission on U-235 (no extension).
+
+   Move the file to the appropriate subdirectory relative to this readme file.
+
+   Finally, run pickle_proton_fission_xs_data() from inside ../JSB_tools/nuke_data_tools/nuclide/endf_to_pickle.py

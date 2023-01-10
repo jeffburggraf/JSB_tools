@@ -151,7 +151,7 @@ class Material:
             z = zaid//1000
             a = zaid % 1000
             if a == 0:
-                 a = Nuclide.from_symbol(get_most_abundant_isotope(ATOMIC_SYMBOL[z])).A
+                 a = Nuclide(get_most_abundant_isotope(ATOMIC_SYMBOL[z])).A
             s = Nuclide.from_Z_A_M(z, a).atomic_symbol
             try:
                 elements_dict[s] += frac
@@ -280,7 +280,7 @@ class Material:
             srim_outputs = {k: srim_outputs[k] for k in particles}
 
         for proj, table in srim_outputs.items():
-            lines.append(f"kf = {Nuclide.from_symbol(proj).phits_kfcode()}")
+            lines.append(f"kf = {Nuclide(proj).phits_kfcode()}")
             for erg, dedx in zip(table.ergs, table.total_dedx):
                 lines.append(f"{erg:.3E} {scaling(erg)*dedx:.4E}")
 
@@ -416,7 +416,7 @@ class Material:
                     nuclide_name = get_most_abundant_isotope(symbol)
                 else:
                     nuclide_name = symbol + a
-                n = Nuclide.from_symbol(nuclide_name)
+                n = Nuclide(nuclide_name)
                 assert n.is_valid, 'Invalid atomic symbol, "{}"'.format(nuclide_name)
             else:
                 assert False, 'Invalid atomic symbol, "{}"'.format(s)

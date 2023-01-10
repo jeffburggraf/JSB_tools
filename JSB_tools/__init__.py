@@ -26,7 +26,6 @@ from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 from matplotlib.cm import ScalarMappable
 import time
-from JSB_tools.nuke_data_tools import Nuclide, DecayNuclide
 import sys
 from scipy.stats import norm
 from matplotlib import cm
@@ -50,6 +49,26 @@ except ModuleNotFoundError:
 cwd = Path(__file__).parent
 
 style_path = cwd/'mpl_style.txt'
+
+markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+def nearest_i(vals, x):
+    """
+    Given sorted array of values, `vals`, find the indices of vals are nearest to each element in x.
+    Args:
+        vals:
+        x:
+
+    Returns:
+
+    """
+    is_ = np.searchsorted(vals, x, side='right') - 1
+    midq = x < 0.5 * (vals[is_] + vals[is_ + 1])
+    out = np.where(midq, is_, is_ + 1)
+    if hasattr(midq, '__iter__'):
+        return out[0]
+    return out
 
 
 def errorbar(x, y, ax=None, **kwargs):
@@ -303,6 +322,18 @@ class TabPlot:
     """
     _instnaces = []
 
+    old_show = plt.show
+
+    def new_show(*args, **wkargs):
+        for self in TabPlot._instnaces:
+            try:
+                self.button_funcs[0]()
+            except IndexError:
+                pass
+        return TabPlot.old_show(*args, **wkargs)
+
+    plt.show = new_show  # link calls to plt.show to a function that initiates all TabPlots
+
     def __init__(self, figsize=(10, 8), *fig_args, **fig_kwargs):
         TabPlot._instnaces.append(self)
 
@@ -357,7 +388,7 @@ class TabPlot:
         """
         index = len(self.plt_axs) - 1
 
-        def set_vis(event):
+        def set_vis(event=None):
             for axs_group in self.plt_axs:
                 if axs_group is self.plt_axs[index]:
                     [ax.set_visible(1) for ax in axs_group]
@@ -394,7 +425,25 @@ class TabPlot:
             ax.set_visible(0)
             # [ax.set_visible(0) for ax in axs_flat]
 
-    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None, *args, **kwargs) -> Axes:
+    def _set_new_twinx(self):
+        # old_f = Axes.twinx
+        axes_group_index = len(self.plt_axs) - 1
+
+        def get_f(ax):
+            def new_f(*args, **kwargs):
+                twin_ax = Axes.twinx(ax, *args, **kwargs)
+                axis_group = self.plt_axs[axes_group_index]
+                self.plt_axs[axes_group_index] = np.concatenate([axis_group, [twin_ax]])
+
+                return twin_ax
+
+            return new_f
+
+        for ax in self.plt_axs[axes_group_index]:
+            ax.twinx = get_f(ax)
+
+    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None,
+               *args, **kwargs) -> Union[np.ndarray, Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:
@@ -486,6 +535,7 @@ class TabPlot:
         else:
             [ax.set_visible(0) for ax in axs_flat]
 
+        self._set_new_twinx()
         return axs if len(axs_flat) > 1 else axs[0]
 
     def legend(self):
@@ -1011,31 +1061,22 @@ class MPLStyle:
     fig_size = (15, 10)
 
     @staticmethod
-    def seaborn():
-        import seaborn as sns
-        # plt.rcParams
+    def set_bold_axes_labels():
+        def new_func(axis):
+            orig_func = getattr(Axes, f'set_{axis}label')
 
-        # kwargs = {}
-        # for k, v in plt.rcParams.items():
-        #     print(k)
-        #
-        # for k, v in plt.rcParams.items():
-        #     if k[0] == '_':
-        #         continue
-        #
-        #     for name in ['backend', 'agg']:
-        #         if name in k:
-        #             break
-        #     else:
-        #         kwargs[k] = v
-        #
-        #     try:
-        #         sns.set(k=v)
-        #     except TypeError:
-        #         pass
+            def f(self, *args, **kwargs):
+                args = list(args)
+                args[0] = fr"\textbf{{{args[0]}}}"
+                return orig_func(self, *args, **kwargs)
 
-    # @staticmethod
-    def __init__(self, usetex=True, fontscale=None):
+            return f
+
+        for x in ['x', 'y']:
+            setattr(Axes, f'set_{x}label', new_func(x))
+
+    def __init__(self, minor_xticks=True, minor_yticks=True, bold_ticklabels=True, bold_axes_labels=True,
+                 usetex=True, fontscale=None, fig_size=(15,8)):
         """
 
             Args:
@@ -1046,13 +1087,25 @@ class MPLStyle:
 
             """
         plt.style.use(style_path)
+
+        if bold_ticklabels:
+            plt.rcParams['text.latex.preamble'] = r'\usepackage{sfmath} \boldmath'
+        else:
+            plt.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
+
+        plt.rcParams['xtick.minor.visible'] = minor_xticks
+        plt.rcParams['ytick.minor.visible'] = minor_yticks
+
+        plt.rcParams['figure.figsize'] = fig_size
+
+        if bold_axes_labels and usetex:
+            self.set_bold_axes_labels()
+
         if not usetex:
             plt.rcParams.update({
                 "text.usetex": False, })
         else:
-            # plt.rcParams.update({'text.latex.preamble': r'\boldmath'})
-            # plt.rcParams['text.latex.preamble'] = [r'\boldmath']
-            plt.rcParams['text.latex.preamble'] = [r'\usepackage{sfmath} \boldmath']
+            pass
 
         if fontscale is not None:
             for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
@@ -1511,18 +1564,26 @@ class ProgressReport:
         # self.__i_current__ = i_init
         self.__next_print_time__ = time.time() + sec_per_print
         self.__init_time__ = time.time()
-        self.__rolling_average__ = []
+
+        self.events_log = [self.__i_init__]
+        self.times_log = [self.__init_time__]
+        # self.__rolling_average__ = []
 
     @property
     def elapsed_time(self):
         return time.time()-self.__init_time__
 
     def __report__(self, t_now, i, added_msg):
-        evt_per_sec = (i-self.__i_init__)/(t_now - self.__init_time__)
-        self.__rolling_average__.append(evt_per_sec)
-        evt_per_sec = np.mean(self.__rolling_average__)
-        if len(self.__rolling_average__) >= 5:
-            self.__rolling_average__ = self.__rolling_average__[:5]
+
+        self.events_log.append(i)
+        self.times_log.append(t_now)
+
+        evt_per_sec = (self.events_log[-1] - self.events_log[0])/(self.times_log[-1] - self.times_log[0])
+
+        if len(self.times_log) >= max(2, int(6/self.__sec_per_print__)):
+            self.dts_log = self.times_log[:5]
+            self.events_log = self.events_log[:5]
+
         evt_remaining = self.__i_final__ - i
         sec_remaining = evt_remaining/evt_per_sec
         sec_per_day = 60**2*24
@@ -1606,6 +1667,11 @@ class FileManager:
     root_files: Dict[Path, ROOT.TFile] = {}
     # todo: make gui for deleting files
 
+    def _load_from_file(self):
+        with open(self._save_path, 'rb') as f:
+            for k, v in pickle.load(f).items():
+                self.file_lookup_data[k] = v
+
     def __init__(self, path_to_root_dir: Union[str, Path] = None, recreate=False):
         """
         Creates a human friendly link between file and a dictionary of descriptive attributes that make it easy to
@@ -1673,15 +1739,16 @@ class FileManager:
             print(f'Creating directory for FileContainer:\n{self.root_directory}')
             self.root_directory.mkdir()
 
-        self.file_lookup_data: Dict[Path, dict] = {}
+        self._file_lookup_data: Dict[Path, dict] = {}
 
         # path to file that stores association information
         self._save_path = self.root_directory / "__file_lookup__.pickle"
 
         if not recreate:
             try:
-                with open(self._save_path, 'rb') as f:
-                    self.file_lookup_data: Dict[Path, Dict] = pickle.load(f)
+                self._load_from_file()
+                # with open(self._save_path, 'rb') as f:
+                #     self.file_lookup_data: Dict[Path, Dict] = pickle.load(f)
             except (EOFError, FileNotFoundError) as e:
                 recreate = True
 
@@ -1690,6 +1757,14 @@ class FileManager:
             self._save_path.unlink(missing_ok=True)
 
         register(self.__at_exit__)
+
+    @property
+    def file_lookup_data(self):
+        return self._file_lookup_data
+
+    @file_lookup_data.setter
+    def file_lookup_data(self, val):
+        self._file_lookup_data = val
 
     def remove_path(self, path):
         del self.file_lookup_data[path]
@@ -1801,6 +1876,7 @@ class FileManager:
         Returns:
 
         """
+        self._load_from_file()
         assert isinstance(missing_ok, int), f'Invalid `missing_ok` arg:\n\t"{missing_ok}"'
         for path, attribs in self.file_lookup_data.items():
             if lookup_attributes == attribs:
@@ -1834,6 +1910,7 @@ class FileManager:
         Returns: Dictionary,  {Path1: file_attributes1, Path2: file_attributes2, ...}
         Todo: Find a way to make debugging not found easier.
         """
+        self._load_from_file()
         lookup_kwargs = lookup_attributes  #.items()
         matches = {}
 
@@ -2040,53 +2117,5 @@ if __name__ == '__main__':
     d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
     for h in flatten_dict_values(d):
         print(h)
-    # y = unp.uarray([4, 4], [2,2])
-    # bins = [0, 2, 4]
-    # newy = rebin(bins, y, [0, 4])
-    #
-    # ax = mpl_hist(bins, y)
-    # mpl_hist([0, 4], newy, ax=ax)
-    # plt.show()
-
-   # pass
-    #
-    # f = TabPlot()
-    #
-    # for i in range(1, 20):
-    #     ax = f.new_ax(i)
-    #     y1, y2 = np.sin(x * i), np.sin(x * i) ** 2
-    #     l1 = ax.plot(x, y1, label='label 1')[0]
-    #     l2 = ax.plot(x,  y2, label='label 2')[0]
-    #     f_handle = ax.fill_between(x, y2 - y1, label=f'label 3')
-    #
-    #     ax.legend([(l1, l2)], ['wtf'], title='Independent nucleus ($t_{1/2}$ [s])')
-    #
-    #     ax.set_title(str(i))
-    #
-    #
-    # plt.show()
-    # for n in Nuclide.from_symbol('Y99').decay_daughters:
-    #     print(n)
-    #
-    # import numpy as np
-    # from matplotlib import pyplot as plt
-    #
-    # x = np.linspace(0, np.pi * 2, 1000)
-    # y, edges = np.histogram(np.random.randn(10000), 100)
-    # y = unp.uarray(y, np.sqrt(y))
-    # mpl_hist(edges, y, stats_box=True)
-    #
-    # plt.show()
-    # # f = TabPlot()
-    # #
-    # # for i in range(1, 20):
-    # #     ax = f.new_ax(i)
-    # #     ax.plot(x, np.sin(x * i), label='label 1')
-    # #     ax.plot(x, np.sin(x * i) ** 2, label='label 2')
-    # #     ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
-    # #     ax.legend()
-    # #     ax.set_title(str(i))
-    #
-    # plt.show()
 
 

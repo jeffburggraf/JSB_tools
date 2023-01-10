@@ -241,7 +241,7 @@ class F4Tally(TallyBase):
 
     def add_fission_rate_multiplier(self, mat: int) -> None:
         """
-        Makes this tally_n a fissionXS rate tally_n [fissions/(src particle)/cm3] for neutrons and protons
+        Makes this tally_n a fission xs rate tally_n [fissions/(src particle)/cm3] for neutrons and protons
         Args:
             mat: Material number
 
@@ -282,7 +282,7 @@ class F4Tally(TallyBase):
 
 
 class InputDeck:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, cleanup_msg=True, *args, **kwargs):
         assert '__internal__' in kwargs, '\nTo create an input file, use one of the two factory methods:\n' \
                                          '\tInputDeck.mcnp_input_deck(*args, **kwargs)\n' \
                                          '\tInputDeck.phits_input_deck(*args, **kwargs)'
@@ -340,13 +340,15 @@ class InputDeck:
                     break
             else:
                 self.MCNP_EOF = len(self.inp_lines)
-        register(self.__del)
+
+        if cleanup_msg:
+            register(self.__del)
 
     @staticmethod
     def PHITS2MCNP_plotter(directory, new_file_name, dict_of_globals):
         dict_of_globals['PHITSOuterVoid'] = PHITSOuterVoid
-        i = InputDeck.mcnp_input_deck(Path(__file__).parent/'PHITS2MCNP_geometry.inp', directory)
-        i.write_inp_in_scope(dict_of_globals, new_file_name)
+        i = InputDeck.mcnp_input_deck(Path(__file__).parent/'PHITS2MCNP_geometry.inp', directory, cleanup_msg=False)
+        i.write_inp_in_scope(dict_of_globals, new_file_name, )
 
     def __split_new_lines__(self):
         title_line = self.__new_inp_lines__[0]  # Don't split the title line. MCNP sucks and won't allow it
@@ -480,10 +482,25 @@ class InputDeck:
                     except TypeError:
                         pass
 
+    def get_inp_path(self, new_file_name):
+        if new_file_name is None:
+            new_file_name = self.inp_file_path.name
+            _m = re.match(r"(.+)\..+", new_file_name)  # remove extension
+            if _m:
+                new_file_name = _m.groups()[0]
+
+            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
+        new_inp_directory = self.__create_directory_if_needed__(new_file_name)
+        new_file_full_path = new_inp_directory / new_file_name
+        return new_file_full_path
+
     def write_inp_in_scope(self, dict_of_globals: Union[dict, List[dict]], new_file_name=None,
                            script_name="cmd", overwrite_globals=None, **mcnp_or_phits_kwargs) -> Path:
         """
-        Creates and fills an input deck according to a dictionary of values. Usually, just use globals()
+        Creates and fills an input deck according to a dictionary of values. Usually, just use globals().
+
+        If the return path is needed but you don't want to run write_inp_in_scope, call self.get_inp_path().
+
         Args:
             dict_of_globals: Dict of scope. Usually just use globals(). Can also be a list of dicts.
             new_file_name: name of generated input file
@@ -505,16 +522,7 @@ class InputDeck:
 
         assert len(self.__new_inp_lines__) == 0
 
-        if new_file_name is None:
-            new_file_name = self.inp_file_path.name
-            _m = re.match(r"(.+)\..+", new_file_name)
-            if _m:
-                new_file_name = _m.groups()[0]
-
-            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
-
-        new_inp_directory = self.__create_directory_if_needed__(new_file_name)
-        new_file_full_path = new_inp_directory / new_file_name
+        new_file_full_path = self.get_inp_path(new_file_name)
 
         exception_msgs = ""
         if self.is_mcnp:
@@ -629,7 +637,6 @@ class InputDeck:
                     import inspect
                     cmds = inspect.getsource(__clean__)
                     rel_directories_created = [d.relative_to(self.inp_root_directory) for d in self.directories_created]
-                    # cmds += f'root_path = Path("{self.inp_root_directory}")\n'
                     cmds += '\n\n' + "paths = {}\n".format(list(map(str, rel_directories_created)))
                     cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
                     clean_file.write(cmds)
@@ -637,15 +644,17 @@ class InputDeck:
             print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
             print('cd {0}\n./cmd.sh'.format(self.inp_root_directory))
             print('*or if using csh: ./cmd.csh   \n')
+
             if self.is_mcnp:
                 print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
+
         else:
             warnings.warn('\nTo evaluate and write input file use\n\ti.write_inp_in_scope(globals(), [optional args])\n'
                           'where `i` is an InputDeck instance.')
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
-                        warn_msg_in_cleanpy=True, sch_cmd=False):
+                        warn_msg_in_cleanpy=True, sch_cmd=False, cleanup_msg=True):
         """
 
         Args:
@@ -655,13 +664,14 @@ class InputDeck:
             gen_run_script:
             warn_msg_in_cleanpy:
             sch_cmd:
+            cleanup_msg:
 
         Returns:
 
         """
-        return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy,
-                         sch_cmd=sch_cmd)
+        return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed,
+                         gen_run_script=gen_run_script, is_mcnp=True, __internal__=True,
+                         warn_msg_in_cleanpy=warn_msg_in_cleanpy, sch_cmd=sch_cmd, cleanup_msg=cleanup_msg)
 
     @classmethod
     def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,

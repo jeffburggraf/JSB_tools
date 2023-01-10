@@ -2,12 +2,13 @@ setuptools>=57.4.0
 numpy>=1.21.2
 scipy>=1.5.2
 uncertainties>=2.4.4
-matplotlib
-openmc>=0.12.1.dev0
-lmfit~=1.0.1
+matplotlib>=3.6.0
+openmc>=0.13.1
+lmfit>=1.0.1
 sortedcontainers>=2.3.0
+numdifftools
 winfiletime
-root>=6.22.8
+root
 bitstring
 # bokeh~=2.3.3
 # param~=1.12.0
