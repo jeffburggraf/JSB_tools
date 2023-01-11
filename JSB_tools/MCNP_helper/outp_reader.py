@@ -14,8 +14,8 @@ try:
     from openmc import Material
     from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 except ModuleNotFoundError:
-    from JSB_tools.nuke_data_tools import openmc_not_installed_warning
-    openmc_not_installed_warning()
+    from JSB_tools import no_openmc_warn
+    no_openmc_warn()
 import platform
 import subprocess
 from functools import cached_property

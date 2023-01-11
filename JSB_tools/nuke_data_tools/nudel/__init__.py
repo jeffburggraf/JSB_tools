@@ -1,15 +1,10 @@
 from __future__ import annotations
 import re
 import warnings
-from logging import warning
 from uncertainties import ufloat, UFloat
 from functools import cached_property
 import numpy as np
-try:
-    from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL
-except ModuleNotFoundError:
-    openmc = None
-    warning("No OpenMC, some functionality limited. ")
+from JSB_tools.nuke_data_tools.nuclide.atomic_data import ATOMIC_NUMBER, ATOMIC_SYMBOL
 import JSB_tools.nuke_data_tools.nuclide as nuclide
 from JSB_tools.nuke_data_tools.nudel.core import get_active_ensdf
 from JSB_tools.nuke_data_tools.nudel.core import LevelRecord as _LevelRecord

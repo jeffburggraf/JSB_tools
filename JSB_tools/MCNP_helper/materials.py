@@ -9,8 +9,9 @@ from JSB_tools.MCNP_helper.atomic_data import atomic_weight, ATOMIC_NUMBER, atom
 try:
     import openmc.material
 except ModuleNotFoundError:
-    from JSB_tools.nuke_data_tools import openmc_not_installed_warning
-    openmc_not_installed_warning()
+    from JSB_tools import no_openmc_warn
+    no_openmc_warn()
+    openmc = None
 import numpy as np
 import re
 from typing import List

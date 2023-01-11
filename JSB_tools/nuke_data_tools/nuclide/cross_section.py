@@ -13,7 +13,8 @@ try:
     from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
 except ModuleNotFoundError:
     openmc = None
-    warn("No OpenMC, some functionality limited. ")
+    from JSB_tools import no_openmc_warn
+    no_openmc_warn()
 
 
 class CustomUnpickler(pickle.Unpickler):

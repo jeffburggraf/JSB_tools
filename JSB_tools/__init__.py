@@ -53,6 +53,10 @@ style_path = cwd/'mpl_style.txt'
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
+def no_openmc_warn():
+    warnings.warn("OpenMC not installed! Some functionality limited. ")
+
+
 def nearest_i(vals, x):
     """
     Given sorted array of values, `vals`, find the indices of vals are nearest to each element in x.

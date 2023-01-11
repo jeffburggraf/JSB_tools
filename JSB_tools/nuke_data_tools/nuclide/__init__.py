@@ -10,7 +10,10 @@ from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR,
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
 import pickle
 from datetime import datetime, timedelta
-# from JSB_tools.nuke_data_tools.nudel import LevelScheme
+try:
+    from JSB_tools.nuke_data_tools.nudel import LevelScheme
+except FileNotFoundError:
+    raise
 import functools
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
@@ -19,7 +22,8 @@ try:
     from openmc.data.endf import Evaluation
     from openmc.data import Reaction, Decay, Product
 except ModuleNotFoundError:
-    warn("OpenMC not installed! Some functionality is limited. ")
+    from JSB_tools import no_openmc_warn
+    no_openmc_warn()
 from JSB_tools.nuke_data_tools.nuclide.atomic_data import ATOMIC_SYMBOL, ATOMIC_NUMBER, AVOGADRO, atomic_mass, \
     atomic_weight
 
@@ -129,7 +133,7 @@ def get_symbol_etc(symbol):
     if symbol[0] == 'n' and symbol.lower() in ['n', 'neutron']:
         symbol = 'Nn1'
 
-    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  #         "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
+    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  # Nuclide name in GND naming convention
 
     if not _m:
         raise ValueError(

@@ -507,7 +507,7 @@ if __name__ == '__main__':
     from JSB_tools.MCNP_helper.materials import IdealGasProperties
 
     g = IdealGasProperties(['He', 'Ar'])
-    for he_frac in [0.1, 0.3]:
+    for he_frac in [0.1, 0.2, 0.3, 0.4, 0.5]:
         density = g.get_density_from_atom_fractions([he_frac, 0.5 - he_frac], pressure=1)
         for ff in ['Xe139', 'Sb132', 'Sr94', 'La144', 'Rb90', 'Mo104', 'Nb98', 'Pr148']:
             run_srim(target_atoms=['He', 'Ar'], fractions=[he_frac, 0.5 - he_frac], density=density, projectile=ff,

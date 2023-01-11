@@ -18,8 +18,7 @@
 # along with nudel.  If not, see <http://www.gnu.org/licenses/>.
 
 """Wrapper for ENSDF providers"""
-
-
+import warnings
 from pathlib import Path
 import os
 from os.path import getmtime
@@ -75,22 +74,29 @@ class ENSDFFileProvider(ENSDFProvider):
         """
         ensdf_files = list(self.folder.glob('ensdf.???'))
         index_file = self.cachedir/"ensdf_index.pickle.xz"
+        if not len(ensdf_files):
+            msg = f'No ENDF data. See https://www.nndc.bnl.gov/ensdfarchivals/ to download files.\nPlace them in "{Path(__file__).parent/"endsf"}"'
+            warnings.warn(msg)
+            return
+
         last_modified = max([getmtime(f_path) for f_path in ensdf_files])
         if index_file.is_file() and getmtime(index_file) > last_modified:
             with lzma.open(index_file, 'r') as index:
                 self.index = pickle.load(index)
                 return
-
+        line_i = 1
         for f_path in ensdf_files:
             with open(f_path, 'r') as f:
                 linestart = f.tell()
                 line = f.readline()
                 while line:
-                    if line[2] != ' ' and line[5:9] == '    ':
+                    if len(line.split()) and line[2] != ' ' and line[5:9] == '    ':  # 'len(line.split()) and' -JSB
                         nucleus = az_from_nucid(line[0:5])
                         self.index[(nucleus, line[9:39].strip())] = linestart
                     linestart = f.tell()
+                    _line = line
                     line = f.readline()
+                    line_i += 1
         if self.index:
             with lzma.open(index_file, 'wb') as index:
                 pickle.dump(self.index, index, protocol=pickle.HIGHEST_PROTOCOL)
