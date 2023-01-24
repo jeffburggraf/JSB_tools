@@ -10,10 +10,7 @@ from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR,
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
 import pickle
 from datetime import datetime, timedelta
-try:
-    from JSB_tools.nuke_data_tools.nudel import LevelScheme
-except FileNotFoundError:
-    raise
+from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import functools
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
@@ -22,8 +19,7 @@ try:
     from openmc.data.endf import Evaluation
     from openmc.data import Reaction, Decay, Product
 except ModuleNotFoundError:
-    from JSB_tools import no_openmc_warn
-    no_openmc_warn()
+    warn("OpenMC not installed! Some functionality is limited. ")
 from JSB_tools.nuke_data_tools.nuclide.atomic_data import ATOMIC_SYMBOL, ATOMIC_NUMBER, AVOGADRO, atomic_mass, \
     atomic_weight
 
@@ -114,6 +110,9 @@ class Element:
                 setattr(self, k, None)
                 self.atom_density = 0
 
+    @property
+    def is_noble_gas(self):
+        return self.element_group == 18
 
 def get_symbol_etc(symbol):
     """
@@ -133,7 +132,7 @@ def get_symbol_etc(symbol):
     if symbol[0] == 'n' and symbol.lower() in ['n', 'neutron']:
         symbol = 'Nn1'
 
-    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  # Nuclide name in GND naming convention
+    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  #         "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
 
     if not _m:
         raise ValueError(
@@ -848,6 +847,28 @@ class Nuclide(Element):
         else:
             m = ''
         return f"$^{{{self.A}{m}}}${self.atomic_symbol}"
+
+    def get_latex_name(self, unboldmath_cmd=False):
+        """
+        Return latex str for nuclide name. E.g. $^{136m}$I
+        Args:
+            unboldmath_cmd: Makes exponent not in bold. Needed to override JSB_tools.mpl_style, which by default adds
+                a \boldmath declaration to the preamble.
+
+        Returns:
+
+        """
+        if unboldmath_cmd:
+            if self.isometric_state != 0:
+                try:
+                    m = 'mnop'[self.isometric_state - 1]
+                except IndexError:
+                    m = f'_l{self.isometric_state}'
+            else:
+                m = ''
+            return fr"\unboldmath{{$^{{{self.A}{m}}}$}}{self.atomic_symbol}"
+        else:
+            return self.latex_name
 
     @property
     def mcnp_zaid(self):

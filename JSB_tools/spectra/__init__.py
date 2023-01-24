@@ -1207,7 +1207,8 @@ class ListSpectra(EfficiencyCalMixin):
         if copy:
             self = self.copy()
 
-        other.rebin(self.erg_bins)
+        if np.any(other.erg_bins != self.erg_bins):
+            other.rebin(self.erg_bins)
 
         if truncate_time:
             time_max = min(self.times[-1], other.times[-1])

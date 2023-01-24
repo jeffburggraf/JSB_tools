@@ -273,6 +273,7 @@ def find_all_SRIM_runs(target_atoms, fractions, density, gas: int = 0) -> Dict[s
         gas:
 
     Returns:
+        Dict like {projectile1: _SRIMTable, projectile2: _SRIMTable, ...}
     """
 
     search_config = _SRIMConfig(target_atoms=target_atoms, fractions=fractions, density=density, projectile=None,

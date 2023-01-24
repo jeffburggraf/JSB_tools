@@ -245,8 +245,10 @@ class Material:
             projectiles: Which particle(s) to include? None will do all available. Otherwise, raise error if all particles
                 data aren't available
             dedx_path: Path where PHITS looks for user supplied stopping powers
+
             scaling: A function or a constant. If a constant, scale sopping powers by this value.
                 If function, scale the stopping powers by f(e)
+
             file_number: Append this digit to filename. Use None for automatic incrementing.
 
         Returns:
@@ -288,7 +290,7 @@ class Material:
         print(f"DeDx file written for {list(sorted(srim_outputs.keys()))} in material"
               f" {self.name if self.name is not None else self.mat_number}")
 
-        self.dedx_path = dedx_path/self.__get_dedx_name(self.mat_number, file_number, dedx_path)
+        self.dedx_path = dedx_path/self.__get_dedx_name(self.mat_number, file_number, dedx_path, )
         with open(self.dedx_path, 'w') as f:
             f.write('\n'.join(lines))
 

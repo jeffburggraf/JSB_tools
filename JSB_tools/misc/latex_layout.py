@@ -2,6 +2,8 @@ import re
 from pathlib import Path
 
 
+tab_char = ' '  # set to \t to make indentation bigger
+
 def print_outline(path):
     assert Path(path).exists()
     with open(path) as f:
@@ -14,7 +16,7 @@ def print_outline(path):
             else:
                 n_nubs = 0
 
-            s = '\t' * n_nubs + m.groups()[1]
+            s = tab_char * n_nubs + m.groups()[1]
             print(s)
 
 

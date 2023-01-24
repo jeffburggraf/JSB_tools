@@ -40,6 +40,9 @@ class GammaRecord:
 
         self.rel_intensity = decay_record.rel_intensity.val
 
+        self.conversion_coeff = decay_record.conversion_coeff.val
+        self.gamma_prob = 1.0/(1 + self.conversion_coeff)
+
     @property
     def half_life(self):
         return self.orig_level.half_life
@@ -124,7 +127,7 @@ class LevelScheme:
 
         self.levels: List[Level] = [Level(nuclide_name, l) for l in self.nudel_nuclide.adopted_levels.levels]
 
-        self.gamma_decays = []
+        self.gamma_decays: List[GammaRecord] = []
 
         for level in self.levels:
             gamma_records = [GammaRecord(self, r) for r in level.decays if isinstance(r, _GammaRecord)]

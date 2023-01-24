@@ -33,6 +33,7 @@ import traceback
 from uncertainties import UFloat
 from scipy import ndimage
 from matplotlib.widgets import Button
+from matplotlib.lines import Line2D
 from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
@@ -235,7 +236,7 @@ def mpl_2dhist_from_data(x_bin_edges, y_bin_edges, x_points, y_points, weights=N
              np.zeros(len(z_data)),
              xw, yw, z_data, color=rgba)
 
-    cbar = plt.colorbar(sm)
+    # cbar = plt.colorbar(sm)
 
     return ax, x_data, y_data, z_data
 
@@ -301,6 +302,40 @@ def rand_choice(bins, probs, size=1, interpolation='uniform'):
     return bins[idxs] + interps
 
 
+def set_ylims(ax:Axes, lines: List[Line2D], *args, **kwargs):
+    """
+    Rescale y-axis to fit y-data in current view.
+    Use either the current spectra or all spectra for y-data.
+    Args:
+        all_spectraQ: If True, only scale y to data of current spectra.
+        *args:
+        **kwargs:
+
+    Returns:
+
+    """
+    xlim = ax.get_xlim()
+    ylim = np.inf, -np.inf
+
+    for line in lines:
+        x, y = line.get_data()
+        start, stop = np.searchsorted(x, xlim)
+        yc = y[max(start - 1, 0):(stop + 1)]
+        ylim = min(ylim[0], np.nanmin(yc)), max(ylim[1], np.nanmax(yc))
+
+    ax.set_xlim(xlim, emit=False)
+
+    dy = 0.07 * (ylim[1] - ylim[0])
+    # y axis: set dataLim, make sure that autoscale in 'y' is on
+    corners = (xlim[0], ylim[0] - dy), (xlim[1], ylim[1] + dy)
+    # print(dy, (xlim[0], ylim[0]), (xlim[1], ylim[1]))
+    ax.dataLim.update_from_data_xy(corners, ignore=True, updatex=False)
+    ax.autoscale(enable=True, axis='y')
+
+    ax.xlim = xlim
+    ax.get_figure().canvas.draw()
+
+
 class TabPlot:
     """
     Make a mpl Figure with a button to switch between plots.
@@ -324,6 +359,9 @@ class TabPlot:
         plt.show()
 
     """
+    class TabOverflowError(OverflowError):
+        pass
+
     _instnaces = []
 
     old_show = plt.show
@@ -338,10 +376,19 @@ class TabPlot:
 
     plt.show = new_show  # link calls to plt.show to a function that initiates all TabPlots
 
+    def _key_press(self, event):
+        if event.key == 'y':
+            ax_group = self.plt_axs[self.index]
+            for ax in ax_group:
+                lines = [l for l in ax.lines]
+                set_ylims(ax, lines)
+
     def __init__(self, figsize=(10, 8), *fig_args, **fig_kwargs):
         TabPlot._instnaces.append(self)
 
         self.fig = plt.figure(figsize=figsize, *fig_args, **fig_kwargs)
+
+        self.fig.canvas.mpl_connect('key_press_event', self._key_press)
 
         self._vis_flag = True
 
@@ -465,7 +512,7 @@ class TabPlot:
 
         """
         if self.max_buttons_reached:
-            raise OverflowError("Too many buttons! Create a new TapPlot.")
+            raise TabPlot.TabOverflowError("Too many buttons! Create a new TapPlot.")
 
         if subplot_kw is None:
             subplot_kw = {}
@@ -2117,9 +2164,30 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
+    import numpy as np
+    from matplotlib import pyplot as plt
 
-    d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
-    for h in flatten_dict_values(d):
-        print(h)
+    x = np.linspace(0, np.pi * 2, 1000)
+
+    f = TabPlot()
+    axs = []
+    for i in range(1, 5):
+        ax = f.new_ax(i)
+        axs.append(ax)
+
+        ax.plot(x, np.sin(x * i), label='label 1')
+        ax.plot(x, np.sin(x * i) ** 2, label='label 2')
+        ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
+        ax.legend()
+        ax.set_title(str(i))
+
+        if i == 4:
+            bins = np.concatenate([x, [x[-1] + x[1] - x[0]]])
+            y = np.sin(x * i) ** 2
+            mpl_hist(bins, y, yerr=y, ax=ax)
+    plt.show()
+    # d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
+    # for h in flatten_dict_values(d):
+    #     print(h)
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 import numbers
+import os
 import re
+import sys
 import time
 import warnings
 import numpy as np
@@ -283,9 +285,13 @@ class GausFitResult(ModelResult):
     def slope(self):
         return self._get_param(self.params['slope'])
 
-    def plot_fit_curve(self, ax, fill_between=True, npoints=300, **plt_kwargs):
+    def plot_fit_curve(self, ax=None, fill_between=True, npoints=300, plot_data=True, **plt_kwargs):
+        if ax is None:
+            _, ax = plt.subplots()
+
         x = np.linspace(self.fit_x[0], self.fit_x[-1], npoints)
         y = self.eval(x=x)
+
         if fill_between:
             yerr = self.eval_uncertainty(x=x, **plt_kwargs)
         else:
@@ -297,6 +303,11 @@ class GausFitResult(ModelResult):
 
         if yerr is not None:
             ax.fill_between(x, y - yerr, y + yerr, alpha=0.6, color=color)
+        if plot_data:
+            ax.errorbar(self.fit_x, self.fit_y, self.fit_yerr, label='Data')
+
+        ax.legend()
+        return ax
 
     def __len__(self):
         out = 0
@@ -311,7 +322,8 @@ class GausFitResult(ModelResult):
 
 def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, make_density=False, yerr=None,
                     share_sigma=True, sigma_guesses: Union[list, float] = None, fix_sigmas: bool = False,
-                    fix_centers: bool = False, fix_bg: float = None, fit_buffer_window: Union[int, None] = 5,
+                    fix_centers: Union[bool, List[bool]] = False, fix_bg: float = None,
+                    fit_buffer_window: Union[int, None] = 5,
                     **kwargs) -> GausFitResult:
     """
     Perform multi-gaussian fit to data.
@@ -373,6 +385,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             Figure out why it's slow. Maybe profiler?
     """
     assert len(y) == len(bins) - 1
+
     if fit_buffer_window is not None:
         bins_slice, y_slice = get_fit_slice(bins=bins, center_guesses=center_guesses,
                                             fit_buffer_window=fit_buffer_window)
@@ -389,6 +402,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         assert sigma_guesses is not None, "Use of fix_sigmas requires sigma_guesses argument. "
         if isinstance(sigma_guesses, numbers.Number):
             sigma_guesses = [sigma_guesses] * len(center_guesses)
+
+    if isinstance(fix_centers, bool):
+        fix_centers = [fix_centers] * len(center_guesses)
+    assert len(fix_centers) == len(center_guesses)
 
     x = 0.5 * (bins[1:] + bins[:-1])
 
@@ -454,7 +471,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     def set_center(param: Parameter):
         kwargs = {'vary': True, 'value': center_guess}
 
-        if fix_centers:
+        if fix_centers[i]:
             kwargs['vary'] = False
 
         elif fixedQ:
@@ -494,9 +511,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
         _amp_guess = amp_guess(y[i0], params[f'{prefix}sigma'].value)
 
-        params[f'{prefix}amplitude'].set(value=amp_guess(y[i0], params[f'{prefix}sigma'].value))
+        params[f'{prefix}amplitude'].set(value=amp_guess(y[i0], params[f'{prefix}sigma'].value), min=0)
 
     fit_result = model.fit(data=y, params=params, weights=weights, x=x, )
+    # print(fit_result.fit_report())
 
     fit_result.userkws['b_width'] = b_width
 
@@ -540,12 +558,13 @@ class InteractiveSpectra:
 
     cmap = plt.get_cmap("tab10")
 
-    def add_list(self, spec, scale=1, disable_eff_corr=False, title=None, erg_min=None, erg_max=None):
+    def add_list(self, spec, scale=1, time_max=None, disable_eff_corr=False, title=None, erg_min=None, erg_max=None):
         """
         Same as add_spectra except can be used
         Args:
             spec:
             scale:
+            time_max:
             disable_eff_corr:
             title:
             erg_min:
@@ -561,6 +580,9 @@ class InteractiveSpectra:
             effs = None
         else:
             effs = spec.effs
+        if time_max is not None:
+            spec.time_cut(tmax=time_max)
+
         self.add_spectra(energy_binned_times=spec.energy_binned_times, energy_bins=spec.erg_bins, effs=effs,
                          scale=scale, title=title, erg_min=erg_min, erg_max=erg_max)
 
@@ -981,7 +1003,7 @@ class InteractiveSpectra:
 
             self._set_fit_line_attribs(index)
 
-    def _perform_fits(self, center_guesses=None, fixed_binsQs=None, sigma_guesses=None, force_centers=None,
+    def _perform_fits(self, center_guesses=None, fixed_binsQs=None, sigma_guesses=None, force_centers=False,
                       force_sigma=False, index=None):
         fit_verbose = InteractiveSpectra.FIT_VERBOSE
         if center_guesses is None:
@@ -1032,7 +1054,10 @@ class InteractiveSpectra:
                                                       share_sigma=self.fit_settings['only_one_sigma'],
                                                       fit_buffer_window=None)
         except Exception as e:
-            warning(f"Fit failed:\n{e}")
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            # print(exc_type, fname, exc_tb.tb_lineno)
+            warning(f"Fit failed:\n{exc_type, fname, exc_tb.tb_lineno}")
             self._reset_fit_clicks()
             return
 
@@ -1404,7 +1429,9 @@ class InteractiveSpectra:
         else:
             return
 
-        if self._events_times_range[0] == self._events_times_range[1]:
+        if self._events_times_range[0] is None:  # means no spectra have been added.
+            return
+        elif self._events_times_range[0] == self._events_times_range[1]:
             self._events_times_range[1] += 0.01
 
         if self._init_window_width is None:
