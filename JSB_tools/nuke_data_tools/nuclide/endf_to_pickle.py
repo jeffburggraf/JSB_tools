@@ -1,5 +1,7 @@
 from __future__ import annotations
 import pickle
+
+import openmc.data
 from openmc.data.endf import Evaluation
 from openmc.data import FissionProductYields
 from openmc.data import Decay
@@ -9,6 +11,7 @@ from typing import Union, List
 import marshal
 from openmc.data import Tabulated1D
 from warnings import warn
+
 from JSB_tools.nuke_data_tools.nuclide.data_directories import GAMMA_PICKLE_DIR,\
      PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH, DECAY_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationReactionContainer
@@ -320,7 +323,11 @@ def pickle_everything(_pickle=True, parallel=True):
 
 if __name__ == '__main__':
     pass
-    pickle_proton_fission_xs_data()
+    # pickle_neutron_activation_data(parallel=False, tendl=False)
+    # pickle_proton_activation_data(parallel=True, tendl=True)
+    # pickle_gamma_activation_data(parallel=True, tendl=True)
+
+    # pickle_proton_fission_xs_data()
     # pickle_proton_fission_xs_data()
     # pickle_all_activation(False, False)
     # pickle_gamma_activation_data(False, tendl=False)

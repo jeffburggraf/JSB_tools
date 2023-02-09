@@ -865,7 +865,7 @@ if __name__ == '__main__':
 
     for n in [Nuclide('Ni58'), Nuclide('Ni60')]:
         for k, v in n.get_incident_gamma_daughters('all').items():
-            y = np.average(v.xs.interp(tally.energies), weights=tally.fluxes)
+            y = np.average(v.xs.interp(tally.energies), weights=tally.nif_fluxes)
             y *= 0.5**(10/v.half_life) - 0.5**(300/v.half_life)
             products.append([y, v])
     products = list(sorted(products, key=lambda x: -x[0]))

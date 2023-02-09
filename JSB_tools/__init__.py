@@ -32,6 +32,7 @@ from matplotlib import cm
 import traceback
 from uncertainties import UFloat
 from scipy import ndimage
+from scipy.stats import pearsonr
 from matplotlib.widgets import Button
 from matplotlib.lines import Line2D
 from uncertainties.umath import sqrt as usqrt
@@ -41,6 +42,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.colors import Colormap
 from scipy.integrate import trapezoid
 from numbers import Number
+from JSB_tools.misc.curly_braces import curlyBrace as curly_brace
 try:
     import ROOT
     root_exists = True
@@ -52,6 +54,122 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+def weighted_pearsonr(x, y, yerr=None, xerr=None, _wx=None, _wy=None):
+    if _wy is not None:
+        wy = _wy
+    else:
+        if isinstance(y[0], UFloat):
+            yerr = unp.std_devs(y)
+            y = unp.nominal_values(y)
+
+        if yerr is None:
+            wy = np.ones(len(y))
+        else:
+            wy = 1.0 / np.where(yerr > 0, 1, yerr)
+
+    if _wx is not None:
+        wx = _wx
+    else:
+        if isinstance(x[0], UFloat):
+            xerr = unp.std_devs(x)
+            x = unp.nominal_values(x)
+
+        if xerr is None:
+            wx = np.ones(len(x))
+        else:
+            wx = 1.0/np.where(xerr>0, 1, xerr)
+
+    xbar = np.average(x, weights=wx)
+    ybar = np.average(y, weights=wy)
+    varx = np.average((x - xbar)**2, weights=wx)
+    vary = np.average((y - ybar)**2, weights=wy)
+    covar = np.average((x - xbar) * (y - ybar), weights=np.sqrt(wx * wy))
+    return covar/np.sqrt(varx*vary)
+
+
+def MC_pearsonr(x, y, yerr=None, xerr=None, n=350, weighted=False):
+    """
+    pearsonr with errors.
+    Args:
+        x:
+        y:
+        yerr:
+        xerr:
+        n: Number of MC samples.
+
+    Returns:
+
+    """
+    if isinstance(x[0], UFloat):
+        xerr = unp.std_devs(x)
+        x = unp.nominal_values(x)
+
+    if isinstance(y[0], UFloat):
+        yerr = unp.std_devs(y)
+        y = unp.nominal_values(y)
+
+    def get_vals(v, verr):
+        if verr is not None:
+            out = np.random.normal(size=n*len(v))
+            out = out.reshape(n, len(v), )
+            out *= verr
+            out += v
+        else:
+            out = np.array(list(v) * n)
+        return out
+
+    xerr = np.asarray(xerr)
+    yerr = np.asarray(xerr)
+
+    ys = get_vals(y, yerr)
+    xs = get_vals(x, xerr)
+    corrs = []
+
+    if weighted:
+        wx = 1.0 / np.where(xerr > 0, 1, xerr)
+        wy = 1.0 / np.where(xerr > 0, 1, xerr)
+    else:
+        wx = wy = None
+
+    for x, y in zip(xs, ys):
+        if weighted:
+            r = weighted_pearsonr(x, y, _wx=wx, _wy=wy)
+        else:
+            r = pearsonr(x, y).statistic
+        corrs.append(r)
+
+    return ufloat(np.mean(corrs), np.std(corrs))
+
+
+def sub_plot_grid(n, favor_more_rows=False):
+    if n == 1:
+        out = 1, 1
+    elif n == 2:
+        out = 1, 2
+    elif n == 3:
+        out = 1, 3
+    elif n == 4:
+        out = 2, 2
+    elif 5 <= n <= 6:
+        out = 2, 3
+    elif 7 <= n <= 8:
+        out = 2, 4
+    elif n == 9:
+        out = 3, 3
+    elif 10 <= n <= 12:
+        out = 3, 4
+    elif n <= 16:
+        out = 4, 4
+    else:
+        raise OverflowError
+
+    out = tuple(list(sorted(out)))
+    if favor_more_rows:
+        out = out[::-1]
+
+    return out
 
 
 def no_openmc_warn():
@@ -383,6 +501,9 @@ class TabPlot:
                 lines = [l for l in ax.lines]
                 set_ylims(ax, lines)
 
+    def __len__(self):
+        return len(self.button_labels)
+
     def __init__(self, figsize=(10, 8), *fig_args, **fig_kwargs):
         TabPlot._instnaces.append(self)
 
@@ -493,7 +614,8 @@ class TabPlot:
         for ax in self.plt_axs[axes_group_index]:
             ax.twinx = get_f(ax)
 
-    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, subplot_kw=None,
+    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
+               subplot_kw=None,
                *args, **kwargs) -> Union[np.ndarray, Axes]:
         """
         Raises OverflowError if too many axes have been created.
@@ -516,6 +638,9 @@ class TabPlot:
 
         if subplot_kw is None:
             subplot_kw = {}
+
+        if figsize is not None:
+            raise ValueError("figsize argument is applied in the TabPlot constructor")
 
         self.suptitles.append(suptitle)
 
@@ -1110,6 +1235,7 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
 
 class MPLStyle:
     fig_size = (15, 10)
+    has_been_called = False
 
     @staticmethod
     def set_bold_axes_labels():
@@ -1137,6 +1263,7 @@ class MPLStyle:
             Returns:
 
             """
+        has_been_called = True
         plt.style.use(style_path)
 
         if bold_ticklabels:

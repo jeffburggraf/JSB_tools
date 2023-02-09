@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import re
 import sys
 import datetime
 import marshal
@@ -29,7 +31,7 @@ from JSB_tools.spectra.time_depend import get_erg_spec, remove_background
 np.random.seed(69)
 
 
-def cached_decorator(func):
+def my_cached_decorator(func):
     """
     Like cached property. Creates an attribute named _var_name.
     When using this decorator, just calculate and return the value as usual in the function body. The return value will
@@ -241,6 +243,10 @@ class EfficiencyCalMixin:
         return ax
 
 
+def erg_binned_times_from_buffer(l):
+    return numba_list([np.frombuffer(b, dtype=float) for b in l])
+
+
 class ListSpectra(EfficiencyCalMixin):
     REFS = []  # references to prevent garbage collection
 
@@ -270,6 +276,7 @@ class ListSpectra(EfficiencyCalMixin):
     # var_name: (function to apply before marshaling, function to apply after un-marshaling). None means lambda x:x
     # Function is only applied if un-marshaled value is not None.
     pickle_attribs = {'_energies': (None, None),
+                      '_energy_binned_times': (list, erg_binned_times_from_buffer),
                       'adc_channels': (None, None),
                       'times': (None, None),
                       'erg_bins': (None, None),
@@ -412,7 +419,7 @@ class ListSpectra(EfficiencyCalMixin):
 
         return interactive_spec_instance
 
-    @cached_decorator
+    @my_cached_decorator
     def energies(self):
         return self.erg_centers[self.adc_channels]
 
@@ -428,7 +435,7 @@ class ListSpectra(EfficiencyCalMixin):
     def n_channels(self):
         return len(self.erg_bins) - 1
 
-    @cached_decorator
+    @my_cached_decorator
     def energy_binned_times(self) -> List[np.ndarray]:
         """
         The times of all events are segregated into the available energy bins.
@@ -847,7 +854,7 @@ class ListSpectra(EfficiencyCalMixin):
         out = get_erg_spec(time_arrays, time_range, )
 
         if not nominal_values:
-            yerr = np.sqrt(out)
+            yerr = np.where(out>0, np.sqrt(out), 1)
         else:
             yerr = None
 
@@ -1024,8 +1031,9 @@ class ListSpectra(EfficiencyCalMixin):
         if path is None:
             path = self.path
 
-        if not hasattr(self, '_energies'):
-            _ = self.energies  # force evaluation
+        for n in ['_energies', '_energy_binned_times']:
+            if not hasattr(self, n):
+                _ = getattr(self, n[1:])  # force evaluation
 
         path = Path(path)
 
@@ -1081,9 +1089,11 @@ class ListSpectra(EfficiencyCalMixin):
             try:
                 val = data[name]
             except KeyError as e:
-                if not ignore_missing_data:
+                is_cached = re.match('^_[^_].+', name) is not None  # variables starting with _ are my_cached_properties
+                if ignore_missing_data or is_cached:
+                    continue
+                else:
                     raise Exception(f"Pickle'd data missing attribute '{name}' from {path}") from e
-                continue
 
             if isinstance(val, bytes):
 

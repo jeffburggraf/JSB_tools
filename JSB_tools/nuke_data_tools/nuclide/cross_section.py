@@ -6,11 +6,14 @@ from typing import Dict, List, Union, Tuple, Set
 from JSB_tools.nuke_data_tools.nuclide.data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
 import re
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
-# from JSB_tools.nuke_data_tools.nudel import LevelScheme
+from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import pickle
+from openmc.data import IncidentNeutron
 from logging import warning as warn
+from JSB_tools.nuke_data_tools.nuclide.gen_mt_dict import mt_data, REACTION_NAME
 try:
-    from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction
+    from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction, Product, \
+        ResonancesWithBackground
 except ModuleNotFoundError:
     openmc = None
     from JSB_tools import no_openmc_warn
@@ -32,6 +35,24 @@ class CustomUnpickler(pickle.Unpickler):
 
 
 class CrossSection1D:
+    # todo: Make attribs for parent and daughter nucleus (do this during pickling)
+    class Identity(Tabulated1D):
+        def __init__(self):
+            super().__init__([0, 1], [1, 1])
+
+        def __call__(self, x):
+            return np.ones_like(x)
+
+    identity = Identity()
+
+    def get_reaction_name(self, mt=None):
+        if mt is None:
+            mt = self.mt_value
+        try:
+            return f'({self.__incident_particle__[0]}, {mt_data[mt]["name"]})'
+        except KeyError:
+            return f'({self.__incident_particle__[0]}, X)'
+
     def __init__(self, xs: Tabulated1D, yield_: Tabulated1D = None,
                  fig_label: str = None, incident_particle: str = 'particle', data_source='', mt_value=None,
                  endf_path=None, **misc_data):
@@ -69,7 +90,7 @@ class CrossSection1D:
 
     @property
     def ergs(self):
-        return np.arange(self.emin, self.emax, 0.25)
+        return np.logspace(np.log10(self.emin), np.log10(self.emax), 250)
 
     def __call__(self, ergs):
         """
@@ -89,6 +110,13 @@ class CrossSection1D:
              **mpl_kwargs):
         if ergs is None:
             ergs = self.ergs
+
+        if erg_max is not None:
+            i1 = np.searchsorted(ergs, erg_max)
+            ergs = ergs[:i1]
+        # else:
+        #     i1 = len(ergs)
+
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
         try:
             unit_factor = unit_convert[units]
@@ -163,20 +191,159 @@ class ActivationCrossSection(CrossSection1D):
     Behaves much like CrossSection1D instance.
 
     """
+    def get_reaction_name(self, mt=None):
+        if len(self.__xss__) == 1:
+            mt = list(self.__xss__.keys())[0]
+        else:
+            mt = -1
 
-    def __init__(self, xss: Dict[int, Tabulated1D], yields: Dict[int, List[Tabulated1D]], fig_label: str = None,
+        return super().get_reaction_name(mt=mt)
+
+    def threshold(self, frac=0) -> float:
+        """
+        Return the lowest energy where the cross-section * yield increases beyond frac of max.
+
+        Args:
+            frac: Fraction of max val to be considered above threshold. 0 means first non-zero value.
+
+        Returns:
+
+        """
+        def find_thresh(tab):
+            x = tab.x
+            y = tab(x)
+
+            if frac != 0:
+                val = frac * tab(x[np.argmax(y)])
+            else:
+                val = 0
+
+            i = 0
+            while i < len(x):
+                if tab(x[i]) > val:
+                    break
+
+                i += 1
+
+            if i == 0:
+                _thresh = x[0]
+            else:
+                _thresh = x[i - 1]
+            return _thresh
+
+        out = None
+        for mt in self.mt_values:
+            xs = self.__xss__[mt]
+
+            xs_thresh = find_thresh(xs)
+
+            yield_thresh = None
+            for yield_ in self.__yields__[mt]:
+                if isinstance(yield_, Tabulated1D):
+                    _yield_thresh = find_thresh(yield_)
+                else:
+                    continue
+                if yield_thresh is None:
+                    yield_thresh = _yield_thresh
+                else:
+                    yield_thresh = min(_yield_thresh, yield_thresh)
+
+            if yield_thresh is None:
+                yield_thresh = -np.inf
+
+            if out is None:
+                out = max(yield_thresh, xs_thresh)
+            else:
+                out = max(out, xs_thresh, yield_thresh)
+
+        return 1E-6 * out
+
+    def __call__(self, ergs, mt_value=None, ith_channel=None):
+        """
+        Evaluate the cross-section at ergs. Default is to sum all channels.
+        Can specify the ith channel of a given mt value.
+        Args:
+            ergs:
+            mt_value: If None, sum all mts.
+            ith_channel: if None, sum all channels for mt = mt_value
+
+        Returns:
+
+        """
+        if mt_value is None:
+            ith_channel = None
+
+        out = np.zeros_like(ergs)
+        ergs = 1E6 * ergs
+
+        if isinstance(ergs, int):
+            ergs = float(ergs)
+
+        for _mt in self.mt_values:
+            if mt_value is not None:
+                if _mt != mt_value:
+                    continue
+
+            try:
+                xs_y = self.__xss__[_mt](ergs)
+            except AttributeError:  # bug? I dont know.
+                if isinstance(self.__xss__[_mt], ResonancesWithBackground):
+                    self.__xss__[_mt] = self.__xss__[_mt].background
+                    xs_y = self.__xss__[_mt](ergs)
+                else:
+                    raise
+
+            if self.__yields__[_mt] is not None:
+                yield_y = np.zeros_like(xs_y)
+
+                for i, yield_ in enumerate(self.__yields__[_mt]):
+                    if ith_channel is not None:
+                        if i != ith_channel:
+                            continue
+
+                    if yield_ is not None:
+                        yield_y += yield_(ergs)
+            else:
+                yield_y = np.ones_like(xs_y)
+
+            out += xs_y * yield_y
+
+        return out
+
+    def __init__(self, xss: Dict[int, Tabulated1D], yields: Dict[int, Union[None, List[Tabulated1D]]], fig_label: str = None,
                  incident_particle: str = 'particle', data_source='', mt_values=None, endf_path=None,
                  **misc_data):
         super().__init__(None, None, fig_label=fig_label, incident_particle=incident_particle,
                          data_source=data_source, mt_value=None, endf_path=endf_path, **misc_data)
+
+        if yields is None:
+            yields = {k: [CrossSection1D.identity] for k in xss.keys()}
+
         self.__xss__: Dict[int, Tabulated1D] = xss
         self.__yields__: Dict[int, List[Tabulated1D]] = yields
 
-    def _add_xs(self, mt, xs: Tabulated1D, yield_: Union[None, Tabulated1D]):
+        for mt in xss:
+            if mt not in yields:
+                yields[mt] = None
+
+            self._add_xs(mt, xss[mt], yields[mt])
+
+    @property
+    def mts(self):
+        return list(self.__xss__.keys())
+
+    def _add_xs(self, mt: int, xs: Union[ResonancesWithBackground, Tabulated1D], yield_: Union[None, Tabulated1D]):
+        if yield_ is None:
+            yield_ = CrossSection1D.identity
+
         try:
             self.__yields__[mt].append(yield_)
         except KeyError:
             self.__yields__[mt] = [yield_]
+
+        if isinstance(xs, ResonancesWithBackground):
+            assert xs.mt == mt
+            xs.x = xs.background.x
 
         self.__xss__[mt] = xs
 
@@ -281,47 +448,6 @@ class ActivationCrossSection(CrossSection1D):
                 out = max_
 
         return 1E-6 * out
-
-    def __call__(self, ergs, mt_value=None, ith_channel=None):
-        """
-        Evaluate the cross-section at ergs. Default is to sum all channels.
-        Can specify the ith channel of a given mt value.
-        Args:
-            ergs:
-            mt_value: If None, sum all mts.
-            ith_channel: if None, sum all channels for mt = mt_value
-
-        Returns:
-
-        """
-        if mt_value is None:
-            ith_channel = None
-
-        out = np.zeros_like(ergs)
-        ergs = 1E6 * ergs
-
-        if isinstance(ergs, int):
-            ergs = float(ergs)
-
-        for _mt in self.mt_values:
-            if mt_value is not None:
-                if _mt != mt_value:
-                    continue
-
-            xs_y = self.__xss__[_mt](ergs)
-            yield_y = np.zeros_like(xs_y)
-
-            for i, yield_ in enumerate(self.__yields__[_mt]):
-                if ith_channel is not None:
-                    if i != ith_channel:
-                        continue
-
-                if yield_ is not None:
-                    yield_y += yield_(ergs)
-
-            out += xs_y * yield_y
-
-        return out
 
 
 class NuclearLibraries:
@@ -677,6 +803,52 @@ class ActivationReactionContainer:
         with open(path / '{0}.pickle'.format(self.nuclide_name), 'wb') as f:
             pickle.dump(xs, f)
 
+    @staticmethod
+    def get_product_name(target, projectile, mt, ):
+        """
+        Deduce residue nucleus from target nucleus, projectile and MT value.
+        Args:
+            target:
+            projectile:
+            mt:
+
+        Returns:
+
+        """
+        dz_in, dn_in = {'neutron': (0, 1), 'proton': (1, 0), 'gamma': (0, 0), 'alpha': (2, 2)}[projectile]
+        target = nuclide_module.Nuclide(target)
+        try:
+            data = mt_data[mt]
+            dz_out, dn_out, level = data['outz'], data['outn'], data['level']
+        except KeyError:
+            return None
+        Z = target.Z + dz_in - dz_out
+        N = target.N + dn_in - dn_out
+        out = nuclide_module.Nuclide.from_Z_A_M(Z, Z + N).name
+        if level > 0:
+            out += f'_e{level}'
+        return out
+
+    @staticmethod
+    def _get_reactions(e, projectile):
+        if projectile == 'neutron':
+            return IncidentNeutron.from_endf(e).reactions
+        else:
+            out = {}
+            for mf, mt, _, _ in e.reaction_list:
+                if mt in [2]:  # elastic scattering, don't use product paradigm.
+                    continue
+
+                if mf == 3:
+                    try:
+                        r = Reaction.from_endf(e, mt)
+                    except IndexError:
+                        warn(f"openmc bug: Creating Reaction for {projectile} on {e.target['zsymam']}")
+                        continue
+                    out[mt] = r
+
+            return out
+
     def _get_activation_products(self, e: Evaluation, projectile, debug=False) -> Dict[str, ActivationCrossSection]:
         """
         Get all activation products from an ENDF Evaluation.
@@ -698,80 +870,70 @@ class ActivationReactionContainer:
             from JSB_tools import TabPlot
 
         target = e.gnd_name
-        s, z, a, m = nuclide_module.Nuclide.get_s_z_a_m_from_string(target)
+        # s, z, a, m = nuclide_module.Nuclide.get_s_z_a_m_from_string(target)
 
         outs = {}
 
-        for mf, mt, _, _ in e.reaction_list:
-            if mt in [2]:  # elastic scattering, don't use product paradigm.
+        for mt, r in self._get_reactions(e, projectile).items():
+            if mt == 18:  # fission is done separately
+                self.pickle_fission_xs(r)
                 continue
 
-            if mf == 3:
+            xs: Tabulated1D = r.xs['0K']
+
+            all_products = [p for p in r.products if nuclide_module.Nuclide.NUCLIDE_NAME_MATCH.match(p.particle)]
+
+            _proj_name = self.get_product_name(target, projectile, mt)
+
+            if _proj_name is not None:
+                if _proj_name not in [p.particle for p in all_products]:
+                    p = Product(_proj_name)
+                    p._yield_ = CrossSection1D.identity
+                    all_products.append(p)
+
+            for prod in all_products:
+                if prod.particle in ['neutron', 'photon']:
+                    continue
+
+                yield_: Tabulated1D = prod.yield_
+
+                if hasattr(yield_, 'y') and all(yield_.y == 0):
+                    continue
+
+                if prod.particle == target:  # Not sure how to interpret this, so ignore.
+                    continue
+
+                if '_e' in prod.particle:  # Handle this in a special case
+                    new_name = self.find_isomeric_gdr_name(prod.particle)
+                    if new_name is None:
+                        continue
+                    else:
+                        prod.particle = new_name
+
+                try:
+                    activation_cross_section = outs[prod.particle]
+
+                except KeyError:
+                    fig_label = f"{target}({projectile}, X){prod.particle}"
+                    activation_cross_section = ActivationCrossSection({}, {}, fig_label,
+                                                                      projectile, self.data_source, mt_values=[mt],
+                                                                      endf_path=self.path)
+                    outs[prod.particle] = activation_cross_section
+
+                activation_cross_section._add_xs(mt, xs, yield_)
 
                 if debug:
-                    print(f"MT = {mt}")
-                try:
-                    r = Reaction.from_endf(e, mt)
-                except IndexError:
-                    warn(f"openmc bug: Creating Reaction for {projectile} on {e.target['zsymam']}")
-                    continue
-
-                if mt == 18:  # fission is done separately
-                    self.pickle_fission_xs(r)
-                    continue
-
-                xs: Tabulated1D = r.xs['0K']
-
-                if all(xs.y == 0):
-                    print(f"Zero xs: interpolations: {xs.interpolation}, breakpoints: {xs.breakpoints}")
-                    continue
-
-                for prod in r.products:
-                    yield_: Tabulated1D = prod.yield_
-
-                    if hasattr(yield_, 'y') and all(yield_.y == 0):
-                        continue
-
-                    if prod.particle == target:  # Not sure how to interpret this, so ignore.
-                        continue
-
-                    if '_e' in prod.particle:  # Handle this in a special case
-                        new_name = self.find_isomeric_gdr_name(prod.particle)
-                        if new_name is None:
-                            continue
-                        else:
-                            prod.particle = new_name
-
-                    try:
-                        activation_cross_section = outs[prod.particle]
-
-                    except KeyError:
-                        fig_label = f"{target}({projectile}, X){prod.particle}"
-                        activation_cross_section = ActivationCrossSection({}, {}, fig_label,
-                                                                          projectile, self.data_source, mt_values=[mt],
-                                                                          endf_path=self.path)
-                        outs[prod.particle] = activation_cross_section
-
-                    activation_cross_section._add_xs(mt, xs, yield_)
-
-                    if debug:
-                        print(f"\t{prod} [included]")
+                    print(f"\t{prod} [included]")
 
         # if projectile == 'neutron':  # radiative capture
         #     r = Reaction.from_endf(e, 102)
-        #     try:
-        #         to_string(z, a + 1, m)
-        #         outs[102] = {'xs': r.xs['0K'], 'products': {to_string(z, a + 1, m): None}}
-        #     except KeyError:
-        #         pass
-        #
-        #     r = Reaction.from_endf(e, 4)
-        #     for prod in r.products:
-        #         print("what? ")
-        #         # if m := re.match(".+_e([0-9]+)", prod.particle):
-        #         #     iso = int(m.groups()[0])
-        #         #     outs[to_string(z, a, iso)] = ActivationReactionContainer._find_yield(r, prod.particle)
-
+        #     if '0K' in r.xs:
+        #         m = nuclide_module.Nuclide.NUCLIDE_NAME_MATCH.match(target)
+        #         prod_name = f"{m.group('s')}{int(m.group('A')) + 1}"
+        #         outs[prod_name] = ActivationCrossSection({102: r.xs['0K']}, None,
+        #                                                  fr"{target}({projectile}, $\gamma$){prod_name}",
+        #                                                  projectile, self.data_source, mt_values=[103],
+        #                                                  endf_path=self.path)
         if debug:
             tab = None
             i = 0
@@ -925,23 +1087,34 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
-    from openmc.data import Evaluation, Reaction
-
-    e = Evaluation(
-        '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl')
-    mts = [11, 17, 33, 42]
-    for mt in mts:
-        print(f"MT: {mt}")
-        for p in Reaction.from_endf(e, mt).products:
-            print('\t', p.particle, p)
-
-    from JSB_tools.nuke_data_tools import Nuclide
-
-    for k, v in Nuclide("U238").get_incident_proton_daughters(data_source='tendl').items():
-        print(k, v.xs.mt_values, v.xs.data_source)
-        if k == 'Ac222':
-            v.xs.plot(plot_mts=True)
-
-    # xs = Nuclide("Pb208").get_incident_proton_daughters(data_source='all')['He3'].xs
-    # xs.plot(plot_mts=True)
+    print()
+    ax = nuclide_module.Nuclide('In114').neutron_capture_xs().plot()
+    print(nuclide_module.Nuclide('In114').thermal_neutron_capture_xs())
+    ax.axvline(0.025*1E-6)
+    print()
     plt.show()
+    # ActivationReactionContainer.get_product_name('Ar41', 'neutron', 102)
+    # from openmc.data import Evaluation, Reaction
+    # e = Evaluation('/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/ENDF-neutrons/n-018_Ar_040.endf')
+    # r = Reaction.from_endf(e, 102)
+    # xs = r.xs['0K']
+    # xs.x
+    # print()
+    # e = Evaluation(
+    #     '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-U238.tendl')
+    # mts = [11, 17, 33, 42]
+    # for mt in mts:
+    #     print(f"MT: {mt}")
+    #     for p in Reaction.from_endf(e, mt).products:
+    #         print('\t', p.particle, p)
+    #
+    # from JSB_tools.nuke_data_tools import Nuclide
+    #
+    # for k, v in Nuclide("U238").get_incident_proton_daughters(data_source='tendl').items():
+    #     print(k, v.xs.mt_values, v.xs.data_source)
+    #     if k == 'Ac222':
+    #         v.xs.plot(plot_mts=True)
+    #
+    # # xs = Nuclide("Pb208").get_incident_proton_daughters(data_source='all')['He3'].xs
+    # # xs.plot(plot_mts=True)
+    # plt.show()

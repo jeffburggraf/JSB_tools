@@ -4,7 +4,7 @@ from matplotlib import pyplot as plt
 from pathlib import Path
 import re
 from logging import warning as warn
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Literal
 from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
     NEUTRON_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
@@ -222,7 +222,8 @@ class Nuclide(Element):
             return object.__new__(cls)
         else:
             if not isinstance(symbol, str):
-                raise TypeError(f"Invalid type, '{type(symbol)}', for argument `symbol`, which must have type==str.")
+                raise TypeError(f"Invalid type, '{type(symbol)}' "
+                                f"passed to Nuclide. Argument `symbol` must have str type")
 
         symbol, z, a, m, m_or_e = get_symbol_etc(symbol)
 
@@ -805,7 +806,9 @@ class Nuclide(Element):
         return Nuclide.get_all_isotopes(self.atomic_symbol, non_zero_abundance)
 
     @staticmethod
-    def natural_abundance(symbol) -> float:
+    def natural_abundance(symbol: Union[Nuclide, str]) -> float:
+        if isinstance(symbol, Nuclide):
+            symbol = symbol.name
         try:
             return Nuclide.isotopic_abundance(symbol)
         except KeyError:
@@ -988,6 +991,10 @@ class Nuclide(Element):
 
         return out
 
+    def thermal_neutron_capture_xs(self, T=270, data_source=None):
+        erg = T*8.6E-11
+        return self.neutron_capture_xs(data_source=data_source)(np.array([erg]))[0]
+
     def neutron_capture_xs(self, data_source=None) -> CrossSection1D:
         reses = self.get_incident_particle_daughters('neutron', data_source=data_source)
         s = Nuclide.from_Z_A_M(self.Z, self.A + 1).name
@@ -996,40 +1003,33 @@ class Nuclide(Element):
         except KeyError:
             raise FileNotFoundError(f"No neutron capture cross-section for {self.name}")
 
-    def get_incident_particle_daughters(self, particle, data_source=None, a_z_hl_cut='', is_stable_only=False) \
+    def get_incident_particle_daughters(self, particle, data_source=None, a_z_hl_m_cut='', is_stable_only=False) \
             -> Dict[str, InducedDaughter]:
         f = getattr(self, f"get_incident_{particle}_daughters")
-        return f(data_source=data_source, a_z_hl_cut=a_z_hl_cut, is_stable_only=is_stable_only)
+        return f(data_source=data_source, a_z_hl_m_cut=a_z_hl_m_cut, is_stable_only=is_stable_only)
 
-    def get_incident_proton_parents(self, data_source=None, a_z_hl_cut='', is_stable_only=False) -> Dict[
+    def get_incident_proton_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
         str, InducedParent]:
-        """
-        See __get_daughters__
-        :param data_source:
-        :param a_z_hl_cut:
-        :param is_stable_only:
-        :return:
-        """
-        return self.__get_parents__('proton', a_z_hl_cut, is_stable_only, data_source)
+        return self.__get_parents__('proton', a_z_hl_m_cut, is_stable_only, data_source)
 
-    def get_incident_proton_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False, no_levels=True) -> Dict[
-        str, InducedDaughter]:
+    def get_incident_proton_daughters(self, data_source: Union[Literal['all'], str] = None, a_z_hl_m_cut='',
+                                      is_stable_only=False, no_levels=True) -> Dict[str, InducedDaughter]:
         return self.__get_daughters__('proton', a_z_hl_m_cut, is_stable_only, data_source, no_levels)
 
-    def get_incident_gamma_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False, no_levels=True) -> Dict[
-        str, InducedDaughter]:
+    def get_incident_gamma_daughters(self, data_source: Union[Literal['all'], str] = None, a_z_hl_m_cut='',
+                                     is_stable_only=False, no_levels=True) -> Dict[str, InducedDaughter]:
         return self.__get_daughters__('gamma', a_z_hl_m_cut, is_stable_only, data_source, no_levels)
 
-    def get_incident_gamma_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
-        str, InducedParent]:
+    def get_incident_gamma_parents(self, data_source: Union[Literal['all'], str] = None, a_z_hl_m_cut='',
+                                   is_stable_only=False) -> Dict[str, InducedParent]:
         return self.__get_parents__('gamma', a_z_hl_m_cut, is_stable_only, data_source, )
 
-    def get_incident_neutron_daughters(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False, no_levels=True) -> Dict[
-        str, InducedDaughter]:
+    def get_incident_neutron_daughters(self, data_source: Union[Literal['all'], str] = None, a_z_hl_m_cut='',
+                                       is_stable_only=False, no_levels=True) -> Dict[str, InducedDaughter]:
         return self.__get_daughters__('neutron', a_z_hl_m_cut, is_stable_only, data_source, no_levels)
 
-    def get_incident_neutron_parents(self, data_source=None, a_z_hl_m_cut='', is_stable_only=False) -> Dict[
-        str, InducedParent]:
+    def get_incident_neutron_parents(self, data_source: Union[Literal['all'], str] = None, a_z_hl_m_cut='',
+                                     is_stable_only=False) -> Dict[str, InducedParent]:
         return self.__get_parents__('neutron', a_z_hl_m_cut, is_stable_only, data_source)
 
     def __get_daughters__(self, projectile, a_z_hl_m_cut='', is_stable_only=False,
@@ -1756,6 +1756,7 @@ class DecayNuclide:
 
 
 if __name__ == '__main__':
+    a = ActivationReactionContainer.load('Ar40', 'neutron', 'endf')
     pass
-    print(Nuclide('U235').atomic_mass('u'))
-    print(Nuclide('U235_m1').rest_energy())
+    # print(Nuclide('U235').atomic_mass('u'))
+    # print(Nuclide('U235_m1').rest_energy())

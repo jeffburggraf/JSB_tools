@@ -12,7 +12,10 @@ from JSB_tools import mpl_hist, convolve_gauss
 from pathlib import Path
 from matplotlib.patches import Circle
 from functools import cached_property, cache
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Optional, Literal
+import matplotlib.patches as mpatches
+from matplotlib.text import Annotation
+from matplotlib.transforms import Transform, Bbox
 from lmfit import Model, Parameters, Parameter
 from lmfit.models import GaussianModel
 from lmfit.model import ModelResult
@@ -71,6 +74,62 @@ Performing fits:
 Other features:
     - Setting InteractiveSpectra.VERBOSE = True will print a fit report of each fi to cout. 
 """
+
+
+def text_with_autofit(
+        ax: plt.Axes,
+        txt: str,
+        xy: tuple[float, float],
+        width: float, height: float,
+        *,
+        transform: Optional[Transform] = None,
+        ha: Literal['left', 'center', 'right'] = 'center',
+        va: Literal['bottom', 'center', 'top'] = 'center',
+        show_rect: bool = False,
+        **kwargs):
+    if transform is None:
+        transform = ax.transData
+
+    #  Different alignments give different bottom left and top right anchors.
+    x, y = xy
+    xa0, xa1 = {
+        'center': (x - width / 2, x + width / 2),
+        'left': (x, x + width),
+        'right': (x - width, x),
+    }[ha]
+    ya0, ya1 = {
+        'center': (y - height / 2, y + height / 2),
+        'bottom': (y, y + height),
+        'top': (y - height, y),
+    }[va]
+    a0 = xa0, ya0
+    a1 = xa1, ya1
+
+    x0, y0 = transform.transform(a0)
+    x1, y1 = transform.transform(a1)
+    # rectangle region size to constrain the text in pixel
+    rect_width = x1 - x0
+    rect_height = y1 - y0
+
+    fig: plt.Figure = ax.get_figure()
+    dpi = fig.dpi
+    rect_height_inch = rect_height / dpi
+    # Initial fontsize according to the height of boxes
+    fontsize = rect_height_inch * 72
+
+    text: Annotation = ax.annotate(txt, xy, ha=ha, va=va, xycoords=transform, **kwargs)
+
+    # Adjust the fontsize according to the box size.
+    text.set_fontsize(fontsize)
+    bbox: Bbox = text.get_window_extent(fig.canvas.get_renderer())
+    adjusted_size = fontsize * rect_width / bbox.width
+    text.set_fontsize(adjusted_size)
+
+    if show_rect:
+        rect = mpatches.Rectangle(a0, width, height, fill=False, ls='--')
+        ax.add_patch(rect)
+
+    return text
 
 
 @jit(nopython=True)
@@ -285,7 +344,10 @@ class GausFitResult(ModelResult):
     def slope(self):
         return self._get_param(self.params['slope'])
 
-    def plot_fit_curve(self, ax=None, fill_between=True, npoints=300, plot_data=True, **plt_kwargs):
+    def plot_fit_curve(self, *args, **kwargs):  # bw compat.
+        return self.plot(*args, **kwargs)
+
+    def plot(self, ax=None, fill_between=True, npoints=300, plot_data=True, label=None, label_params=False, **plt_kwargs):
         if ax is None:
             _, ax = plt.subplots()
 
@@ -304,9 +366,36 @@ class GausFitResult(ModelResult):
         if yerr is not None:
             ax.fill_between(x, y - yerr, y + yerr, alpha=0.6, color=color)
         if plot_data:
-            ax.errorbar(self.fit_x, self.fit_y, self.fit_yerr, label='Data')
+            ax.errorbar(self.fit_x, self.fit_y, self.fit_yerr, label=label, ls='None', marker='x')
 
-        ax.legend()
+        if label_params:
+            for i, s in enumerate(['E', 'A', r'$\sigma$']):
+                x = 0.8 * (i/(3-1) - 0.5) + 0.5
+                # print(f'x: {x}')
+                ax.text(x, 0.97, s, transform=ax.transAxes, fontsize=13)
+
+            texts = ['\t']
+            for i in range(1, len(self) + 1):
+                param_i = i-1
+                try:
+                    sigma = self.sigmas(param_i)
+                except KeyError:
+                    sigma = self.sigmas(0)
+
+                try:
+                    center = self.centers(param_i)
+                except KeyError:
+                    center = self.centers(0)
+
+                try:
+                    texts.append(fr'{center:.2e} {self.amplitudes(param_i):.2e} {sigma:.2e}')
+                except KeyError:
+                    break
+            t = '\n'.join(texts)
+            text_with_autofit(ax, t, (0, 0.99), 1, 0.5, transform=ax.transAxes, ha='left', va='top')
+        if label is not None:
+            ax.legend(loc='upper right' if label_params is None else 'lower left')
+
         return ax
 
     def __len__(self):
@@ -323,7 +412,7 @@ class GausFitResult(ModelResult):
 def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, make_density=False, yerr=None,
                     share_sigma=True, sigma_guesses: Union[list, float] = None, fix_sigmas: bool = False,
                     fix_centers: Union[bool, List[bool]] = False, fix_bg: float = None,
-                    fit_buffer_window: Union[int, None] = 5,
+                    fit_buffer_window: Union[int, None] = 5, nobins=False, bg: Literal['const', 'lin'] = 'lin',
                     **kwargs) -> GausFitResult:
     """
     Perform multi-gaussian fit to data.
@@ -368,6 +457,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             The data will be truncated around peak centers with a buffer of this value (in keV) to the left and right
             Use None to not truncate.
 
+        bg:
+
+        nobins: If True, bins arg refers to bin centers instead.
+
     Returns: lmfit.ModelResult
 
     TODO:
@@ -384,9 +477,14 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             Maybe only calculate for current view?
             Figure out why it's slow. Maybe profiler?
     """
-    assert len(y) == len(bins) - 1
+    assert bg in ['lin', 'const']
+    if nobins:
+        assert len(y) == len(bins)
+        assert fixed_in_binQ is None
+    else:
+        assert len(y) == len(bins) - 1
 
-    if fit_buffer_window is not None:
+    if fit_buffer_window is not None and not nobins:
         bins_slice, y_slice = get_fit_slice(bins=bins, center_guesses=center_guesses,
                                             fit_buffer_window=fit_buffer_window)
 
@@ -407,7 +505,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         fix_centers = [fix_centers] * len(center_guesses)
     assert len(fix_centers) == len(center_guesses)
 
-    x = 0.5 * (bins[1:] + bins[:-1])
+    if nobins:
+        x = bins
+    else:
+        x = 0.5 * (bins[1:] + bins[:-1])
 
     assert len(center_guesses) != 0, 'Cannot perform fit!'
 
@@ -416,7 +517,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
     center_guesses = [max(bins[0], min(bins[-1] - 1E-10, x)) for x in center_guesses]
 
-    b_width = 0.5 * ((bins[1] - bins[0]) + (bins[-1] - bins[-2]))  # ~mean bin width
+    if nobins:
+        b_width = np.median(x[1:] - x[:-1])
+    else:
+        b_width = 0.5 * ((bins[1] - bins[0]) + (bins[-1] - bins[-2]))  # ~mean bin width
 
     if sigma_guesses is None:
         sigma_guesses = b_width * 3
@@ -426,6 +530,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         y = unp.nominal_values(y)
 
     if make_density:  # divide bin values by bin widths.
+        assert not nobins, 'Cannot make `y` into a density unless bins are used.'
         _bws = (bins[1:] - bins[:-1])  # bin widths
         y = y / _bws
         if yerr is not None:
@@ -480,8 +585,8 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             assert bins[i0] < center_guess <= bins[i0 + 1], (bins[i0], center_guess, bins[i0 + 1])
         else:
             kwargs['value'] = x[find_local_max(y, i0)]
-            kwargs['min'] = bins[0]
-            kwargs['max'] = bins[-1]
+            kwargs['min'] = x[0]
+            kwargs['max'] = x[-1]
 
         param.set(**kwargs)
 
@@ -499,7 +604,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             model = Model(linear) + sub_model
 
             params = model.make_params()
-            params['slope'].set(value=slope_guess, max=max_slope, min=-max_slope)
+            if bg == 'lin':
+                params['slope'].set(value=slope_guess, max=max_slope, min=-max_slope)
+            else:
+                params['slope'].set(value=0, vary=False)
             params['bg'].set(value=bg_guess, vary=fix_bg is None)
         else:
             model += sub_model
@@ -513,10 +621,9 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
         params[f'{prefix}amplitude'].set(value=amp_guess(y[i0], params[f'{prefix}sigma'].value), min=0)
 
-    fit_result = model.fit(data=y, params=params, weights=weights, x=x, )
-    # print(fit_result.fit_report())
+    fit_result = model.fit(data=y, params=params, weights=weights, x=x)
 
-    fit_result.userkws['b_width'] = b_width
+    fit_result.userkws['b_width'] = None if nobins else b_width
 
     return GausFitResult(fit_result)
 
