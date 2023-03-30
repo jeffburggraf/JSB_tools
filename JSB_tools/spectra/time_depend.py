@@ -1152,14 +1152,14 @@ class InteractiveSpectra:
                 print(f"Initial peak centers: {center_guesses}")
                 print(f"Fit range is {bins[0]} <= x <= {bins[-1]}")
             fit_result: GausFitResult = multi_guass_fit(bins=bins, y=y,
-                                                      center_guesses=center_guesses,
-                                                      fixed_in_binQ=fixed_binsQs,
-                                                      yerr=yerr,
-                                                      sigma_guesses=sigma_guesses,
-                                                      fix_centers=force_centers,
-                                                      fix_sigmas=force_sigma,
-                                                      share_sigma=self.fit_settings['only_one_sigma'],
-                                                      fit_buffer_window=None)
+                                                        center_guesses=center_guesses,
+                                                        fixed_in_binQ=fixed_binsQs,
+                                                        yerr=yerr,
+                                                        sigma_guesses=sigma_guesses,
+                                                        fix_centers=force_centers,
+                                                        fix_sigmas=force_sigma,
+                                                        share_sigma=self.fit_settings['only_one_sigma'],
+                                                        fit_buffer_window=None)
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]

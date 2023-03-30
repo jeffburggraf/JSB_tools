@@ -22,6 +22,7 @@ from functools import cached_property
 import pickle
 from pickle import UnpicklingError
 from JSB_tools import mpl_hist
+from scipy.integrate import cumulative_trapezoid, trapezoid
 #  Todo:
 #   Add function to access num particles entering cells
 
@@ -806,6 +807,65 @@ class StoppingPowerData:
             ax.set_title(title)
         return ax
 
+    def plot_energy_loss(self, init_erg=None, ax=None, units=None, max_distance=None, density=None,
+                         N_points=160, **mpl_kwargs):
+        """
+        Starting at x=0 with energy of init_erg, plot the energy as a function of distance traveled.
+
+        Args:
+            init_erg: Initial particle energy.
+            ax:
+            N_points: Number of points on x-axis
+            units:
+            max_distance: Cuts of plot at distance = max_distance
+            density: Uses self.cell_density by default
+        Returns:
+
+        """
+        if density is None:
+            density = self.cell_density
+
+        if ax is None:
+            _, ax = plt.subplots()
+
+        if init_erg is None:
+            init_erg = self.energies[-1]
+
+        full_range = self.get_range_at_erg(init_erg)
+
+        if max_distance is None:
+            max_x = full_range
+        else:
+            max_x = max_distance
+        xs = np.linspace(0, max_x, N_points)
+
+        unit_conversion, units = self._dist_unit([xs[-1]], units)
+
+        ys = np.interp(full_range - xs, self.ranges/density, self.energies)
+        xs *= unit_conversion
+        ax.plot(xs, ys, **mpl_kwargs)
+
+        ax.set_xlabel(f'Distance traveled [{units}]')
+        ax.set_ylabel(f'Energy [MeV]')
+
+        return xs, ys
+
+    @staticmethod
+    def _dist_unit(ys, units=None):
+        unit_names = ["nm", "um", "mm", "cm", "m", "km"]
+        orders = np.array([-7, -4, -1, 0, 2, 5])
+        if units is None:
+            test_value = np.max(ys)
+            i = np.searchsorted(orders, np.log10(test_value), side='right') - 1
+            i = max([0, i])
+            units = unit_names[i]
+        else:
+            assert units in unit_names, f"Invalid units, {units}"
+            i = unit_names.index(units)
+
+        unit_conversion = 10. ** -orders[i]
+        return unit_conversion, units
+
     def plot_range(self, ax=None, label=None, title=None, material_name_4_title=None, particle_name_4_title=None,
                    density=None, units=None):
 
@@ -828,21 +888,7 @@ class StoppingPowerData:
             unit_conversion, units = 1, 'cm'
             ax.set_ylabel("range [g/cm2]")
         else:
-            unit_names = ["nm", "um", "mm", "cm", "m", "km"]
-            orders = np.array([-7, -4, -1, 0, 2, 5])
-            if units is None:
-                test_value = np.max(y)
-                i = np.searchsorted(orders, np.log10(test_value), side='right') - 1
-                i = max([0, i])
-                units = unit_names[i]
-            else:
-                assert units in unit_names, f"Invalid units, {units}"
-                i = unit_names.index(units)
-
-            unit_conversion = 10.**-orders[i]
-            # print('test_value x: ',self.energies[len(y)//2], 'test_value', test_value, " np.log10(test_value)",
-            #       np.log10(test_value), 'i:', i, "unit_conversion: ", f"{unit_conversion:.2E}")
-
+            unit_conversion, units = self._dist_unit(y, units)
             ax.set_ylabel("range [{}]".format(units))
 
         ax.plot(self.energies, y*unit_conversion, label=label)

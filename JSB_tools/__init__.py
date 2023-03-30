@@ -43,8 +43,9 @@ from matplotlib.colors import Colormap
 from scipy.integrate import trapezoid
 from numbers import Number
 from JSB_tools.misc.curly_braces import curlyBrace as curly_brace
+from matplotlib.widgets import AxesWidget, RadioButtons, cbook
 try:
-    import ROOT
+    import ROOT as _ROOT
     root_exists = True
 except ModuleNotFoundError:
     root_exists = False
@@ -54,6 +55,272 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+class RadioButtons(RadioButtons):
+    @property
+    def active_index(self):
+        for index, val in enumerate(self.labels):
+            if val._text == self.value_selected:
+                return index
+
+    def __init__(self, ax, labels, label_colors=None, active=0, activecolor='blue', size=49,
+                 orientation="vertical", **kwargs):
+        """
+        Add radio buttons to an `~.axes.Axes`.
+        Parameters
+        ----------
+        ax : `~matplotlib.axes.Axes`
+            The axes to add the buttons to.
+        labels : list of str
+            The button labels.
+        active : int
+            The index of the initially selected button.
+        activecolor : color
+            The color of the selected button.
+        size : float
+            Size of the radio buttons
+        orientation : str
+            The orientation of the buttons: 'vertical' (default), or 'horizontal'.
+        Further parameters are passed on to `Legend`.
+        """
+        AxesWidget.__init__(self, ax)
+        self.activecolor = activecolor
+        axcolor = ax.get_facecolor()
+        self.value_selected = None
+
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_navigate(False)
+
+        circles = []
+        for i, label in enumerate(labels):
+            if i == active:
+                self.value_selected = label
+                facecolor = activecolor
+            else:
+                facecolor = axcolor
+            p = ax.scatter([],[], s=size, marker="o", edgecolor='black',
+                           facecolor=facecolor)
+            circles.append(p)
+        if orientation == "horizontal":
+            kwargs.update(ncol=len(labels), mode="expand")
+        kwargs.setdefault("frameon", False)
+        self.box = ax.legend(circles, labels, loc="center", **kwargs)
+        self.labels = self.box.texts
+
+        self.circles = self.box.legendHandles
+        for c in self.circles:
+            c.set_picker(5)
+        self.cnt = 0
+        # self.observers = {}
+
+        self.connect_event('pick_event', self._clicked)
+        # self.connect_event('button_press_event', self._clicked)
+        self._observers = cbook.CallbackRegistry(signals=["clicked"])
+
+    def _clicked(self, event):
+        # if self.ignore(event) or event.button != 1 or event.inaxes != self.ax:
+        #     return
+        # pclicked = self.ax.transAxes.inverted().transform((event.x, event.y))
+        # distances = {}
+        # for i, (p, t) in enumerate(zip(self.circles, self.labels)):
+        #     if (t.get_window_extent().contains(event.x, event.y)
+        #             or np.linalg.norm(pclicked - p.center) < p.radius):
+        #         distances[i] = np.linalg.norm(pclicked - p.center)
+        # if len(distances) > 0:
+        #     closest = min(distances, key=distances.get)
+        #     self.set_active(closest)
+        if (self.ignore(event) or event.mouseevent.button != 1 or
+                event.mouseevent.inaxes != self.ax):
+            return
+        if event.artist in self.circles:
+            # if hasattr(self, '_observers'):
+            self.set_active(self.circles.index(event.artist))
+
+    def set_label_colors(self, colors):
+        assert len(colors) == len(self.labels)
+        for index, color in enumerate(colors):
+            self.set_label_color(index, color)
+
+    def set_label_color(self, index, color):
+        self.labels[index].set_color(color)
+        self.circles[index].set_edgecolor(color)
+
+
+def get_linear_fit(y_data, y_model, offsetQ=False):
+    """
+    Find the scale, a, and offset, b, which transforms the y_model values to be as close to y_data as
+        possible (according to least-square).
+    Args:
+        y_data:
+        y_model:
+        offsetQ: If False, then fit using only a scaling constant.
+
+    Returns: a, b
+
+    """
+    y_data = np.asarray(y_data)
+    y_model = np.asarray(y_model)
+
+    XY = np.sum(y_data * y_model)
+    X2 = np.sum(y_model**2)
+
+    if not offsetQ:
+        a = XY/X2
+        return a, 0
+
+    NN = len(y_data)
+    X = np.sum(y_model)
+
+    Y = np.sum(y_data)
+
+    a = -((NN * XY - X * Y) / (X ** 2 - NN * X2))
+    b = -((-(X*XY) + X2*Y)/(X**2 - X2))
+
+    return a, b
+
+
+class BijectiveMap:
+    def __init__(self, _dict: Union[dict, list[tuple]] = None):
+        if not isinstance(_dict, dict):
+            if _dict is None:
+                _dict = {}
+            else:
+                _dict = dict(_dict)
+
+        self._dict = _dict
+        self._reverse_dict = {v: k for k, v in self._dict.items()}
+
+    def _test(self):
+        for k, v in self._dict.items():
+            assert self._reverse_dict[v] == k
+        assert len(self._dict) == len(self._reverse_dict)
+
+    def set_default(self, key, default_value=None):
+        """
+        Return key as is if it exists, else, set key to default and return new value.
+
+        Args:
+            key:
+            default_value:
+
+        Returns:
+
+        """
+        try:
+            out = self[key]
+        except KeyError:
+            self[key] = out = default_value
+
+        return out
+
+    def pop_item(self):
+        k, v = self._dict.popitem()
+        self._reverse_dict.pop(v)
+        return k, v
+
+    def clear(self):
+        self._dict = {}
+        self._reverse_dict = {}
+
+    def pop(self, item):
+        val = self[item]
+        del self[item]
+        return val
+
+    def get(self, item, default=None):
+        try:
+            return self[item]
+        except KeyError:
+            return default
+
+    def update(self, vals: Union[dict, List[tuple]]):
+        if isinstance(vals, dict):
+            vals = vals.items()
+        else:
+            if len(vals[0]) != 2:
+                raise ValueError(f"Invalid argument, {vals[0]} ")
+        for k, v in vals:
+            self[k] = v
+
+    def copy(self):
+        return BijectiveMap(self._dict.copy())
+
+    def __raise_key_err(self, item):
+        s = f'{item.__repr__()} not in BijectiveMap'
+        if len(self) < 25:
+            s += f'\n\t{self}'
+        raise KeyError(s)
+
+    def __eq__(self, other: Union[dict, BijectiveMap]):
+        if isinstance(other, BijectiveMap):
+            other = other._dict
+
+        return self._dict == other
+
+    def __setitem__(self, key, value):
+        for k in [key, value]:
+            try:
+                del self[k]
+            except KeyError:
+                pass
+
+        self._dict[key] = value
+        self._reverse_dict[value] = key
+        self._test()
+
+    def __getitem__(self, item):
+        try:
+            return self._dict[item]
+        except KeyError:
+            try:
+                return self._reverse_dict[item]
+            except KeyError:
+                pass
+        self.__raise_key_err(item)
+
+    def __delitem__(self, key):
+        try:
+            val = self._dict[key]
+        except KeyError:
+            val = key
+            key = self._reverse_dict[key]
+        del self._dict[key]
+        del self._reverse_dict[val]
+        self._test()
+
+    def __ior__(self, other: Union[dict, BijectiveMap]):
+        for k, v in other.items():
+            self[k] = v
+        return self
+
+    def __or__(self, other: Union[dict, BijectiveMap]):
+        out = self.copy()
+        out |= other
+        return out
+
+    def __len__(self):
+        """Returns the number of connections"""
+        return len(self._dict)
+
+    def __iter__(self):
+        return self._dict.__iter__()
+
+    def keys(self):
+        return self._dict.keys()
+
+    def values(self):
+        return self._dict.values()
+
+    def __contains__(self, item):
+        return item in self._dict or item in self._reverse_dict
+
+    def __repr__(self):
+        return '{' + ', '.join([f'{k.__repr__()} <-> {v.__repr__()}' for k, v in self.items()]) + '}'
+
+    def items(self):
+        return self._dict.items()
 
 
 def weighted_pearsonr(x, y, yerr=None, xerr=None, _wx=None, _wy=None):
@@ -79,14 +346,16 @@ def weighted_pearsonr(x, y, yerr=None, xerr=None, _wx=None, _wy=None):
         if xerr is None:
             wx = np.ones(len(x))
         else:
-            wx = 1.0/np.where(xerr>0, 1, xerr)
+            wx = 1.0/np.where(xerr > 0, 1, xerr)
 
     xbar = np.average(x, weights=wx)
     ybar = np.average(y, weights=wy)
     varx = np.average((x - xbar)**2, weights=wx)
     vary = np.average((y - ybar)**2, weights=wy)
     covar = np.average((x - xbar) * (y - ybar), weights=np.sqrt(wx * wy))
-    return covar/np.sqrt(varx*vary)
+    out = covar/np.sqrt(varx*vary)
+
+    return out
 
 
 def MC_pearsonr(x, y, yerr=None, xerr=None, n=350, weighted=False):
@@ -110,6 +379,14 @@ def MC_pearsonr(x, y, yerr=None, xerr=None, n=350, weighted=False):
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
 
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    if yerr is not None:
+        yerr = np.asarray(yerr)
+    if xerr is not None:
+        xerr = np.asarray(xerr)
+
     def get_vals(v, verr):
         if verr is not None:
             out = np.random.normal(size=n*len(v))
@@ -121,15 +398,15 @@ def MC_pearsonr(x, y, yerr=None, xerr=None, n=350, weighted=False):
         return out
 
     xerr = np.asarray(xerr)
-    yerr = np.asarray(xerr)
+    yerr = np.asarray(yerr)
 
     ys = get_vals(y, yerr)
     xs = get_vals(x, xerr)
     corrs = []
 
     if weighted:
-        wx = 1.0 / np.where(xerr > 0, 1, xerr)
-        wy = 1.0 / np.where(xerr > 0, 1, xerr)
+        wx = 1.0 / np.where(xerr > 0, xerr, 1)
+        wy = 1.0 / np.where(xerr > 0, xerr, 1)
     else:
         wx = wy = None
 
@@ -504,8 +781,22 @@ class TabPlot:
     def __len__(self):
         return len(self.button_labels)
 
-    def __init__(self, figsize=(10, 8), *fig_args, **fig_kwargs):
+    @property
+    def axes_flat(self) -> List[Axes]:
+        return flatten(self.plt_axs)
+
+    def __init__(self, figsize=(10, 8), universal_zoom=True, *fig_args, **fig_kwargs):
+        """
+
+        Args:
+            figsize:
+            universal_zoom: Zoom on one axis will be applied to all other axis (with the same subplots nrow/ncols).
+            *fig_args:
+            **fig_kwargs:
+        """
         TabPlot._instnaces.append(self)
+
+        self.universal_zoom = universal_zoom
 
         self.fig = plt.figure(figsize=figsize, *fig_args, **fig_kwargs)
 
@@ -514,6 +805,9 @@ class TabPlot:
         self._vis_flag = True
 
         self.plt_axs = []
+        self._axis_shapes = []
+
+        self.global_axs = []
 
         self.suptitles = []
 
@@ -528,27 +822,43 @@ class TabPlot:
 
         self.fig.canvas.mpl_connect('key_press_event', self.on_press)
 
-    def __len__(self):
-        return len(self.button_labels)
-
     @property
     def button_len(self):
         return sum(map(len, self.button_labels))
 
     def on_press(self, event):
         sys.stdout.flush()
-        if event.key == 'right':
-            self.button_funcs[(self.index + 1)%len(self.button_funcs)](event)
-        elif event.key == 'left':
-            self.button_funcs[(self.index - 1)%len(self.button_funcs)](event)
+        if event.key in ['right', 'up']:
+            index = min(len(self.button_funcs) - 1, self.index + 1)
+            self.button_funcs[index](event)
+        elif event.key in ['down', 'left']:
+            index = max(0, self.index - 1)
+            self.button_funcs[index](event)
 
-        elif event.key == 'down':
-            di = len(self.button_axs[0])
-            self.button_funcs[(self.index - di) % len(self.button_funcs)](event)
+    def add_button_callback(self, func, index=None, self_kwargs: List[str] = None):
+        """
+        Add a callback that will be called () when button corresponding to index is clicked.
+            The callback function will be passed
+        Args:
+            func:
+            index: If None, use last button added. This value is always passed to callback funciton
+            self_kwargs: Attribute names of TabPlot (self), as they are at the time of THIS function call,
+                that will be passed to callback as kwargs.
+        Returns:
 
-        elif event.key == 'up':
-            di = len(self.button_axs[0])
-            self.button_funcs[(self.index + di) % len(self.button_funcs)](event)
+        """
+        if index is None:
+            index = len(self) - 1
+
+        if self_kwargs is not None:
+            kwargs = {name: getattr(self, name) for name in self_kwargs}
+        else:
+            kwargs = {}
+
+        def new_func(event):
+            return func(index, **kwargs)
+
+        self.buttons[index].on_clicked(new_func)
 
     def get_button_func(self):
         """
@@ -560,18 +870,43 @@ class TabPlot:
         """
         index = len(self.plt_axs) - 1
 
+        current_axes_group = self.plt_axs[index]
+
         def set_vis(event=None):
-            for axs_group in self.plt_axs:
+            for shape, axs_group in zip(self._axis_shapes, self.plt_axs):
+                same_shape = False
+                if shape == self._axis_shapes[index]:
+                    same_shape = True
+
                 if axs_group is self.plt_axs[index]:
+                    # for ax in axs_group:
                     [ax.set_visible(1) for ax in axs_group]
+                    [ax.set_navigate(True) for ax in axs_group]
                 else:
                     [ax.set_visible(0) for ax in axs_group]
+
+                    if self.universal_zoom and same_shape:
+                        [ax.set_navigate(True) for ax in axs_group]
+                    else:
+                        [ax.set_navigate(False) for ax in axs_group]
 
             if self.suptitles[index] is not None:
                 title = self.suptitles[index]
             else:
                 title = self.button_labels[index]
+
             self.fig.suptitle(title)
+
+            for ax in self.global_axs:
+                if ax.data_coordsx:
+                    ax.set_xlim(current_axes_group[0].get_xlim())
+                else:
+                    ax.set_xlim((0, 1))
+
+                if ax.data_coordsy:
+                    ax.set_ylim(current_axes_group[0].get_ylim())
+                else:
+                    ax.set_ylim((0, 1))
 
             self.index = index  # save current "place" in list of plots (e.g. self.button_funcs).
             # button = self.buttons[index]
@@ -614,9 +949,48 @@ class TabPlot:
         for ax in self.plt_axs[axes_group_index]:
             ax.twinx = get_f(ax)
 
+    @property
+    def char_units(self):
+        s = 'abcdefghijklmnopqrstuvwxyz'
+        _t = self.fig.text(0, 0, s)
+        points = self.fig.transFigure.inverted().transform(_t.get_tightbbox())
+        width = (points[1, 0] - points[0, 0])/len(s)
+        height = points[1][1] - points[0, 1]
+        _t.remove()
+        del _t
+        return width, height
+
+    def add_global_ax(self, data_coordsx=True, data_coordsy=True) -> Axes:
+        """
+        Return an axes that will be persistent over all tabs. Limits will adjust to each axis as necessary.
+
+        Args:
+            data_coordsx: If True, X-axis will be in same units as button axes.
+                If False, fractional units are used,  i.e. values betweeen 0, and 1
+
+            data_coordsy: Same as above, but for y-axis.
+
+        Returns: Axes
+
+        """
+        if not all([len(g) == 1 for g in self.plt_axs]):
+            raise NotImplementedError("Cannot add global axis when multiple subplots are present.")
+
+        ax_new = self.fig.add_subplot()
+        ax_new.data_coordsx = data_coordsx
+        ax_new.data_coordsy = data_coordsy
+
+        ax_new.patch.set_alpha(0)
+
+        ax_new.axes.get_xaxis().set_ticks([])
+        ax_new.axes.get_yaxis().set_ticks([])
+
+        self.global_axs.append(ax_new)
+
+        return ax_new
+
     def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
-               subplot_kw=None,
-               *args, **kwargs) -> Union[np.ndarray, Axes]:
+               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, *args, **kwargs) -> Union[np.ndarray, Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:
@@ -639,43 +1013,54 @@ class TabPlot:
         if subplot_kw is None:
             subplot_kw = {}
 
+        if gridspec_kw is None:
+            gridspec_kw = {}
+
+        gridspec_kw.setdefault('height_ratios', height_ratios)
+        gridspec_kw.setdefault('width_ratios', width_ratios)
+
         if figsize is not None:
             raise ValueError("figsize argument is applied in the TabPlot constructor")
 
         self.suptitles.append(suptitle)
 
-        # subplot_kw=dict(projection='polar')
         button_label = f"{button_label: <4}"
         self.button_labels.append(button_label)
 
         axs = self.fig.subplots(nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, subplot_kw=subplot_kw,
-                                *args, **kwargs)
+                                gridspec_kw=gridspec_kw, *args, **kwargs)
 
         if not hasattr(axs, '__iter__'):
             axs = np.array([axs])
 
         axs_flat = axs.flatten()
 
+        self.index = len(self) - 1
         self.plt_axs.append(axs_flat)
-
-        b_unit = 0.1/5  # width of one character
+        self._axis_shapes.append(axs.shape)
 
         try:
             prev_x = self.button_axs[-1][-1].get_position().x1
         except IndexError:
             prev_x = 0
 
-        button_x = prev_x + b_unit
-        button_width = len(button_label) * b_unit
+        char_w, char_h = self.char_units
+        button_x = prev_x + char_w
+        _text = self.fig.text(0, 0, button_label)
+        _text_points = self.fig.transFigure.inverted().transform(_text.get_tightbbox())
+        _text.remove()
+        del _text
+        button_width = _text_points[1, 0] + 2 * char_w
+        button_height = 3 * char_h
 
         if button_x + button_width > 0.95:
             if len(self.button_axs[-1]) == 0:  # first button of row is too long!
                 assert False, f"Button label too long!, '{button_label}'"
-            button_x = b_unit
+            button_x = char_w
             for row_index, b_axs in enumerate(self.button_axs):
                 for b_ax in b_axs:
                     old_pos = list(b_ax.get_position().bounds)
-                    new_y = 0.1*(len(self.button_axs) - row_index)
+                    new_y = button_height*1.5*(len(self.button_axs) - row_index) + char_h/2
                     old_pos[1] = new_y
                     b_ax.set_position(old_pos)
 
@@ -685,7 +1070,7 @@ class TabPlot:
             plt.figure(self.fig.number)
 
         # [left, bottom, width, height]
-        button_ax = plt.axes([button_x, 0, button_width, 0.075], projection='rectilinear')
+        button_ax = plt.axes([button_x, char_h/2, button_width, button_height], projection='rectilinear')
         self.button_axs[-1].append(button_ax)
 
         button = Button(button_ax, button_label)
@@ -1205,7 +1590,7 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
     """
     assert clipping_window_order in [2, 4, 6, 8]
     assert smoothening_order in [3, 5, 7, 9, 11, 13, 15]
-    spec = ROOT.TSpectrum()
+    spec = _ROOT.TSpectrum()
     result = unp.nominal_values(counts)
     if isinstance(counts[0], UFloat):
         rel_errors = unp.std_devs(counts)/np.where(result != 0, result, 1)
@@ -1222,11 +1607,11 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
     else:
         assert median_window is None, '`median_window` is not needed when ROOT is installed. '
 
-    clipping_window = getattr(ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
-    smoothening = getattr(ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
-    spec.Background(result, len(result), num_iterations, ROOT.TSpectrum.kBackDecreasingWindow,
-                    clipping_window, ROOT.kTRUE,
-                    smoothening, ROOT.kTRUE)
+    clipping_window = getattr(_ROOT.TSpectrum, f'kBackOrder{clipping_window_order}')
+    smoothening = getattr(_ROOT.TSpectrum, f'kBackSmoothing{smoothening_order}')
+    spec.Background(result, len(result), num_iterations, _ROOT.TSpectrum.kBackDecreasingWindow,
+                    clipping_window, _ROOT.kTRUE,
+                    smoothening, _ROOT.kTRUE)
     if rel_errors is None:
         return result
     else:
@@ -1321,7 +1706,11 @@ def convolve_gauss2d(a, sigma_x, kernel_sigma_window: int = 8, sigma_y=None):
     return out
 
 
-def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mode='same'):
+def fast_norm(x, sigma, mean, no_norm=False):  # faster than scipy.stat.norm
+    return 1.0/np.sqrt(2 * np.pi)/sigma * np.e**(-0.5*((x - mean)/sigma)**2)
+
+
+def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mode='same', return_kernel=False):
     """
     Simple gaussian convolution.
     Args:
@@ -1335,47 +1724,77 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
     """
     sigma = int(sigma)
     if sigma == 0:
-        return a
+        if return_kernel:
+            return a, np.ones(1)
+        else:
+            return a
+
     kernel_size = min([kernel_sigma_window * sigma, len(a)//2])
     if kernel_size % 2 == 0:
         kernel_size += 1
+
     kernel_x = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
-    kernel = norm(loc=0, scale=sigma).pdf(kernel_x)
+    kernel = np.e ** (-0.5 * (kernel_x / sigma) ** 2)
     kernel /= np.sum(kernel)
-    return np.convolve(a, kernel, mode=mode)
+
+    out = np.convolve(a, kernel, mode=mode)
+    if not return_kernel:
+        return out
+    else:
+        return out, kernel
 
 
-def convolve_unbinned(x, y, sigma, n_sigma_truncate=5, thresh=0.0001):
-    out = np.zeros_like(y)
+def convolve_unbinned(x, y, sigma, n_sigma_truncate=5, no_re_norm=False):
+    """
+    Convolve the signal (y) with a gauss kernel over a non-uniform grid (x).
 
-    # def kernal(index):  # un-optimized
-    #     weights = norm(loc=x[index], scale=sigma).pdf(x)
-    #     weights /= sum(weights)
-    #     return y[index] * weights
-    # A = 1/(sigma*np.sqrt(np.pi))
-    min_y = max(y)*thresh
+    Args:
+        x:
+        y:
+        sigma:
+        n_sigma_truncate:
+        no_re_norm:
 
-    def my_norm(center, xs):
-        return np.e**(-0.5*((center - xs)/sigma)**2)
+    Returns:
 
-    def kernal(index):  # optimized
-        i1 = np.searchsorted(x, x[index] - n_sigma_truncate*sigma)
-        i2 = i1 + np.searchsorted(x[i1:], x[index] + n_sigma_truncate*sigma)
+    """
+    if sigma == 0:
+        return y
+
+    r = 1.0 / (np.sqrt(2 * np.pi) * sigma)
+    f = -0.5/sigma**2
+
+    if max(x[1:] - x[:-1]) < 2 * sigma or no_re_norm:
+        re_norm = False
+    else:
+        re_norm = True
+
+    def my_norm(centers, x):
+        return r * np.e ** (f*(centers - x) ** 2)
+
+    def new_val(index):
+        i1 = np.searchsorted(x, x[index] - n_sigma_truncate * sigma)
+        i2 = i1 + np.searchsorted(x[i1:], x[index] + n_sigma_truncate * sigma)
+
+        i1 = max(0, i1)
+
+        if i2 - i1 == 1:
+            return y[index]
 
         x_truncated = x[i1: i2]
-        # weights = norm(loc=x[index], scale=sigma).pdf(x_truncated)
-        weights = my_norm(x[index], x_truncated)
-        weights /= sum(weights)
-        return (i1, i2), y[index] * weights
+        y_truncated = y[i1: i2]
 
-    for i in range(len(out)):
-        # if y[i] > min_y:
-            (i1, i2), w = kernal(i)  # optimized
-            out[i1: i2] += w   # optimized
+        norm = my_norm(x_truncated, x[index])
 
-        # w = kernal(i)  # un-optimized
-        # out += w  # un-optimized
-    return out
+        if re_norm:
+            norm /= trapezoid(norm, x=x_truncated)  # Only needed in special cases where sigma < gap
+
+        f = y_truncated * norm
+
+        out: np.ndarray = trapezoid(f, x=x_truncated)
+        return out
+
+    return np.array([new_val(i) for i in range(len(x))])
 
 
 def hist_gaus_convolve(bins, bin_values, sigma, is_density=False, check_norm=False):
@@ -1799,9 +2218,9 @@ def closest(sorted_dict: SortedDict, key):
 class TBrowser:
     def __init__(self):
         assert root_exists, 'Must install ROOT to use TBRowser'
-        tb = ROOT.TBrowser()
-        while type(tb.GetBrowserImp()) is not ROOT.TBrowserImp:
-            ROOT.gSystem.ProcessEvents()
+        tb = _ROOT.TBrowser()
+        while type(tb.GetBrowserImp()) is not _ROOT.TBrowserImp:
+            _ROOT.gSystem.ProcessEvents()
             time.sleep(0.02)
         del tb
 
@@ -1835,14 +2254,14 @@ def ROOT_loop():
     try:
         import time
         while True:
-            ROOT.gSystem.ProcessEvents()
+            _ROOT.gSystem.ProcessEvents()
             time.sleep(0.02)
     except ModuleNotFoundError:
         warnings.warn('ROOT not installed. Cannot run ROOT_loop')
 
 
 class FileManager:
-    root_files: Dict[Path, ROOT.TFile] = {}
+    root_files: Dict[Path, _ROOT.TFile] = {}
     # todo: make gui for deleting files
 
     def _load_from_file(self):
@@ -2136,7 +2555,7 @@ class FileManager:
             warnings.warn(f"No files found containing the following attribs: {lookup_attributes}")
         return matches
 
-    def find_tree(self, tree_name="tree", **lookup_attributes) -> ROOT.TTree:
+    def find_tree(self, tree_name="tree", **lookup_attributes) -> _ROOT.TTree:
         path = self.find_path(**lookup_attributes)
         if (path is None) or not path.exists():
             raise FileNotFoundError(f"Attempted to load ROOT tree on non-existent file. Attributes:{lookup_attributes}")
@@ -2146,7 +2565,7 @@ class FileManager:
     def __load_tree_from_path__(path, tree_name='tree'):
         if not path.exists():
             raise FileNotFoundError(f"Attempted to load ROOT tree on non-existent file, '{path}'")
-        f = ROOT.TFile(str(path))
+        f = _ROOT.TFile(str(path))
         FileManager.root_files[path] = f
 
         assert tree_name in map(lambda x:x.GetName(), f.GetListOfKeys()), \
@@ -2154,7 +2573,7 @@ class FileManager:
         tree = f.Get(tree_name)
         return tree
 
-    def find_trees(self, tree_name="tree", **lookup_attributes) -> Dict[ROOT.TTree, dict]:
+    def find_trees(self, tree_name="tree", **lookup_attributes) -> Dict[_ROOT.TTree, dict]:
         """
         Same concept of find_paths, except the dictionary keys are ROOT trees.
         Args:

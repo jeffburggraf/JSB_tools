@@ -209,54 +209,15 @@ class ActivationCrossSection(CrossSection1D):
         Returns:
 
         """
-        def find_thresh(tab):
-            x = tab.x
-            y = tab(x)
-
-            if frac != 0:
-                val = frac * tab(x[np.argmax(y)])
-            else:
-                val = 0
-
-            i = 0
-            while i < len(x):
-                if tab(x[i]) > val:
-                    break
-
-                i += 1
-
-            if i == 0:
-                _thresh = x[0]
-            else:
-                _thresh = x[i - 1]
-            return _thresh
-
-        out = None
-        for mt in self.mt_values:
-            xs = self.__xss__[mt]
-
-            xs_thresh = find_thresh(xs)
-
-            yield_thresh = None
-            for yield_ in self.__yields__[mt]:
-                if isinstance(yield_, Tabulated1D):
-                    _yield_thresh = find_thresh(yield_)
-                else:
-                    continue
-                if yield_thresh is None:
-                    yield_thresh = _yield_thresh
-                else:
-                    yield_thresh = min(_yield_thresh, yield_thresh)
-
-            if yield_thresh is None:
-                yield_thresh = -np.inf
-
-            if out is None:
-                out = max(yield_thresh, xs_thresh)
-            else:
-                out = max(out, xs_thresh, yield_thresh)
-
-        return 1E-6 * out
+        # def find_thresh(tab, yields_, X=None):
+        X = np.linspace(1, 30, 200)
+        Y = self(X)
+        val = frac * max(Y)
+        i = np.argmax(Y>val)
+        if i < len(X):
+            return X[i]
+        else:
+            return X[-1]
 
     def __call__(self, ergs, mt_value=None, ith_channel=None):
         """
