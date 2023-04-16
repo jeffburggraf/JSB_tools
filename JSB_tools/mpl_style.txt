@@ -32,7 +32,7 @@ axes.xmargin: 0.025
 # axes.ymargin: 0.05
 axes.labelweight: bold
 axes.labelsize: 16
-axes.formatter.limits: -3, 3
+#axes.formatter.limits: -3, 3  # handled in MPLStyle class
 grid.color: b1afb5
 axes.spines.right : False
 axes.spines.top : False

@@ -104,7 +104,7 @@ class Level:
         return out
 
     def __repr__(self):
-        return f"<Level: {self.nuclide_name}, {self.energy:.2f} keV, hl: {self.pretty_half_life()}>"
+        return f"<Level {self.level_index} of {self.nuclide_name}; {self.energy:.3g} keV; hl: {self.pretty_half_life()}>"
 
 
 class LevelScheme:

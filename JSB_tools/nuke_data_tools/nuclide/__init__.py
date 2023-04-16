@@ -343,7 +343,7 @@ class Nuclide(Element):
 
         return z, a, m
 
-    def adopted_levels(self):
+    def adopted_levels(self) -> LevelScheme:
         """
         Levels
         Returns:
@@ -805,8 +805,12 @@ class Nuclide(Element):
     def all_isotopes(self, non_zero_abundance=False):
         return Nuclide.get_all_isotopes(self.atomic_symbol, non_zero_abundance)
 
+    @property
+    def natural_abundance(self):
+        return Nuclide.get_natural_abundance(self.name)
+
     @staticmethod
-    def natural_abundance(symbol: Union[Nuclide, str]) -> float:
+    def get_natural_abundance(symbol: Union[Nuclide, str]) -> float:
         if isinstance(symbol, Nuclide):
             symbol = symbol.name
         try:
@@ -1160,7 +1164,7 @@ class Nuclide(Element):
                 z=atomic number
                 a=mass number,
                 m=isomeric level/excited state (0 for ground state)
-                hl=half life in seconds.
+                hl=half life in seconds. Variables for year, day and hr will also be in scope.
                 Defaults to all known nuclides.
             is_stable_only:  Only include stable nuclides.
 
@@ -1187,7 +1191,7 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=
             and time_in_seconds=half life in seconds
         a: mass number
         z: atomic number
-        hl: half life in seconds
+        hl: half life in seconds. Can also use variables year, day, and hr
         is_stable_only: does the half life have to be effectively infinity?
         m: Excited level.
     Returns: bool
@@ -1207,7 +1211,7 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=
             makes_cut = False
         else:
             try:
-                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z, 'm': m})
+                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z, 'm': m, 'year':31536000, 'day': 86400, 'hr': 3600})
                 assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
             except NameError as e:
                 invalid_name = str(e).split("'")[1]

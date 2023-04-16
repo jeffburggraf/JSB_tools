@@ -25,6 +25,7 @@ from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 from matplotlib.cm import ScalarMappable
+from matplotlib.figure import Figure
 import time
 import sys
 from scipy.stats import norm
@@ -35,6 +36,7 @@ from scipy import ndimage
 from scipy.stats import pearsonr
 from matplotlib.widgets import Button
 from matplotlib.lines import Line2D
+import matplotlib
 from uncertainties.umath import sqrt as usqrt
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
@@ -1622,6 +1624,24 @@ class MPLStyle:
     fig_size = (15, 10)
     has_been_called = False
 
+    def get_new_show(self, ):
+        old_show = plt.show
+
+        def show(*args, **kwargs):
+            for i in plt.get_fignums():
+                fig: Figure = plt.figure(i)
+                ax: Axes = fig.gca()
+                for a in ['x', 'y']:
+                    try:
+                        ax.ticklabel_format(axis=a, scilimits=getattr(self, f'scilimits{a}'))
+                    except Exception as e:
+                        # raise
+                        warnings.warn(f"Exception in MPLStyle.get_new_shot, in Fig.{fig.get_label()}, Axes: {ax.get_title()}. Error message: {e}")
+
+            return old_show(*args, **kwargs)
+
+        return show
+
     @staticmethod
     def set_bold_axes_labels():
         def new_func(axis):
@@ -1638,7 +1658,8 @@ class MPLStyle:
             setattr(Axes, f'set_{x}label', new_func(x))
 
     def __init__(self, minor_xticks=True, minor_yticks=True, bold_ticklabels=True, bold_axes_labels=True,
-                 usetex=True, fontscale=None, fig_size=(15,8)):
+                 usetex=True, fontscale=None, fig_size=(15,8), scilimitsx=(-2, 4), scilimitsy=(-3, 3)):
+
         """
 
             Args:
@@ -1648,7 +1669,10 @@ class MPLStyle:
             Returns:
 
             """
-        has_been_called = True
+        self.scilimitsx = scilimitsx
+        self.scilimitsy = scilimitsy
+
+        MPLStyle.has_been_called = True
         plt.style.use(style_path)
 
         if bold_ticklabels:
@@ -1674,6 +1698,7 @@ class MPLStyle:
             for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
                       'legend.title_fontsize']:
                 plt.rcParams.update({k: plt.rcParams[k] * fontscale})
+        plt.show = self.get_new_show()
 
 
 mpl_style = MPLStyle
@@ -2710,27 +2735,27 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    import numpy as np
-    from matplotlib import pyplot as plt
-
-    x = np.linspace(0, np.pi * 2, 1000)
-
-    f = TabPlot()
-    axs = []
-    for i in range(1, 5):
-        ax = f.new_ax(i)
-        axs.append(ax)
-
-        ax.plot(x, np.sin(x * i), label='label 1')
-        ax.plot(x, np.sin(x * i) ** 2, label='label 2')
-        ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
-        ax.legend()
-        ax.set_title(str(i))
-
-        if i == 4:
-            bins = np.concatenate([x, [x[-1] + x[1] - x[0]]])
-            y = np.sin(x * i) ** 2
-            mpl_hist(bins, y, yerr=y, ax=ax)
+    # import numpy as np
+    # from matplotlib import pyplot as plt
+    #
+    # x = np.linspace(0, np.pi * 2, 1000)
+    #
+    # f = TabPlot()
+    # axs = []
+    # for i in range(1, 5):
+    #     ax = f.new_ax(i)
+    #     axs.append(ax)
+    #
+    #     ax.plot(x, np.sin(x * i), label='label 1')
+    #     ax.plot(x, np.sin(x * i) ** 2, label='label 2')
+    #     ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
+    #     ax.legend()
+    #     ax.set_title(str(i))
+    #
+    #     if i == 4:
+    #         bins = np.concatenate([x, [x[-1] + x[1] - x[0]]])
+    #         y = np.sin(x * i) ** 2
+    #         mpl_hist(bins, y, yerr=y, ax=ax)
     plt.show()
     # d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
     # for h in flatten_dict_values(d):
