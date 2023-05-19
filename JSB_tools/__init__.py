@@ -5,6 +5,7 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
+from scipy.signal import oaconvolve
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -43,6 +44,7 @@ from matplotlib.axes import Axes
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.colors import Colormap
 from scipy.integrate import trapezoid
+from scipy.ndimage import convolve as scipy_convolve
 from numbers import Number
 from matplotlib.widgets import AxesWidget, RadioButtons, cbook
 try:
@@ -56,6 +58,23 @@ cwd = Path(__file__).parent
 style_path = cwd/'mpl_style.txt'
 
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+def find_nearest(array, value):
+    """
+    Find index for element in array that is nearest to value
+    Args:
+        array:
+        value:
+
+    Returns:
+
+    """
+    idx = np.searchsorted(array, value, side="left")
+    if idx > 0 and (idx == len(array) or abs(value - array[idx-1]) < abs(value - array[idx])):
+        return idx-1
+    else:
+        return idx
 
 
 class RadioButtons(RadioButtons):
@@ -796,6 +815,8 @@ class TabPlot:
             **fig_kwargs:
         """
         TabPlot._instnaces.append(self)
+        plt.rcParams['keymap.forward'] = []
+        plt.rcParams['keymap.back'] = []
 
         self.universal_zoom = universal_zoom
 
@@ -1734,7 +1755,8 @@ def fast_norm(x, sigma, mean, no_norm=False):  # faster than scipy.stat.norm
     return 1.0/np.sqrt(2 * np.pi)/sigma * np.e**(-0.5*((x - mean)/sigma)**2)
 
 
-def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mode='same', return_kernel=False):
+def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mode='same', return_kernel=False,
+                   reflect=False):
     """
     Simple gaussian convolution.
     Args:
@@ -1742,18 +1764,19 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
         sigma: The width of the convolution (in units of array incicies)
         kernel_sigma_window: It's not efficient to make the window larger that a few sigma, so cut off at this value
         mode: See np.convolve
+        reflect: Reflect array at boundaries to mitigate boundary effects.
 
     Returns:
 
     """
-    sigma = int(sigma)
+    # sigma = int(sigma)
     if sigma == 0:
         if return_kernel:
             return a, np.ones(1)
         else:
             return a
 
-    kernel_size = min([kernel_sigma_window * sigma, len(a)//2])
+    kernel_size = min([kernel_sigma_window * int(sigma), len(a)//2])
     if kernel_size % 2 == 0:
         kernel_size += 1
 
@@ -1761,7 +1784,15 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
     kernel = np.e ** (-0.5 * (kernel_x / sigma) ** 2)
     kernel /= np.sum(kernel)
 
+    if reflect:
+        j = int(sigma * kernel_sigma_window)
+        a = np.concatenate([a[j:0:-1], a, a[-1:-j-1:-1]])
+
     out = np.convolve(a, kernel, mode=mode)
+
+    if reflect:
+        out = out[j:-j]
+
     if not return_kernel:
         return out
     else:
@@ -1810,6 +1841,7 @@ def convolve_unbinned(x, y, sigma, n_sigma_truncate=5, no_re_norm=False):
 
         norm = my_norm(x_truncated, x[index])
 
+        # if x[-1] - x[0] < 4 * sigma:
         if re_norm:
             norm /= trapezoid(norm, x=x_truncated)  # Only needed in special cases where sigma < gap
 

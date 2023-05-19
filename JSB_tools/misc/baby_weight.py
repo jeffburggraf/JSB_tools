@@ -46,6 +46,7 @@ with open(Path(__file__).parent/'weight_data') as f:
             if len(line):
                 print(f"No match: {line}, {line.__repr__()}")
 
+
 fig, ax = plt.subplots(figsize=(10, 8))
 
 weights = np.array(weights)
