@@ -88,6 +88,7 @@ class Element:
         try:
             data = _element_data[Z]
             self.element_name = data['Element']
+            self.element_symbol = data['Symbol']
             self.element_period = data['Period']
             self.element_group = data['Group']
             self.element_phase = data['Phase']

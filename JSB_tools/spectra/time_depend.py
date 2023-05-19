@@ -43,19 +43,19 @@ Setting spectra time cuts:
     where c and w are set by the sliders titled 'Center time' and 'Time window', respectively.
     To disable time cuts, select the check box in the lower left titled "All events" (this is the default).
     
-Performing fits:
+Performing fitsAndNotes:
     While holding the space key, click the canvas one or more times to select peaks to be fit with Gaussians. 
     A multi-gaussian fit is performed for all selected peaks upon release of the space bar. When clicking peaks, 
     a single  mouse click will use the nearest local maxima for initial peak energy value while a double click will 
     constrain the value to within the bin that was clicked.
 
-"Track fits" checkbox: 
-    When selected, fits will be re-calculated as time cuts are changed, while preserving the original peak centers and 
+"Track fitsAndNotes" checkbox: 
+    When selected, fitsAndNotes will be re-calculated as time cuts are changed, while preserving the original peak centers and 
     sigmas . 
     
 "Clear Fits" button:
-    Click the "Clear fits" button in the upper right to clear all fits of current selected spectrum.
-    Click a second time to clear all fits.
+    Click the "Clear fitsAndNotes" button in the upper right to clear all fitsAndNotes of current selected spectrum.
+    Click a second time to clear all fitsAndNotes.
 
 
 "Rescale y" button:
@@ -445,7 +445,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
         share_sigma: If True, all peaks share the same sigma (as determined by fit).
 
-        sigma_guesses: sigma guess. If number, use same number for all fits.
+        sigma_guesses: sigma guess. If number, use same number for all fitsAndNotes.
 
         fix_sigmas: Force sigmas to sigma_guesses.
 
@@ -465,11 +465,11 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
     TODO:
         -Expand debugging capabilities:
-            Allow for fits to be performed via command that mimic mouse click fits
+            Allow for fitsAndNotes to be performed via command that mimic mouse click fitsAndNotes
             Consider using pythons logging module for degub msgs
         -Add energy rebin input box.
         - Add option to fit all peaks at a given energy in one click
-        - Add button to toggle visibility of peak fits (gets busy with lots of overlapping peaks)
+        - Add button to toggle visibility of peak fitsAndNotes (gets busy with lots of overlapping peaks)
         - Inpout box to manually specify time range.
         - Option to Draw error bars.
         - Optimize:
@@ -1077,7 +1077,7 @@ class InteractiveSpectra:
 
     def _re_perform_fits(self):
         """
-        Re-does fits in active spectrum after change ion slider values. Fixes the energy to that of the original fit.
+        Re-does fitsAndNotes in active spectrum after change ion slider values. Fixes the energy to that of the original fit.
         Returns:
 
         """
@@ -1129,7 +1129,7 @@ class InteractiveSpectra:
         center_guesses = center_guesses[np.where((center_guesses > self.erg_binss[index][0]) &
                                                  (center_guesses < self.erg_binss[index][-1]))]
 
-        if not len(center_guesses):  # no fits to perform!
+        if not len(center_guesses):  # no fitsAndNotes to perform!
             logging.warning("Space bar pressed but no peaks were selected!")
             return
 
@@ -1272,7 +1272,7 @@ class InteractiveSpectra:
 
     def _reset_fit_clicks(self):
         """
-        Re-set to default data used to track fits initiated by mouse clicks while holding space bar.
+        Re-set to default data used to track fitsAndNotes initiated by mouse clicks while holding space bar.
         Called after self._perform_fits().
         Returns:
 
@@ -1294,11 +1294,11 @@ class InteractiveSpectra:
         Args:
             event: Not used
             index: Which spectrum to be cleared. Default is selected spectrum.
-            clear_all: Will clear fits from all spectra (instead of just active spectra)
+            clear_all: Will clear fitsAndNotes from all spectra (instead of just active spectra)
 
         Notes:
             the code snippet, "(not len(self.current_fits[index]))" implements a feature where clicking the clear fit
-             button twice clears all fits (not just active).
+             button twice clears all fitsAndNotes (not just active).
 
         Returns:
 
@@ -1317,12 +1317,12 @@ class InteractiveSpectra:
             self.current_fits[index_] = []
 
         double_click_clear = (not len(self.current_fits[index])) and self._active_spec_index == index
-        # double_click_clear evaluates to True if clear fits button is pressed twice.
-        if clear_all or double_click_clear:  # clear all spectra fits
+        # double_click_clear evaluates to True if clear fitsAndNotes button is pressed twice.
+        if clear_all or double_click_clear:  # clear all spectra fitsAndNotes
             for i in range(len(self)):
                 clear_(i)
         else:
-            clear_(index)  # just clear current spectrum fits
+            clear_(index)  # just clear current spectrum fitsAndNotes
         self._draw()
 
     @staticmethod
@@ -1436,7 +1436,7 @@ class InteractiveSpectra:
         self.checkbox_bg_subtract_ax = fig.add_axes([0.83, 0.81, 0.1, 0.2])
         self.bg_textbox_ax = fig.add_axes([0.8,  0.9, 0.03, 0.02])
 
-        vanilla_button('Clear fits', self._clear_fits)
+        vanilla_button('Clear fitsAndNotes', self._clear_fits)
 
         vanilla_button('rescale Y (y)', self._set_ylims)
         self.key_press_events['y'] = self._set_ylims
@@ -1470,12 +1470,12 @@ class InteractiveSpectra:
         # self.ax.callbacks.connect('xlim_changed', self._set_ylims)
 
         # \begin GUI state variables.
-        # self.fit_clicks contains info on each energy selection for upcoming fits
+        # self.fit_clicks contains info on each energy selection for upcoming fitsAndNotes
         # (as determined by mouse clicks while space bar is being held down)
         self.fit_clicks: Dict[str, List] = self._reset_fit_clicks()
 
         # self.current_fits is dict (for each spectrum) of lists of dicts (one for each fit!) containing things
-        # relevant to the fits currently on canvas, e.g. Line2D objects
+        # relevant to the fitsAndNotes currently on canvas, e.g. Line2D objects
         self.current_fits: Dict[int, List] = None  # is initialized in self.show!
 
         self.keys_currently_held_down = {}
@@ -1488,7 +1488,7 @@ class InteractiveSpectra:
         self.checkbox_make_density = CheckButtons(self.checkbox_make_density_ax, ['make\ndensity'], actives=[False])
         self.checkbox_make_density.on_clicked(self._update_plot)
 
-        self.checkbox_track_fits = CheckButtons(self.checkbox_track_fits_ax, ['Track fits'], actives=[False])
+        self.checkbox_track_fits = CheckButtons(self.checkbox_track_fits_ax, ['Track fitsAndNotes'], actives=[False])
 
         self.checkbox_bg_subtract = CheckButtons(self.checkbox_bg_subtract_ax, ['Remove\nbaseline'],
                                                  actives=[init_bg_subtractQ])
@@ -1510,7 +1510,7 @@ class InteractiveSpectra:
 
     def set_fit_settings(self, fit_buffer_window=5, only_one_sigma=True):
         """
-        Set global setting for fits.
+        Set global setting for fitsAndNotes.
         Args:
             fit_buffer_window: Amount to extend the fit beyond the provided energy. Should be roughly 2-4 times the FWHM
 

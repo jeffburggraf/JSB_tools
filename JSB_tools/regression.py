@@ -71,7 +71,7 @@ class FitBase(metaclass=ABCMeta):
         if directory is None:
             directory = Path(__file__).parent
 
-        path = directory/"user_saved_data"/'fits'/f'{f_name}_{type(self).__name__}.lmfit'
+        path = directory/"user_saved_data"/'fitsAndNotes'/f'{f_name}_{type(self).__name__}.lmfit'
         if path.exists():
             warnings.warn(f"Fit with name '{f_name}' already saved. Overwriting")
         try:
@@ -90,9 +90,9 @@ class FitBase(metaclass=ABCMeta):
         if directory is None:
             directory = Path(__file__).parent
 
-        path = directory/"user_saved_data"/'fits'/f'{f_name}_{cls.__name__}.lmfit'
+        path = directory/"user_saved_data"/'fitsAndNotes'/f'{f_name}_{cls.__name__}.lmfit'
 
-        # path = Path(__file__).parent/"user_saved_data"/'fits'/(f_name +'.lmfit')
+        # path = Path(__file__).parent/"user_saved_data"/'fitsAndNotes'/(f_name +'.lmfit')
         assert path.exists(), f"No fit result saved to\n{path}"
         out: FitBase = cls.__new__(cls)
         out.fit_result = load_modelresult(path, {"model_func": out.model_func})
@@ -460,7 +460,7 @@ class ODRBase(metaclass=ABCMeta):
 
     def save(self, fname, extra__=None):
         fname = (fname + "_ODR"+'.lmfit')
-        path = Path(__file__).parent/"user_saved_data"/'fits'/fname
+        path = Path(__file__).parent/"user_saved_data"/'fitsAndNotes'/fname
         if path.exists():
             warnings.warn(f"Fit named '{fname} already exists!. Overwriting.")
         with open(path, 'wb') as f:
@@ -472,7 +472,7 @@ class ODRBase(metaclass=ABCMeta):
     @classmethod
     def load(cls, fname):
         fname = (fname + "_ODR" + '.lmfit')
-        path = Path(__file__).parent / "user_saved_data" / 'fits' / fname
+        path = Path(__file__).parent / "user_saved_data" / 'fitsAndNotes' / fname
         out = PolyFitODR.__new__(cls)
         if not path.exists():
             raise FileNotFoundError(f"No fit named {fname}")
