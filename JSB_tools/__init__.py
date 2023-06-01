@@ -48,7 +48,6 @@ from matplotlib.colors import Colormap
 from scipy.integrate import trapezoid
 from scipy.ndimage import convolve as scipy_convolve
 from numbers import Number
-from JSB_tools.misc.curly_braces import curlyBrace as curly_brace
 from matplotlib.widgets import AxesWidget, RadioButtons, cbook
 try:
     import ROOT as _ROOT
