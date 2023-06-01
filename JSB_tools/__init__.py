@@ -5,8 +5,6 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
-
-import numba
 from scipy.signal import oaconvolve
 try:
     import plotly.graph_objects as go
