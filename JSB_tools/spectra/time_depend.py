@@ -226,6 +226,8 @@ def erg_cut(bins, erg_binned_times, effs, emin=None, emax=None):
     return erg_binned_times[i0: i1 + 1], bins[i0: i1 + 2], effs[i0: i1 + 1] if effs is not None else None
 
 
+
+
 def find_local_max(a, i0):
     """
     Starting from a[i0], find index of nearest local maxima.
@@ -658,6 +660,7 @@ class EnergyBinnedTimes:
 class InteractiveSpectra:
     print_click_coords = False  # If True, print mouse click points in fractional Axes coords (used for dev)
     VERBOSE = False  # print fit_report (and other things?)
+    Print_FIT_REPORT = True
     FIT_VERBOSE = False  # print fit stuff for debugging
 
     default_fit_window = 6  # in keV
@@ -699,10 +702,16 @@ class InteractiveSpectra:
         Returns:
 
         """
-        assert len(erg_bins) - 1 == len(counts)
-        energy_binned_times = [np.zeros(int(i)) for i in counts]
+        assert len(erg_bins) - 1 == len(counts), (len(erg_bins), len(counts))
+        energy_binned_times = [np.array(n) for n in counts]
         return self.add_spectra(energy_binned_times, energy_bins=erg_bins, effs=effs, scale=scale, title=title,
                                 erg_min=erg_min, erg_max=erg_max)
+
+    def is_static_spectra(self, index):
+        return self.energy_binned_timess[index][0].ndim == 0
+
+    def n_spectra(self):
+        return len(self.energy_binned_timess)
 
     def add_spectra(self, energy_binned_times, energy_bins, effs=None, scale=1, title=None, erg_min=80, erg_max=None):
         """
@@ -754,15 +763,19 @@ class InteractiveSpectra:
 
         self.erg_bin_widths.append(energy_bins[1:] - energy_bins[:-1])
 
-        if self._events_times_range[0] is None:
-            self._events_times_range[0] = min([ts[0] for ts in energy_binned_times if len(ts)])
-        else:
-            self._events_times_range[0] = min(self._events_times_range[0], min([ts[0] for ts in energy_binned_times if len(ts)]))
+        if energy_binned_times[0].ndim == 1:
+            if self._events_times_range[0] is None:
+                self._events_times_range[0] = min([ts[0] for ts in energy_binned_times if len(ts)])
+            else:
+                self._events_times_range[0] = min(self._events_times_range[0], min([ts[0] for ts in energy_binned_times if len(ts)]))
 
-        if self._events_times_range[-1] is None:
-            self._events_times_range[-1] = max([ts[-1] for ts in energy_binned_times if len(ts)])
+            if self._events_times_range[-1] is None:
+                self._events_times_range[-1] = max([ts[-1] for ts in energy_binned_times if len(ts)])
+            else:
+                self._events_times_range[-1] = max(self._events_times_range[-1], max([ts[-1] for ts in energy_binned_times if len(ts)]))
         else:
-            self._events_times_range[-1] = max(self._events_times_range[-1], max([ts[-1] for ts in energy_binned_times if len(ts)]))
+            if self._events_times_range[0] is None:
+                self._events_times_range = [0, 0]
 
         t0, t1 = self._events_times_range
         _y, _ = self._calc_y(len(self), t0, t1, True)
@@ -795,7 +808,7 @@ class InteractiveSpectra:
         if x_now is None:
             return
 
-        if ' ' in self.keys_currently_held_down:  # fit peak selected
+        if self.selecting_peaks:  # fit peak selected
             x_points_array = self.fit_clicks['x_points']  # Previous fit energies selected during current fit.
             fixed_bins_array = self.fit_clicks['fixed_binsQs']
 
@@ -820,7 +833,7 @@ class InteractiveSpectra:
                     f"Did not add fit at {x_now:.2f} keV because is too close to the already selected peak at {others[i]:.2f} keV")
 
     def _draw(self):
-        self.fig.canvas.draw()
+        self.fig.canvas.draw_idle()
 
     def update_line(self, y, yerr, index):
         """
@@ -941,14 +954,9 @@ class InteractiveSpectra:
         Returns: y, yerr
 
         """
-        if self._time_integratedQ:
-            time_range = np.array([])  # accept all events.
-        else:
-            time_range = np.array([tmin, tmax])  # perform time cut.
-
         bg_subtractQ = self.checkbox_bg_subtract.get_status()[0]
         bg_window = int(self.bg_textbox.text)
-
+        scales = self.scales[index]
         energy_binned_times = self.energy_binned_timess[index]  # here
 
         n = len(energy_binned_times)
@@ -957,24 +965,31 @@ class InteractiveSpectra:
 
         out = np.zeros(n)
 
-        scales = self.scales[index]
-
-        if truncate_xrange and False:  # disabled for now.
-            I0, I1 = np.searchsorted(self.erg_binss[index], self.ax.get_xlim(), side='right') - 1
-            I0 -= 1
-            I1 += 1
-
-            I0 = max(0, I0)
-            I1 = min(len(energy_binned_times), I1)
+        if self.is_static_spectra(index):
+            out[:-1] += energy_binned_times
+            out_err = np.zeros_like(out)
         else:
-            I0 = 0
-            I1 = len(energy_binned_times)
+            if self._time_integratedQ:
+                time_range = np.array([])  # accept all events.
+            else:
+                time_range = np.array([tmin, tmax])  # perform time cut.
 
-        energy_binned_times = energy_binned_times[I0: I1]
+            if truncate_xrange and False:  # disabled for now.
+                I0, I1 = np.searchsorted(self.erg_binss[index], self.ax.get_xlim(), side='right') - 1
+                I0 -= 1
+                I1 += 1
 
-        get_erg_spec(energy_binned_times, time_range, arr=out[I0: I1])  # modifies out
+                I0 = max(0, I0)
+                I1 = min(len(energy_binned_times), I1)
+            else:
+                I0 = 0
+                I1 = len(energy_binned_times)
 
-        out_err = np.sqrt(out)
+            energy_binned_times = energy_binned_times[I0: I1]
+
+            get_erg_spec(energy_binned_times, time_range, arr=out[I0: I1])  # modifies out
+
+            out_err = np.sqrt(out)
 
         if bg_subtractQ:  # purposely after out_err declaration
             out = remove_background(out, bg_window)
@@ -1022,12 +1037,13 @@ class InteractiveSpectra:
         self._draw()
 
     def _xlim_changed(self, event=None):
-        print("_xlim_changed")
-        ax_range = self.ax.get_xlim()
-        i = self._active_spec_index
-        if self.views[i][1] - ax_range[1] < self.slider_window.val*0.1:
-            new_v = np.searchsorted(ax_range[1], self.erg_binss[i], side='right')
-            self.views[i][1] = min(len(self.energy_binned_timess[i]))
+        pass
+        # print("_xlim_changed")
+        # ax_range = self.ax.get_xlim()
+        # i = self._active_spec_index
+        # if self.views[i][1] - ax_range[1] < self.slider_window.val*0.1:
+        #     new_v = np.searchsorted(ax_range[1], self.erg_binss[i], side='right')
+        #     self.views[i][1] = min(len(self.energy_binned_timess[i]))
 
     @property
     def _time_integratedQ(self):
@@ -1067,8 +1083,22 @@ class InteractiveSpectra:
         self._update_plot()
         self._set_ylims()
 
+    def set_default_peak_text(self):
+        self.selecting_peaks_text.set_text('Press spacebar to enter peak selection mode')
+        self.selecting_peaks_text.set_color('black')
+
     def _key_press(self, event):
-        self.keys_currently_held_down[event.key] = True
+        if event.key == ' ':
+            if self.selecting_peaks:
+                self._perform_fits()
+                self.set_default_peak_text()
+                self.fig.canvas.draw_idle()
+            else:
+                self.selecting_peaks_text.set_text("PEAK SELECTION MODE ON (press spacebar again to perform fits)")
+                self.selecting_peaks_text.set_color('tab:red')
+                self.fig.canvas.draw_idle()
+
+            self.selecting_peaks = not self.selecting_peaks
 
         try:  # call any functions bound to key by self.key_press_events
             self.key_press_events[event.key]()
@@ -1110,6 +1140,18 @@ class InteractiveSpectra:
 
             self._set_fit_line_attribs(index)
 
+    def verify_fit_width_input(self, *args):
+        try:
+            _ = float(self.fit_width_textbox.text)
+        except ValueError:
+            self.fit_width_textbox.set_val('5')
+            self.fig.canvas.draw_idle()
+            raise
+
+    @property
+    def fit_window(self):
+        return float(self.fit_width_textbox.text)
+
     def _perform_fits(self, center_guesses=None, fixed_binsQs=None, sigma_guesses=None, force_centers=False,
                       force_sigma=False, index=None):
         fit_verbose = InteractiveSpectra.FIT_VERBOSE
@@ -1130,14 +1172,13 @@ class InteractiveSpectra:
                                                  (center_guesses < self.erg_binss[index][-1]))]
 
         if not len(center_guesses):  # no fitsAndNotes to perform!
-            logging.warning("Space bar pressed but no peaks were selected!")
             return
 
         if not self.checkbox_make_density.get_status()[0]:
             self.checkbox_make_density.set_active(0)
 
         bins_slice_range, y_slice = get_fit_slice(self.erg_binss[index], center_guesses,
-                                            self.fit_settings['fit_buffer_window'])
+                                                  self.fit_window)
 
         y_slice = slice(*y_slice)
         bins_slice = slice(*bins_slice_range)
@@ -1168,7 +1209,7 @@ class InteractiveSpectra:
             self._reset_fit_clicks()
             return
 
-        if self.VERBOSE:
+        if self.Print_FIT_REPORT:
             print(fit_result.fit_report())
 
         x = fit_result.userkws[fit_result.model.independent_vars[0]]
@@ -1178,8 +1219,8 @@ class InteractiveSpectra:
 
         line = self.handles[index]
 
-        fit_line1 = self.ax.plot(x, fit_result.eval(x=x, params=params), c='black', ls='-', lw=2)[0]
-        fit_line2 = self.ax.plot(x, fit_result.eval(x=x, params=params), c=line.get_color(), ls='--', lw=2)[0]
+        fit_line1 = self.ax.plot(x, fit_result.eval(x=x, params=params), c='black', ls='-', lw=2.5)[0]
+        fit_line2 = self.ax.plot(x, fit_result.eval(x=x, params=params), c=line.get_color(), ls='--', lw=2.5)[0]
 
         fit_info = {'visibles': [fit_line1, fit_line2],
                     'fit_result': fit_result,
@@ -1214,15 +1255,6 @@ class InteractiveSpectra:
         self.current_fits[index].append(fit_info)
         self._reset_fit_clicks()  # self._draw is called here.
         self._set_ylims()
-
-    def _key_release(self, event):
-        try:
-            del self.keys_currently_held_down[event.key]
-        except KeyError:
-            pass
-        if event.key == ' ':
-            # do fitting stuff
-            self._perform_fits()
 
     def _set_fit_line_attribs(self, index=None):
         """
@@ -1272,7 +1304,7 @@ class InteractiveSpectra:
 
     def _reset_fit_clicks(self):
         """
-        Re-set to default data used to track fitsAndNotes initiated by mouse clicks while holding space bar.
+        Re-set to default data used to track fits initiated by mouse clicks while holding space bar.
         Called after self._perform_fits().
         Returns:
 
@@ -1294,11 +1326,11 @@ class InteractiveSpectra:
         Args:
             event: Not used
             index: Which spectrum to be cleared. Default is selected spectrum.
-            clear_all: Will clear fitsAndNotes from all spectra (instead of just active spectra)
+            clear_all: Will clear fits from all spectra (instead of just active spectra)
 
         Notes:
             the code snippet, "(not len(self.current_fits[index]))" implements a feature where clicking the clear fit
-             button twice clears all fitsAndNotes (not just active).
+             button twice clears all fits (not just active).
 
         Returns:
 
@@ -1317,12 +1349,12 @@ class InteractiveSpectra:
             self.current_fits[index_] = []
 
         double_click_clear = (not len(self.current_fits[index])) and self._active_spec_index == index
-        # double_click_clear evaluates to True if clear fitsAndNotes button is pressed twice.
-        if clear_all or double_click_clear:  # clear all spectra fitsAndNotes
+        # double_click_clear evaluates to True if clear fits button is pressed twice.
+        if clear_all or double_click_clear:  # clear all spectra fits
             for i in range(len(self)):
                 clear_(i)
         else:
-            clear_(index)  # just clear current spectrum fitsAndNotes
+            clear_(index)  # just clear current spectrum fits
         self._draw()
 
     @staticmethod
@@ -1431,12 +1463,14 @@ class InteractiveSpectra:
         self.slider_window_ax = fig.add_axes([0.1, 0.01, 0.8, 0.05])
         self.checkbox_time_integrated_ax = fig.add_axes([0.91, 0.1, 0.15, 0.15 * 2])
         self.checkbox_make_density_ax = fig.add_axes([0.91, 0.05, 0.15, 0.15])
-        self.checkbox_track_fits_ax = fig.add_axes([0.1, self.ax.get_position().y1 - 0.02, 0.15, 0.15 * 2])
+        self.checkbox_track_fits_ax = fig.add_axes([0.02, self.ax.get_position().y1 - 0.02, 0.15, 0.15 * 2])
 
         self.checkbox_bg_subtract_ax = fig.add_axes([0.83, 0.81, 0.1, 0.2])
         self.bg_textbox_ax = fig.add_axes([0.8,  0.9, 0.03, 0.02])
 
-        vanilla_button('Clear fitsAndNotes', self._clear_fits)
+        self.fit_width_textbox_ax = fig.add_axes([0.95,  0.95, 0.03, 0.02])
+
+        vanilla_button('Clear fits', self._clear_fits)
 
         vanilla_button('rescale Y (y)', self._set_ylims)
         self.key_press_events['y'] = self._set_ylims
@@ -1470,15 +1504,14 @@ class InteractiveSpectra:
         # self.ax.callbacks.connect('xlim_changed', self._set_ylims)
 
         # \begin GUI state variables.
-        # self.fit_clicks contains info on each energy selection for upcoming fitsAndNotes
+        # self.fit_clicks contains info on each energy selection for upcoming fits
         # (as determined by mouse clicks while space bar is being held down)
         self.fit_clicks: Dict[str, List] = self._reset_fit_clicks()
 
         # self.current_fits is dict (for each spectrum) of lists of dicts (one for each fit!) containing things
-        # relevant to the fitsAndNotes currently on canvas, e.g. Line2D objects
+        # relevant to the fits currently on canvas, e.g. Line2D objects
         self.current_fits: Dict[int, List] = None  # is initialized in self.show!
 
-        self.keys_currently_held_down = {}
         # \end GUI state variables.
 
         self.checkbox_time_integrated = CheckButtons(self.checkbox_time_integrated_ax, ['All\nevents'],
@@ -1488,7 +1521,7 @@ class InteractiveSpectra:
         self.checkbox_make_density = CheckButtons(self.checkbox_make_density_ax, ['make\ndensity'], actives=[False])
         self.checkbox_make_density.on_clicked(self._update_plot)
 
-        self.checkbox_track_fits = CheckButtons(self.checkbox_track_fits_ax, ['Track fitsAndNotes'], actives=[False])
+        self.checkbox_track_fits = CheckButtons(self.checkbox_track_fits_ax, ['Track fits'], actives=[False])
 
         self.checkbox_bg_subtract = CheckButtons(self.checkbox_bg_subtract_ax, ['Remove\nbaseline'],
                                                  actives=[init_bg_subtractQ])
@@ -1497,8 +1530,14 @@ class InteractiveSpectra:
         self.bg_textbox = TextBox(self.bg_textbox_ax, "width (keV): ", '40', )
         self.bg_textbox.on_submit(self._update_plot)
 
+        self.fit_width_textbox = TextBox(self.fit_width_textbox_ax, "Fit Width", '5', )
+        self.fit_width_textbox.on_submit(self.verify_fit_width_input)
+
         self.fig.canvas.mpl_connect('key_press_event', self._key_press)
-        self.fig.canvas.mpl_connect('key_release_event', self._key_release)
+
+        self.selecting_peaks = False
+        self.selecting_peaks_text = self.fig.text(0.3, .98, '', ha='center')
+        self.set_default_peak_text()
 
     @cache
     def bin_widths(self, index):
@@ -1510,7 +1549,7 @@ class InteractiveSpectra:
 
     def set_fit_settings(self, fit_buffer_window=5, only_one_sigma=True):
         """
-        Set global setting for fitsAndNotes.
+        Set global setting for fits.
         Args:
             fit_buffer_window: Amount to extend the fit beyond the provided energy. Should be roughly 2-4 times the FWHM
 
@@ -1576,7 +1615,7 @@ class InteractiveSpectra:
         self.radiobutton_active_select.set_active(0)
 
         self._on_checked_time_integrated('')
-        self.ax.callbacks.connect('xlim_changed', self._xlim_changed)
+        # self.ax.callbacks.connect('xlim_changed', self._xlim_changed)
 
 
 def trest_gassian(peaks, rel_amplitudes, N, slope_ratio=3, xmin=0, xmax=100, sigma=2.5, nbins=None, non_uniform_bins=False,

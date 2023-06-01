@@ -26,7 +26,7 @@ from scipy.integrate import trapezoid
 from collections import namedtuple
 from scipy.optimize import minimize
 from jax.config import config
-config.update("jax_enable_x64", True)
+config.update_data_plot("jax_enable_x64", True)
 
 
 def log_n_factorial(n):

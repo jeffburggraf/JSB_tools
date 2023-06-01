@@ -5,6 +5,8 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
+
+import numba
 from scipy.signal import oaconvolve
 try:
     import plotly.graph_objects as go
@@ -121,11 +123,14 @@ class RadioButtons(RadioButtons):
                 facecolor = activecolor
             else:
                 facecolor = axcolor
-            p = ax.scatter([],[], s=size, marker="o", edgecolor='black',
+
+            p = ax.scatter([], [], s=size, marker="o", edgecolor='black',
                            facecolor=facecolor)
             circles.append(p)
+
         if orientation == "horizontal":
             kwargs.update(ncol=len(labels), mode="expand")
+
         kwargs.setdefault("frameon", False)
         self.box = ax.legend(circles, labels, loc="center", **kwargs)
         self.labels = self.box.texts
@@ -134,24 +139,11 @@ class RadioButtons(RadioButtons):
         for c in self.circles:
             c.set_picker(5)
         self.cnt = 0
-        # self.observers = {}
 
         self.connect_event('pick_event', self._clicked)
-        # self.connect_event('button_press_event', self._clicked)
         self._observers = cbook.CallbackRegistry(signals=["clicked"])
 
     def _clicked(self, event):
-        # if self.ignore(event) or event.button != 1 or event.inaxes != self.ax:
-        #     return
-        # pclicked = self.ax.transAxes.inverted().transform((event.x, event.y))
-        # distances = {}
-        # for i, (p, t) in enumerate(zip(self.circles, self.labels)):
-        #     if (t.get_window_extent().contains(event.x, event.y)
-        #             or np.linalg.norm(pclicked - p.center) < p.radius):
-        #         distances[i] = np.linalg.norm(pclicked - p.center)
-        # if len(distances) > 0:
-        #     closest = min(distances, key=distances.get)
-        #     self.set_active(closest)
         if (self.ignore(event) or event.mouseevent.button != 1 or
                 event.mouseevent.inaxes != self.ax):
             return
@@ -1719,6 +1711,7 @@ class MPLStyle:
             for k in ['font.size', 'ytick.labelsize', 'xtick.labelsize', 'axes.labelsize', 'legend.fontsize',
                       'legend.title_fontsize']:
                 plt.rcParams.update({k: plt.rcParams[k] * fontscale})
+
         plt.show = self.get_new_show()
 
 
