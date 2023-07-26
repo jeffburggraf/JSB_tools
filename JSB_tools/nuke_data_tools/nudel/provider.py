@@ -114,6 +114,7 @@ class ENSDFFileProvider(ENSDFProvider):
     def get_adopted_levels(self, nucleus: Tuple[int, int]) -> str:
         try:
             self.adopted_levels[nucleus]
-        except KeyError:
-            raise FileNotFoundError(f"No data for nucleus {nucleus}")
+        except KeyError as e:
+            raise FileNotFoundError(f"No data for nucleus {nucleus}") from e
+
         return self.get_dataset(nucleus, self.adopted_levels[nucleus])

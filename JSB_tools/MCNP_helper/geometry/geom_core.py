@@ -208,7 +208,7 @@ class Cell(GeomSpecMixin):
         """
         MCNP cell assistant.
         Args:
-            material: MCNP material number or Material instance
+            material: MCNP material number or Material instance. 0/None for void
             geometry: Cell geom. spec. Can use Surfaces/Cells with operators ~, &, +, and -.
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
             cell_number: Cell number. If None, automatically choose a cell number.

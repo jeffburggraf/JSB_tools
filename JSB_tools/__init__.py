@@ -5,9 +5,6 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
-
-import numba
-from scipy.signal import oaconvolve
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -16,6 +13,7 @@ except ModuleNotFoundError:
 from typing import List, Dict
 import numpy as np
 from itertools import islice
+from scipy.interpolate import InterpolatedUnivariateSpline
 try:
     from sortedcontainers import SortedDict
 except ModuleNotFoundError:
@@ -46,14 +44,13 @@ from matplotlib.axes import Axes
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.colors import Colormap
 from scipy.integrate import trapezoid
-from scipy.ndimage import convolve as scipy_convolve
 from numbers import Number
 from matplotlib.widgets import AxesWidget, RadioButtons, cbook
-try:
-    import ROOT as _ROOT
-    root_exists = True
-except ModuleNotFoundError:
-    root_exists = False
+# try:
+#     import ROOT as _ROOT
+#     root_exists = True
+# except ModuleNotFoundError:
+#     root_exists = False
 
 cwd = Path(__file__).parent
 
@@ -62,19 +59,54 @@ style_path = cwd/'mpl_style.txt'
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
-def find_nearest(array, value):
+def binned_down_sample(bins, y, yerr, n):
     """
-    Find index for element in array that is nearest to value
+    Removes every nth entry from bins and values.
     Args:
-        array:
+        bins:
+        y:
+        yerr:
+        n:
+
+    Returns:
+
+    """
+    def get(_y):
+        return np.array([np.mean(_y[i1:i2]) for i1, i2 in zip(range_[:-1], range_[1:])])
+    range_ = np.arange(0, len(bins), n)
+
+    bins = np.array([bins[i] for i in range_])
+
+    y = get(y)
+
+    if yerr is not None:
+        yerr = get(yerr)
+
+    return bins, y, yerr
+
+
+def find_nearest(array, value, return_value=False):
+    """
+    Find the **INDEX** of element in array that is nearest to value.
+
+    NOTE: ASSUMES SORTED
+
+    Args:
+        array: sorted array of values
         value:
+        return_value: If True, return value itself instead of index.
 
     Returns:
 
     """
     idx = np.searchsorted(array, value, side="left")
     if idx > 0 and (idx == len(array) or abs(value - array[idx-1]) < abs(value - array[idx])):
-        return idx-1
+        idx = idx-1
+    else:
+        idx = idx
+
+    if return_value:
+        return array[idx]
     else:
         return idx
 
@@ -490,6 +522,24 @@ def errorbar(x, y, ax=None, **kwargs):
     y = unp.nominal_values(y)
     ax.errorbar(x, y, yerr, **kwargs)
     return ax
+
+
+def rebin2(old_x, old_y, new_bins, yerr=None):
+    new_x = 0.5 * (new_bins[1:] + new_bins[:-1])
+
+    rel_error = None
+
+    if yerr is not None:
+        rel_error = np.abs(yerr / old_y)
+
+    interp = InterpolatedUnivariateSpline(old_x, old_y)
+
+    new_y = np.array([interp.integral(x0, x1) for x0, x1 in zip(new_bins[:-1], new_bins[1:])])
+
+    if yerr is not None:
+        yerr = np.interp(new_x, old_x, rel_error) * np.abs(new_y)
+
+    return new_y, yerr
 
 
 def rebin(oldbins, oldy, newbins, force_equal_norm=False, kind='linear'):
@@ -1003,7 +1053,7 @@ class TabPlot:
 
         return ax_new
 
-    def new_ax(self, button_label, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
+    def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
                subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, *args, **kwargs) -> Union[np.ndarray, Axes]:
         """
         Raises OverflowError if too many axes have been created.
@@ -1021,6 +1071,9 @@ class TabPlot:
         Returns: Single Axes instance if nrows == ncols == 1, else an array of Axes likewise to plt.subplots(...) .
 
         """
+        if button_label is None:
+            button_label = f'{len(self.button_labels)}'
+
         if self.max_buttons_reached:
             raise TabPlot.TabOverflowError("Too many buttons! Create a new TapPlot.")
 
@@ -1636,6 +1689,10 @@ class MPLStyle:
     fig_size = (15, 10)
     has_been_called = False
 
+    @staticmethod
+    def using_tex():
+        return plt.rcParams['text.usetex']
+
     def get_new_show(self, ):
         old_show = plt.show
 
@@ -1648,7 +1705,7 @@ class MPLStyle:
                         ax.ticklabel_format(axis=a, scilimits=getattr(self, f'scilimits{a}'))
                     except Exception as e:
                         # raise
-                        warnings.warn(f"Exception in MPLStyle.get_new_shot, in Fig.{fig.get_label()}, Axes: {ax.get_title()}. Error message: {e}")
+                        warnings.warn(f"Exception in MPLStyle.get_new_show, in Fig.{fig.get_label()}, Axes: {ax.get_title()}. Error message: {e}")
 
             return old_show(*args, **kwargs)
 
@@ -1670,7 +1727,7 @@ class MPLStyle:
             setattr(Axes, f'set_{x}label', new_func(x))
 
     def __init__(self, minor_xticks=True, minor_yticks=True, bold_ticklabels=True, bold_axes_labels=True,
-                 usetex=True, fontscale=None, fig_size=(15,8), scilimitsx=(-2, 4), scilimitsy=(-3, 3)):
+                 usetex=True, fontscale=None, fig_size=(15, 8), scilimitsx=(-2, 4), scilimitsy=(-3, 3)):
 
         """
 
@@ -1701,8 +1758,7 @@ class MPLStyle:
             self.set_bold_axes_labels()
 
         if not usetex:
-            plt.rcParams.update({
-                "text.usetex": False, })
+            plt.rcParams.update({"text.usetex": False, })
         else:
             pass
 
@@ -1749,7 +1805,7 @@ def fast_norm(x, sigma, mean, no_norm=False):  # faster than scipy.stat.norm
 
 
 def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mode='same', return_kernel=False,
-                   reflect=False):
+                   reflect=False, est_errors=False):
     """
     Simple gaussian convolution.
     Args:
@@ -1762,7 +1818,11 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
     Returns:
 
     """
-    # sigma = int(sigma)
+    if est_errors:
+        out_unconvolved = a.copy()
+    else:
+        out_unconvolved = None
+
     if sigma == 0:
         if return_kernel:
             return a, np.ones(1)
@@ -1785,6 +1845,10 @@ def convolve_gauss(a, sigma: Union[float, int], kernel_sigma_window: int = 6, mo
 
     if reflect:
         out = out[j:-j]
+
+    if est_errors:
+        errs = np.sqrt(np.convolve((out - out_unconvolved) ** 2, kernel, mode='same'))
+        out = (out, errs)
 
     if not return_kernel:
         return out
@@ -1968,7 +2032,7 @@ __default_stats_kwargs = {'loc': (0.7, 0.8)}
 
 
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_handle=False, stats_box=False, stats_kwargs=None, elinewidth=1.1, **mpl_kwargs):
+             return_handle=False, stats_box=False, stats_kwargs=None, elinewidth=1.1, errorevery=1, **mpl_kwargs):
     """
 
     Args:
@@ -2049,7 +2113,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         mpl_kwargs['color'] = handle1[0].get_color()
     mpl_kwargs.pop('ls', None)
     mpl_kwargs.pop('linestyle', None)
-    handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, **mpl_kwargs)  # draw error_bars and markers.
+    handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, errorevery=errorevery, **mpl_kwargs)  # draw error_bars and markers.
 
     if label is not None:
         ax.legend()
@@ -2203,7 +2267,7 @@ def trace_prints():
 
 
 class ProgressReport:
-    def __init__(self, i_final, sec_per_print=2, i_init=0):
+    def __init__(self, i_final, sec_per_print=2, i_init=0, call_func=None):
         self.__i_final__ = i_final
         self.__i_init__ = i_init
         self.__sec_per_print__ = sec_per_print
@@ -2213,7 +2277,11 @@ class ProgressReport:
 
         self.events_log = [self.__i_init__]
         self.times_log = [self.__init_time__]
-        # self.__rolling_average__ = []
+
+        if call_func is None:
+            self.call_func = print
+        else:
+            self.call_func = call_func
 
     @property
     def elapsed_time(self):
@@ -2231,12 +2299,19 @@ class ProgressReport:
             self.events_log = self.events_log[:5]
 
         evt_remaining = self.__i_final__ - i
-        sec_remaining = evt_remaining/evt_per_sec
+
         sec_per_day = 60**2*24
-        days = sec_remaining//sec_per_day
-        hours = (sec_remaining % sec_per_day)//60**2
-        minutes = (sec_remaining % 60**2)//60
-        sec = int(sec_remaining % 60)
+
+        if evt_per_sec > 0:
+            sec_remaining = evt_remaining/evt_per_sec
+            days = sec_remaining // sec_per_day
+            hours = (sec_remaining % sec_per_day) // 60 ** 2
+            minutes = (sec_remaining % 60 ** 2) // 60
+            sec = int(sec_remaining % 60)
+        else:
+            sec = np.inf
+            minutes = hours = days = 0
+
         msg = " {0} seconds".format(sec)
         if minutes:
             msg = " {0} minute{1},".format(minutes, 's' if minutes > 1 else '') + msg
@@ -2244,7 +2319,10 @@ class ProgressReport:
             msg = " {0} hour{1},".format(hours, 's' if hours > 1 else '') + msg
         if days:
             msg = "{0} day{1},".format(days, 's' if days > 1 else '') + msg
-        print(f"{added_msg}... {msg} remaining {100*i/self.__i_final__:.2f}% complete")
+
+        msg = f"{added_msg}... {msg} remaining {100*i/self.__i_final__:.2f}% complete"
+
+        self.call_func(msg)
 
     def log(self, i, msg=""):
         t_now = time.time()
@@ -2253,6 +2331,9 @@ class ProgressReport:
             self.__next_print_time__ += self.__sec_per_print__
             return True
         return False
+
+    def __del__(self):
+        print(f"Complete! {self.elapsed_time:.1f} total seconds!")
 
 
 def closest(sorted_dict: SortedDict, key):

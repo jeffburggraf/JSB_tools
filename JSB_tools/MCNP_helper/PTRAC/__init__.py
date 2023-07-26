@@ -218,7 +218,7 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         text_file = open(ptrac_path.with_suffix('.csv'), 'w')
         text_file.write(Branch.text_heading())
 
-    finish_point = file.tell() if max_events is None else max_events
+    finish_point = Path(ptrac_path).stat().st_size if max_events is None else max_events
     current_position = (lambda: file.tell()) if not max_events else (lambda: n_events)
     proj = ProgressReport(finish_point)  # for printing remaining time to stdout
 
@@ -281,7 +281,7 @@ class TTreeHelper:
 
     def __init__(self, path):
         path = Path(path)
-        assert path.exists()
+        assert path.exists(), path
         self.root_file = ROOT.TFile(str(path))
         TTreeHelper.root_files.append(self.root_file)
         self.tree = self.root_file.Get('tree')

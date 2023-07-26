@@ -531,7 +531,6 @@ def load_globals(pickle_path):
 
 
 class OutP:
-
     def __init__(self, file_path):
         self.__f_path__ = Path(file_path)
         with open(file_path) as f:
@@ -581,6 +580,36 @@ class OutP:
             if m := cell_match.match(card):
                 cell_num = int(m.groups()[0])
                 self.cells[cell_num].name = m.groups()[1]
+
+    def get_cell_activity(self, particle):
+        """
+        Table 126. Print # of particles entering cells
+        Args:
+            particle:
+
+        Returns:
+            Dict[cell_num, data_dict]
+
+        """
+        flag = False
+        out = {}
+        for line in self.__outp_lines__:
+            if flag:
+                if re.match(' +[0-9]+ +[0-9]+ +[0-9]+.+', line):
+                    vals = line.split()
+                    cell_num = int(vals[1])
+                    out[cell_num] = {'entering':  int(vals[2]),
+                                     'population':  int(vals[3]),
+                                     }
+                if re.match(' +total.+', line):
+                    break
+
+            elif re.match(f'1{particle.lower()} +activity in each cell +print table 126', line):
+                flag = True
+        else:
+            raise Exception("WTF")
+
+        return out
 
     @cached_property
     def __find_tally_indicies__(self):
@@ -720,6 +749,33 @@ class StoppingPowerData:
         self.erg_bin_widths = None
         self.__dx_de__ = 0
 
+    def __call__(self, erg, mul_rho=True, units='MeV'):
+        """
+        Return stopping power as a function of energy
+
+        Args:
+            erg:
+            mul_rho: If True, multply by density to get MeV/cm
+
+        Returns:
+
+        """
+        if units == 'eV':
+            s = 1E6
+        elif units == 'keV':
+            s = 1E3
+        elif units == 'MeV':
+            s = 1
+        else:
+            raise NotImplementedError(f"No scaling for units, '{units}'")
+
+        out = s * np.interp(erg, self.energies, self.dedxs)
+
+        if mul_rho:
+            out *= self.cell_density
+
+        return out
+
     @property
     def ranges_cm(self):
         assert self.cell_density is not None
@@ -765,7 +821,7 @@ class StoppingPowerData:
             title: Specify title completely manually.
             material_name_4_title: Will include this in figure title.
             density: Provide a density. Overrides using sekf.density.
-            per_g_cm3: If True, do not multiply by density. Units will be (MeV)(cm)^2(g)^-1
+            per_g_cm3: If True, do not multiply by density. Units will be (MeV)/cm per g/cm3 (i.e. MeV.cm2/g)
 
         Returns:
 
@@ -788,6 +844,7 @@ class StoppingPowerData:
             ax.legend()
 
         ax.set_xlabel("Energy [MeV]")
+
         if density is None or per_g_cm3:
             ax.set_ylabel("dEdx [MeV cm2/g]")
         else:
@@ -940,15 +997,24 @@ class StoppingPowerData:
         Args:
             particle: Either a zaid in the form of zzaaa, i.e. str(1000*z+a), or a nuclide name, i.e. 'Xe139'.
                 Can also be 'proton' or 'electron'.
+
             material_element_symbols: List of elements that make up the medium using similar convention as in`particle`
                 argument. Can also use "U" instead of "U238" to automatically isotopic composition of natural U
+
             density: Density of medium in g/cm3.
+
             material_atom_percents: relative atoms percents for each element in `material_element_symbols`
+
             material_mass_percents: relative mass ratios for each element in `material_element_symbols`
+
             gas: True is medium is gas.
+
             emax: Max energy to calculate stopping powers.
-            temperature:  Does nothing.
+
+            temperature:  Does nothing for now.
+
             mcnp_command: The command that executes MCNP in youtr terminal.
+
             verbose: For debugging.
 
         Returns:
