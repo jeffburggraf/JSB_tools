@@ -1,4 +1,10 @@
-from openmc.data.reaction import REACTION_NAME
+import warnings
+from JSB_tools import no_openmc_warn
+try:
+    from openmc.data.reaction import REACTION_NAME
+except ModuleNotFoundError:
+    no_openmc_warn()
+
 import re
 
 mt_data = {11: {'level': 0, 'name': '2nd', 'outz': 1, 'outn': 3}, 16: {'level': 0, 'name': '2n', 'outz': 0, 'outn': 2},

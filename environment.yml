@@ -5,8 +5,7 @@ dependencies:
   - root    # Problem on Windows
   - openmc  # Problem on Windows
   - python=3.9
-  - numpy
-  - numba
+  - numpy=1.23.3
   - numdifftools  # for lmfit internal
   - scipy
   - uncertainties

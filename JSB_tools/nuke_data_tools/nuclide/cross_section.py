@@ -8,12 +8,11 @@ import re
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import pickle
-from openmc.data import IncidentNeutron
 from logging import warning as warn
-from JSB_tools.nuke_data_tools.nuclide.gen_mt_dict import mt_data, REACTION_NAME
+from JSB_tools.nuke_data_tools.nuclide.gen_mt_dict import mt_data
 try:
     from openmc.data import ATOMIC_NUMBER, ATOMIC_SYMBOL, Tabulated1D, Evaluation, Reaction, Product, \
-        ResonancesWithBackground
+        ResonancesWithBackground, IncidentNeutron
 except ModuleNotFoundError:
     openmc = None
     from JSB_tools import no_openmc_warn
