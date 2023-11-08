@@ -46,11 +46,11 @@ from matplotlib.colors import Colormap
 from scipy.integrate import trapezoid
 from numbers import Number
 from matplotlib.widgets import AxesWidget, RadioButtons, cbook
-# try:
-#     import ROOT as _ROOT
-#     root_exists = True
-# except ModuleNotFoundError:
-#     root_exists = False
+try:
+    import ROOT as _ROOT
+    root_exists = True
+except ModuleNotFoundError:
+    root_exists = False
 
 cwd = Path(__file__).parent
 

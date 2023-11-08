@@ -2,8 +2,8 @@ name: JSB_tools_3.9
 channels:
   - conda-forge
 dependencies:
-  - root    # Problem on Windows
-  - openmc  # Problem on Windows
+#  - root    # Problem on Windows
+#  - openmc  # Problem on Windows
   - python=3.9
   - numpy=1.23.3
   - numdifftools  # for lmfit internal
@@ -11,7 +11,6 @@ dependencies:
   - uncertainties
   - matplotlib
   - sortedcontainers
-  - bitstring
   - pandas
   - plotly
   - lmfit
