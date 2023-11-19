@@ -1,4 +1,14 @@
-from JSB_tools.MCNP_helper.materials import Material
 
-for percent in [0.1, 0.2, 0.3, 0.4, 0.4, 0.6, 0.7, 0.8, 0.9, 1]:
-    mat = Material.gas(['He', 'Ar'], atom_fractions=[1-percent, percent], )
+
+s = "Whose this? Lol jk I know it's you Cute SHelly omfg ur so pretty I've missed you how are you what have you been up to how's lyric?! "
+s = s.lower()
+
+# f = ""
+f = ''.join([x.upper() if i % 2 == 0 else x for i, x in enumerate(s.lower())])
+# for i, x in enumerate(s):
+#    if i%2 ==0:
+#        f += x.upper()
+#    else:
+#        f += x
+
+print(f)
