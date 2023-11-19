@@ -1,5 +1,0 @@
-Download JEFF-3.x from ' https://fispact.ukaea.uk/nuclear-data/downloads/'. You should find a file titled
-'general decay data' in the list. Put these decay files into the directory titled './decay_JEFF'
-
-Download ENDF decay data from https://www.nndc.bnl.gov/endf/b8.0/download.html and put the decay files into the directory
-titled './decay_ENDF'

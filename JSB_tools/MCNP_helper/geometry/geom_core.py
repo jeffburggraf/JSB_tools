@@ -17,8 +17,57 @@ Base class definitions for geometry primitives defined in primitives.py
 #  todo: In outp_reader, return a Cell instance (the one defnied here). Impliment this in the Cell class,
 #   e.g. a from_outp method
 
+
 class Surface(GeomSpecMixin, metaclass=ABCMeta):
     all_surfs = MCNPNumberMapping('Surface', 1)
+
+    def delete(self):
+        try:
+            del Surface.all_surfs[self.surface_number]
+        except KeyError:
+            pass
+        try:
+            super(Surface, self).delete()
+        except AttributeError:
+            pass
+
+    @staticmethod
+    def global_zmin():
+        """
+        Return the largest .zmax attribute of all surfaces.
+        Returns:
+
+        """
+        _min = None
+        for c in Surface.all_surfs.values():
+            try:
+                if _min is None:
+                    _min = c.z0
+                else:
+                    if c.z0 < _min:
+                        _min = c.z0
+            except AttributeError:
+                continue
+        return _min
+
+    @staticmethod
+    def global_zmax():
+        """
+        Return the largest .zmax attribute of all surfaces.
+        Returns:
+
+        """
+        _max = None
+        for c in Surface.all_surfs.values():
+            try:
+                if _max is None:
+                    _max = c.z1
+                else:
+                    if c.z1 > _max:
+                        _max = c.z1
+            except AttributeError:
+                continue
+        return _max
 
     @staticmethod
     def clear():
@@ -28,7 +77,7 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
                  surface_name: Union[str, None] = None,
                  surface_comment: Union[str, None] = None):
         self.__name__ = surface_name
-        self.surface_number = surface_number
+        self.surface_number: int = surface_number
         self.surface_comment = surface_comment
         Surface.all_surfs[self.surface_number] = self
         self.surface = self
@@ -78,6 +127,9 @@ class TRCL:
         else:
             self.rotation_matrix = get_rotation_matrix(rotation_theta, *rotation_axis, _round=_round)
 
+    def eval(self, vec):
+        return self.offset_vector + np.matmul(self.rotation_matrix, vec)
+
     def cell_form(self):
         return f'({self})'
 
@@ -98,6 +150,26 @@ class Cell(GeomSpecMixin):
         like_but: Create a new cell using MCNP's LIKE BUT feature.
     """
     all_cells: Dict[int, Cell] = MCNPNumberMapping('Cell', 10)
+
+    def delete(self):
+        try:
+            del Cell.all_cells[self.cell_number]
+        except KeyError:
+            pass
+        try:
+            super(Cell, self).delete()
+        except AttributeError:
+            pass
+
+    @classmethod
+    def find_cell(cls, cell_name):
+        available_cells = []
+        for cell in Cell.all_cells.values():
+            if cell.cell_name == cell_name:
+                return cell
+            available_cells.append(cell.cell_name)
+        available_cells = '\n'.join(available_cells)
+        raise ValueError(f"Cell {cell_name} not found! Available cells:\n{available_cells}")
 
     @staticmethod
     def clear():
@@ -136,7 +208,7 @@ class Cell(GeomSpecMixin):
         """
         MCNP cell assistant.
         Args:
-            material: MCNP material number or Material instance
+            material: MCNP material number or Material instance. 0/None for void
             geometry: Cell geom. spec. Can use Surfaces/Cells with operators ~, &, +, and -.
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
             cell_number: Cell number. If None, automatically choose a cell number.
@@ -148,14 +220,17 @@ class Cell(GeomSpecMixin):
 
         self.cell = self
         self.__name__ = cell_name
-        self.cell_number = cell_number
+        self.cell_number: int = cell_number
         if importance is not None:
-            assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
-                                                                             "for example, ('np', 1)"
-            self.importance = [importance[0], importance[1]]
-            self.importance[0] = self.importance[0].replace(' ', '')
+            if not isinstance(importance, str):
+                assert hasattr(importance, '__iter__') and len(importance) == 2, "Format for specifying importance is, " \
+                                                                                 "for example, ('np', 1)"
+                self.importance = [importance[0], importance[1]]
+                self.importance[0] = self.importance[0].replace(' ', '')
 
-            self.importance[0] = self.importance[0].replace(',', '')  # remove commas added by the user.
+                self.importance[0] = self.importance[0].replace(',', '')  # remove commas added by the user.
+            else:
+                self.importance = importance
         else:
             self.importance = importance
 
@@ -175,16 +250,16 @@ class Cell(GeomSpecMixin):
         self.trcl = trcl
         if 'from_outp' not in kwargs:
             self.__from_outp__ = False  # For cells reconstructed from MCNP outp
-            Cell.all_cells[cell_number] = self
+            Cell.all_cells[self.cell_number] = self
         else:
             self.__from_outp__ = True
         GeomSpecMixin.__init__(self)
         self.__like_but_kwargs__ = {}
         self.__like_but_number__ = None
 
-        if self.importance is None and not self.__from_outp__:
-            warn(f'Importance of cell {self.cell_name if self.cell_name is not None else self.cell_number}'
-                 f' is not specified')
+        # if self.importance is None and not self.__from_outp__:
+        #     warn(f'Importance of cell {self.cell_name if self.cell_name is not None else self.cell_number}'
+        #          f' is not specified')
 
         self.enabled = True
 
@@ -198,7 +273,7 @@ class Cell(GeomSpecMixin):
     def set_volume_kwarg(self, vol: float):
         """
         Set volume to be used internally by MCNP for this cell. Set to 1 to normalize volume out of
-                tallies (e.g. to get an F4 tally in units of track length per source particle)
+                tallies (e.g. to get an F4 tally_n in units of track length per source particle)
 
         Returns: None
         """
@@ -220,6 +295,10 @@ class Cell(GeomSpecMixin):
     @property
     def cell_name(self) -> str:
         return self.__name__
+
+    @cell_name.setter
+    def cell_name(self, value):
+        self.__name__ = value
 
     def offset(self, offset_vector: Sized[float]):
         """
@@ -319,10 +398,13 @@ class Cell(GeomSpecMixin):
     def __get_imp_str__(imp=None):
         if imp is None:
             return ''
-        assert hasattr(imp, '__iter__') and len(imp) == 2 and isinstance(imp[0], str), \
-            'Importance, "{}", not specified properly. Correct example: ("np", 1)'.format(imp)
+        if not isinstance(imp, str):
+            assert hasattr(imp, '__iter__') and len(imp) == 2 and isinstance(imp[0], str), \
+                'Importance, "{}", not specified properly. Correct example: ("np", 1)'.format(imp)
 
-        return 'imp:{}={}'.format(','.join(imp[0]), int(imp[1]))
+            return 'imp:{}={}'.format(','.join(imp[0]), int(imp[1]))
+        else:
+            return imp
 
     @property
     def geometry(self):

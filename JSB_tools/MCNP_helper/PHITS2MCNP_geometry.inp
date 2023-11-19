@@ -1,0 +1,9 @@
+PHITS geometry plotter
+c Cells
+@'\n'.join([f"{cell.cell_number} {0 if isinstance(cell.material, PHITSOuterVoid) else cell.material.mat_number} {'' if cell.material.mat_number in [0, 1] else '1'} {cell.geometry} {'imp:n=0' if isinstance(cell.material, PHITSOuterVoid) else 'imp:n=1'}" for cell in Cell.all_cells.values()])@
+
+c Surfaces
+@Surface.get_all_surface_cards()@
+
+c
+@'\n'.join([f"M{i} 1000 1" for i in Material.all_materials])@

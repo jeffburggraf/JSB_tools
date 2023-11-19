@@ -1,0 +1,26 @@
+Simple spherical geom with source at center
+c Cells
+c
+@Cell.get_all_cell_cards()@
+c
+c
+
+c Surfs
+c
+@Surface.get_all_surface_cards()@
+c
+c
+
+c Data
+c
+c Data cards
+mode @par@
+SDEF
+     pos 0 0 0
+     par=@par@
+     erg=D1
+nps=@int(nps)@
+SI1 L @" ".join(map(str, ergs))@
+SP1 @ "1 "*len(ergs)@
+@Material.get_all_material_cards()@
+PTRAC FILE=ASC MAX=1E12 EVENT=SUR,SRC

@@ -13,7 +13,7 @@ import numpy as np
 from JSB_tools.MCNP_helper.materials import Material as mat
 from JSB_tools.MCNP_helper.materials import PHITSOuterVoid
 
-NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
+NDIGITS = 10  # Number of significant digits to round all numbers to when used in input decks.
 
 
 __all__ = ['clear_all', 'clear_all_but_materials', 'clear_cells', 'clear_surfaces']
@@ -44,6 +44,7 @@ def clear_all():
     Surface.clear()
 
 
+
 class SphereSurface(Surface):
     def __init__(self, radius, x=0, y=0, z=0, surf_name=None, surf_num=None, comment=None):
         super(SphereSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
@@ -51,6 +52,14 @@ class SphereSurface(Surface):
         self.x = x
         self.y = y
         self.z = z
+
+    @property
+    def z1(self):  # max z
+        return self.z + self.radius
+
+    @property
+    def z0(self):  # min z
+        return self.z0 - self.radius
 
     @property
     def volume(self):
@@ -64,21 +73,49 @@ class SphereSurface(Surface):
         return out
 
 
+class SphereCell(Cell, SphereSurface):
+    def __init__(self, radius, x=0, y=0, z=0,
+                 material: Union[int, mat, PHITSOuterVoid] = 0,
+                 importance: Union[None, Tuple[str, int]] = None,
+                 cell_name: str = None,
+                 cell_num: int = None, cell_comment: str = None,
+                 cell_kwargs=None, surf_name=None, surf_num=None, comment=None, **kwargs):
+
+        super(SphereCell, self).__init__(material=material, importance=importance, cell_number=cell_num,
+                                         cell_name=cell_name, cell_comment=cell_comment, cell_kwargs=cell_kwargs)
+
+        super(Cell, self).__init__(radius=radius, x=x, y=y, z=z, surf_name=surf_name, surf_num=surf_num,
+                                   comment=comment)
+
+
 class CuboidSurface(Surface):
-    def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax, surf_name=None, surf_num=None, comment=None):
-        super(CuboidSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
-        for kmin, kmax in zip([xmin, ymin, zmin], [xmax, ymax, zmax]):
-            assert kmin != kmax, 'Cuboid with minimum coordinate equals maximum coordinate: " == {}'.format(kmax, kmax)
+    @classmethod
+    def square(cls, width,
+               z0, z1=None, dz=None,
+               surf_name: str = None, surf_number: int = None,
+               comment: str = None):
+        return cls(-width/2, width/2, -width/2, width/2, z0=z0, z1=z1, dz=dz, surf_name=surf_name,
+                   surf_number=surf_number, comment=comment)
 
-        self.xmin = xmin
-        self.xmax = xmax
-        self.ymin = ymin
-        self.ymax = ymax
-        self._zmin = zmin
-        self._zmax = zmax
-
-        if self._zmin > self._zmax:
-            self._zmax, self._zmin = self._zmin, self._zmax
+    def __init__(self, x0, x1, y0, y1, z0, z1=None, dz=None, surf_name=None, surf_number=None, comment=None):
+        super(CuboidSurface, self).__init__(surface_number=surf_number, surface_name=surf_name, surface_comment=comment)
+        for coord, kmin, kmax in zip(['x', 'y', 'z'], [x0, y0, z0], [x1, y1, z1]):
+            assert kmin != kmax, f'Provided min and max {coord} coordinates of Cuboid are equal: ' \
+                                 f'"{coord}0={coord}1={kmin}'
+        assert not (dz is None and z1 is None), 'Must set either dz or z1!'
+        if z1 is None:
+            assert dz is not None, 'Must supply either `dz` r `z1`'
+            z1 = z0 + dz
+        else:
+            assert dz is None, 'Cannot supply `z1` and `dz`'
+        if z0 > z1:
+            z0, z1 = z1, z0
+        self.x0 = x0
+        self.x1 = x1
+        self.y0 = y0
+        self.y1 = y1
+        self.z0 = z0
+        self.z1 = z1
 
     @classmethod
     def from_thickness_and_widths(cls, z0, dz, x_width, y_width, x_center=0, y_center=0, orientation='xyz', surf_name=None, surf_num=None,
@@ -105,51 +142,59 @@ class CuboidSurface(Surface):
             dz = abs(dz)
             z0 = z0 - dz
 
-        return CuboidSurface(xmin=x_center-x_width/2, ymin=y_center-y_width/2, zmin=z0, xmax=x_center + x_width/2,
-                             ymax=y_center+y_width/2, zmax=z0+dz, surf_name=surf_name, surf_num=surf_num,
+        return CuboidSurface(x0=x_center - x_width / 2, y0=y_center - y_width / 2, z0=z0, x1=x_center + x_width / 2,
+                             y1=y_center + y_width / 2, z1=z0 + dz, surf_name=surf_name, surf_number=surf_num,
                              comment=comment)
+
+    def cross_section_area(self, axis='s'):
+        try:
+            return self.volume/{'x': self.dx, 'y': self.dz, 'z': self.dz}[axis.lower()]
+        except KeyError:
+            raise ValueError(f'Invalid axis, "{axis}".')
+
+    @property
+    def dx(self):
+        return self.x1 - self.x0
+
+    @property
+    def dy(self):
+        return self.y1 - self.y0
 
     @property
     def dz(self):
-        return self._zmax - self._zmin
+        return self.z1 - self.z0
 
     @dz.setter
-    def dz(self, other):
-        self._zmax = self._zmin + other
+    def dz(self, value):
+        raise AttributeError("`dz` cannot be set via property. Use self.set_dz(dz).")
 
-    @property
-    def zmax(self):
-        return self._zmax
+    def set_dz(self, dz, fix_max=False):
+        """
 
-    @zmax.setter
-    def zmax(self, other):
-        dz = self.dz
-        self._zmax = other
-        self._zmin = self.zmax - dz
+        Args:
+            dz: Delta in the z-coordinate
+            fix_max: If True, move min to alter self.dz, else, move max instead
 
-    @property
-    def zmin(self):
-        return self._zmin
+        Returns:
 
-    @zmin.setter
-    def zmin(self, other):
-        dz = self.dz
-        self._zmin = other
-        self._zmax = self.zmin + dz
+        """
+        if fix_max:
+            self.z0 = self.z1 - dz
+        else:
+            self.z1 = self.z0 + dz
 
     @property
     def volume(self):
-        return (self.xmax - self.xmin) * (self.ymax - self.ymin) * (self.zmax - self.zmin)
+        return (self.x1 - self.x0) * (self.y1 - self.y0) * (self.z1 - self.z0)
 
     @property
     def surface_card(self):
         comment = get_comment(self.surface_comment, self.surface_name)
-        out = f'{self.surface_number} RPP {self.xmin:.{NDIGITS}g} {self.xmax:.{NDIGITS}g}  ' \
-              f'{self.ymin:.{NDIGITS}g} {self.ymax:.{NDIGITS}g}  {self.zmin:.{NDIGITS}g} {self.zmax:.{NDIGITS}g}' \
+        out = f'{self.surface_number} RPP ' \
+              f'{self.x0:.{NDIGITS}g} {self.x1:.{NDIGITS}g} ' \
+              f'{self.y0:.{NDIGITS}g} {self.y1:.{NDIGITS}g} ' \
+              f'{self.z0:.{NDIGITS}g} {self.z1:.{NDIGITS}g}' \
               f' {comment}'
-        # return '{0} RPP {xmin} {xmax}  {ymin} {ymax}  {zmin} {zmax} {comment}' \
-        #     .format(self.surface_number, xmin=self.xmin, xmax=self.xmax, ymin=self.ymin, ymax=self.ymax, zmin=zmin,
-        #             zmax=self.zmax, comment=comment)  # old
         return out
 
 
@@ -163,7 +208,22 @@ class CuboidCell(Cell, CuboidSurface):
         c1.surface_card  # string of the surface card
 
     """
-    def __init__(self, xmin, xmax, ymin, ymax, zmin, zmax=None, dz=None,
+    @classmethod
+    def square(cls, width,
+               z0, z1=None, dz=None,
+               material: Union[int, mat, PHITSOuterVoid] = 0,
+               cell_name: str = None,
+               importance: Union[None, Tuple[str, int]] = None,
+               cell_num: int = None, cell_comment: str = None,
+               surf_name: str = None, surf_number: int = None,
+               surf_comment: str = None, cell_kwargs=None):
+
+        return cls(-width/2, width/2, -width/2, width/2, z0=z0, z1=z1, dz=dz, material=material,
+                   cell_name=cell_name, importance=importance, cell_num=cell_num, cell_comment=cell_comment,
+                   surf_name=surf_name, surf_number=surf_number, surf_comment=surf_comment, cell_kwargs=cell_kwargs)
+
+    def __init__(self, x0, x1, y0, y1,
+                 z0, z1=None, dz=None,
                  material: Union[int, mat, PHITSOuterVoid] = 0,
                  cell_name: str = None,
                  importance: Union[None, Tuple[str, int]] = None,
@@ -172,13 +232,13 @@ class CuboidCell(Cell, CuboidSurface):
                  surf_comment: str = None, cell_kwargs=None):
         """
         Args:
-            xmin:  min x
-            xmax: max x
-            ymin: etc...
-            ymax: ...
-            zmin: ...
-            zmax: ...
-            dz: If zmax is None, then zmx = zmin + dz
+            x0:  min x
+            x1: max x
+            y0: etc...
+            y1: ...
+            z0: ...
+            z1: ...
+            dz: If z1 is None, then z1 = z0 + dz
             importance: Cell importance. e.g. ("np", 1) -> neutron and photon importance = 1
             material: MCNP material number
             cell_name:  For use in outpreader.py for looking up cell and tallies by name.
@@ -189,10 +249,6 @@ class CuboidCell(Cell, CuboidSurface):
             surf_comment:
             cell_kwargs:  Additional keyword arguments to be used in cell card, i.g. vol=1
         """
-
-        assert not (zmax is dz is None), 'Must specify either `zmax` or `dz`.'
-        if zmax is None:
-            zmax = zmin + dz
 
         if cell_name is not None:
             if surf_name is None:
@@ -209,12 +265,8 @@ class CuboidCell(Cell, CuboidSurface):
              cell_comment=cell_comment,
              cell_kwargs=cell_kwargs
              )
-        super(Cell, self).__init__(xmin, xmax, ymin, ymax, zmin, zmax, surf_name=surf_name, surf_num=surf_number,
+        super(Cell, self).__init__(x0, x1, y0, y1, z0, z1=z1, dz=dz, surf_name=surf_name, surf_number=surf_number,
                                    comment=surf_comment)
-
-    # def copy(self, new_importance: Union[Tuple[int, str], type(None)] = None, new_material=None, new_density=None,
-    #          new_cell_name=None, new_cell_num=None, new_cell_comment=None) -> CuboidCell:
-    #     pass
 
     @property
     def volume(self):
@@ -267,30 +319,34 @@ class RightCylinderSurface(Surface):
         return cls(radius=radius, x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, surf_name=surf_name, surf_num=surf_num,
                    comment=comment)
 
-    def set_z_limits(self, zmin, zmax):
-        assert zmin < zmax
-        self.dz = zmax-zmin
-        self.z0 = zmin
+    def set_z_range(self, z0, z1):
+        assert z0 < z1
+        self.dz = z1-z0
+        self.z0 = z0
 
     @property
     def z_mid(self):
-        return (self.zmin + self.zmax)/2
+        return (self.z0 + self.z1)/2
 
     @property
-    def zmax(self):
+    def z1(self):
         return self.z0 + self.dz
 
-    @zmax.setter
-    def zmax(self, other):
-        self.z0 = other-self.dz
-
-    @property
-    def zmin(self):
-        return self.z0
-
-    @zmin.setter
-    def zmin(self, other):
-        self.z0 = other
+    # def set_dz(self, other, fix_max=False):
+    #     """
+    #
+    #     Args:
+    #         other:
+    #         fix_max: If True, move min to alter self.dz, else, move max instead
+    #
+    #     Returns:
+    #
+    #     """
+    #     if fix_max:
+    #         self.z0 = self.z1 - other
+    #         self.dz = other
+    #     else:
+    #         self.dz = other
 
     @property
     def xmax(self):
@@ -307,15 +363,15 @@ class RightCylinderSurface(Surface):
 
     @property
     def surface_card(self):
-        assert not self.dx == self.dy == self.dz == 0, 'dx, dy, and dz cannot all be zero!'
+        assert not self.dx == self.dy == self.dz == 0, f'dx, dy, and dz cannot all be zero! In Surface {self}'
 
         comment = get_comment(self.surface_comment, self.surface_name)
-        out = f"{self.surface_number} RCC {self.x0:.{NDIGITS}g} {self.y0:.{NDIGITS}g} {self.z0:.{NDIGITS}g}" \
-              f"  {self.dx:.{NDIGITS}g} {self.dy:.{NDIGITS}g} {self.dz:.{NDIGITS}g} {self.radius:.{NDIGITS}g}" \
+        out = f"{self.surface_number} RCC " \
+              f"{self.x0:.{NDIGITS}g} {self.y0:.{NDIGITS}g} {self.z0:.{NDIGITS}g}  " \
+              f"{self.dx:.{NDIGITS}g} {self.dy:.{NDIGITS}g} {self.dz:.{NDIGITS}g} " \
+              f"{self.radius:.{NDIGITS}g}" \
               f" {comment}"
-        # out = '{0} RCC {x0} {y0} {z0}  {dx} {dy} {dz} {r} {comment}' \
-        #     .format(self.surface_number, x0=self.x0, y0=self.y0, z0=self.z0, dx=self.dx, dy=self.dy,
-        #             dz=self.dz, r=self.radius, comment=comment)
+
         return out
 
 
@@ -326,13 +382,14 @@ class RightCylinder(Cell, RightCylinderSurface):
                  x0: float = 0, y0: float = 0, z0: float = 0,
                  dx: float = 0, dy: float = 0, dz: float = 0, cell_name: str = None,
                  cell_num: int = None, cell_comment: str = None,
-                 surf_number: int = None,
-                 surf_comment: str = None, cell_kwargs=None):
+                 surf_num: int = None,
+                 surf_comment: str = None,
+                 surf_name: str = None,
+                 cell_kwargs=None):
 
-        if cell_name is not None:
+        if surf_name is None:
             surf_name = cell_name
-        else:
-            surf_name = None
+
         if cell_comment is not None:
             if surf_comment is None:
                 surf_comment = cell_comment
@@ -350,7 +407,29 @@ class RightCylinder(Cell, RightCylinderSurface):
                                             cell_number=cell_num, cell_name=cell_name, cell_comment=cell_comment,
                                             cell_kwargs=cell_kwargs)
         super(Cell, self).__init__(x0=x0, y0=y0, z0=z0, dx=dx, dy=dy, dz=dz, radius=radius, surf_name=surf_name,
-                                   surf_num=surf_number, comment=surf_comment)
+                                   surf_num=surf_num, comment=surf_comment)
+
+    @classmethod
+    def from_min_max_coords(cls, radius: float, x0: float = 0, y0: float = 0, z0: float = 0,
+                            x1: float = 0, y1: float = 0, z1: float = 0,
+                            material: Union[int, mat, PHITSOuterVoid] = 0,
+                            importance: Union[None, Tuple[str, int]] = None,
+                            cell_name: str = None,
+                            cell_num: str = None,
+                            cell_comment: str = None,
+                            surf_name: str = None,
+                            surf_num: Union[int, str] = None,
+                            comment: str = None,
+                            cell_kwargs: dict = None):
+        return cls(radius, material=material, importance=importance,
+                   x0=x0, dx=x1-x0,
+                   y0=y0, dy=y1-y0,
+                   z0=z0, dz=z1-z0,
+                   cell_name=cell_name, cell_num=cell_num, cell_comment=cell_comment, surf_num=surf_num,
+                   surf_name=surf_name, cell_kwargs=cell_kwargs
+                   )
+
+
 
 
 if __name__ == '__main__':

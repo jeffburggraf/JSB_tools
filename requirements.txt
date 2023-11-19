@@ -1,15 +1,19 @@
-setuptools~=50.3.0
-numpy~=1.19.5
+setuptools>=57.4.0
+numpy>=1.21.2
 scipy>=1.5.2
-uncertainties~=2.4.4
-matplotlib>=3.3.2
-openmc~=0.12.1.dev0
-pip>=19.2.3
-lmfit~=1.0.1
-scikit-learn~=0.24.1
-sortedcontainers~=2.3.0
-winfiletime~=1.0
-
-root~=6.22.8
-pytz~=2021.1
-bitstring~=3.1.7
+uncertainties>=2.4.4
+matplotlib>=3.6.0
+openmc>=0.13.1
+lmfit>=1.0.1
+sortedcontainers>=2.3.0
+numdifftools
+winfiletime
+root
+bitstring
+# bokeh~=2.3.3
+# param~=1.12.0
+pandas
+plotly>=5.3.1
+openssl~=1.1.1l
+cycler~=0.11.0
+# python-dateutil~=2.8.2

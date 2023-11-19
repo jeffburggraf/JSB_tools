@@ -5,6 +5,7 @@ import re
 import ROOT
 import numpy as np
 import time
+from typing import Tuple
 from typing import List, Union,  Dict
 import shutil
 from JSB_tools import ProgressReport
@@ -13,6 +14,7 @@ cwd = Path(__file__).parent
 
 
 class Branch:
+    __padding = None  # Set in Branch.text_heading
     all_branches: List[Branch] = []
 
     @staticmethod
@@ -104,7 +106,19 @@ class _Header:
 
         n_ids = list(map(int, line.split()[:11]))
         self.ids = []
-        ids = list(map(int, " ".join([file.readline() for i in range(3)]).split()))
+
+        ids = []
+        #  (bug fix) Replaced line below with regex that terminates header at correct position more generally
+        # ids = list(map(int, " ".join([file.readline() for i in range(3)]).split()))
+        while True:  # (Bug fix Jan/Germany2022)
+            pos = file.tell()
+            line = file.readline()
+            if re.match('^( {0,7}[0-9]{1,2})+$', line):
+                ids.extend(map(int, line.split()))
+            else:
+                file.seek(pos)
+                break
+
         indicies = [0] + list(np.cumsum(n_ids))
         for i1, i2 in zip(indicies[:-1], indicies[1:]):
             self.ids.append(ids[i1: i2])
@@ -114,7 +128,21 @@ root_files = []  # for ROOT file persistence
 
 
 def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Union[None, int] = None, write_2_text=False,
-               copy_lookup_files=False):
+               write_lookup_file=True) -> Tuple[Path, ROOT.TTree]:
+    """
+    Save MCNP PTRAC data to a ROOT TTree.
+
+    Args:
+        ptrac_path: Abs. path to PTRAC text file.
+        root_file_name: Name of root TFile file containing Tree. None for automatic, which just adds ".root" to original file.
+        max_events: Stop after writing this many events.
+        write_2_text: Probably doesnm't work... but writes text file.
+        write_lookup_file: Write a text file in current directory with info on MT values, term values, etc.
+
+    Returns:
+        (path to TFile containing Tree, TTree object)
+
+    """
     ptrac_path = Path(ptrac_path)
     assert ptrac_path.exists()
     file = open(ptrac_path)
@@ -131,27 +159,27 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
     # mat is just an integer starting from 1, ie not the material number
 
     #  Below  is a dict mapping variable IDs to branch containers. Uninteresting variables,  e.g. _next_event, are
-    #   are stings  and thus are not stored in TTree.
+    #   are stings  and thus are not stored in the TTree.
     var_id_to_branches = {1: Branch('nps', tree),
-                       2: '_next_event',
-                       4: Branch('next_sur', tree),
-                       7: "_next_event",
-                       10: Branch('zaid', tree),
-                       11: Branch('ntyn', tree),
-                       12: Branch('surf', tree),
-                       13: Branch('surf_theta', tree),
-                       14: Branch('term', tree),
-                       16: Branch('par', tree),
-                       17: Branch('cell', tree),
-                       20: Branch('x', tree),
-                       21: Branch('y', tree),
-                       22: Branch('z', tree),
-                       23: Branch('dirx', tree),
-                       24: Branch('diry', tree),
-                       25: Branch('dirz', tree),
-                       26: Branch('erg', tree),
-                       27: Branch('wgt', tree),
-                       28: Branch('time', tree)}
+                          2: '_next_event',
+                          4: Branch('next_sur', tree),
+                          7: "_next_event",
+                          10: Branch('zaid', tree),
+                          11: Branch('ntyn', tree),
+                          12: Branch('surf', tree),
+                          13: Branch('surf_theta', tree),
+                          14: Branch('term', tree),
+                          16: Branch('par', tree),
+                          17: Branch('cell', tree),
+                          20: Branch('x', tree),
+                          21: Branch('y', tree),
+                          22: Branch('z', tree),
+                          23: Branch('dirx', tree),
+                          24: Branch('diry', tree),
+                          25: Branch('dirz', tree),
+                          26: Branch('erg', tree),
+                          27: Branch('wgt', tree),
+                          28: Branch('time', tree)}
 
     def dict_get(ids) -> List[int, Union[Branch, str, None]]:
 
@@ -167,13 +195,15 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
             except KeyError:
                 out.append(None)
         return out
-
-    patterns = {9000: (dict_get(header.ids[0]),),
-                1000: (dict_get(header.ids[1]), dict_get(header.ids[2])),
-                2000: (dict_get(header.ids[3]), dict_get(header.ids[4])),
-                3000: (dict_get(header.ids[5]), dict_get(header.ids[6])),
-                4000: (dict_get(header.ids[7]), dict_get(header.ids[8])),
-                5000: (dict_get(header.ids[9]), dict_get(header.ids[10]))}
+    try:
+        patterns = {9000: (dict_get(header.ids[0]),),
+                    1000: (dict_get(header.ids[1]), dict_get(header.ids[2])),
+                    2000: (dict_get(header.ids[3]), dict_get(header.ids[4])),
+                    3000: (dict_get(header.ids[5]), dict_get(header.ids[6])),
+                    4000: (dict_get(header.ids[7]), dict_get(header.ids[8])),
+                    5000: (dict_get(header.ids[9]), dict_get(header.ids[10]))}
+    except IndexError as e:
+        raise ValueError(f"Not able to process file! Are you sure this is an MCNP PTRAC file? ({e})")
 
     n_events = 0
     expected_event = 9000
@@ -188,9 +218,11 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         text_file = open(ptrac_path.with_suffix('.csv'), 'w')
         text_file.write(Branch.text_heading())
 
-    finish_point = file.tell() if max_events is None else max_events
+    finish_point = Path(ptrac_path).stat().st_size if max_events is None else max_events
     current_position = (lambda: file.tell()) if not max_events else (lambda: n_events)
     proj = ProgressReport(finish_point)  # for printing remaining time to stdout
+
+    linenum_debug = 1
 
     while max_events is None or n_events < max_events:
         # For each event type (SRC, BNK, stc) `pattern` is a mapping between variable positions
@@ -198,6 +230,8 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
         pattern = patterns[1000 * (expected_event // 1000)]
 
         lines = [file.readline() for _ in range(len(pattern))]  # for all evt types  except 1000, read two lines.
+
+        linenum_debug += len(pattern)
 
         if lines[-1] == '':  # end of file
             break
@@ -234,12 +268,12 @@ def ptrac2root(ptrac_path: Union[Path, str], root_file_name=None, max_events: Un
     file.close()
 
     copied_lookup_file_path = ptrac_path.parent/'lookup.txt'
-    if copy_lookup_files and not copied_lookup_file_path.exists():
+    if write_lookup_file and not copied_lookup_file_path.exists():
         lookup_file_path = Path(cwd / 'lookup.txt')
         shutil.copy(lookup_file_path, copied_lookup_file_path)
 
     Branch.all_branches = []
-    return tree
+    return root_file_path, tree
 
 
 class TTreeHelper:
@@ -247,7 +281,7 @@ class TTreeHelper:
 
     def __init__(self, path):
         path = Path(path)
-        assert path.exists()
+        assert path.exists(), path
         self.root_file = ROOT.TFile(str(path))
         TTreeHelper.root_files.append(self.root_file)
         self.tree = self.root_file.Get('tree')

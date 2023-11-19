@@ -13,14 +13,11 @@ try:
 except (ModuleNotFoundError, AssertionError):
     pass
 import pickle
-from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping
-import sys
+from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping, PHITSOuterVoid
 import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
-from types import ModuleType
-from abc import abstractmethod, ABC
 
-NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
+NDIGITS = 5  # Number of significant digits to round all numbers to when used in input decks.
 
 
 def _split_line(line):
@@ -73,7 +70,7 @@ class MCNPSICard:
     used_numbers = set()
 
     @staticmethod
-    def reset_si_numbers():
+    def clear_all():
         MCNPSICard.used_numbers = set()
 
     @staticmethod
@@ -107,7 +104,7 @@ class MCNPSICard:
             si_card_number = MCNPSICard.get_next_si_number()
         else:
             assert isinstance(si_card_number, int), '`si_card_number` must be an integer.'
-        self.si_card_number = si_card_number
+        self.si_card_number = int(si_card_number)
 
         if discrete:
             self.si_option = 'L'
@@ -120,8 +117,10 @@ class MCNPSICard:
         else:
             self.sp_option = ''
 
-        self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option, ' '.join(map(str, self.variable_values)))
-        self.card += 'SP{0} {1} {2}'.format(self.si_card_number, self.sp_option, ' '.join(map(str, self.variable_probs)))
+        self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option,
+                                             ' '.join(map(lambda x: f'{x:.4e}', self.variable_values)))
+        self.card += 'SP{0} {1} {2}'.format(self.si_card_number,
+                                            self.sp_option, ' '.join(map(lambda x: f'{x:.4e}', self.variable_probs)))
 
     @classmethod
     def from_function(cls, function, variable_values, si_card_number=None, discrete=False, *func_args, **func_kwargs):
@@ -162,39 +161,68 @@ class MCNPSICard:
 
 
 class TallyBase:
-    all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+    # all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+    all_tallies = {}
+
+    def __init__(self, tally_base_number, cell_or_number=None, tally_number=None, tally_name=None, tally_comment=None):
+        self.__tally_base_number__ = tally_base_number
+        if tally_number is not None:
+            assert isinstance(tally_number, (int, str))
+            assert str(tally_number)[-1] == str(tally_base_number), f"F{tally_base_number} tally number must end in " \
+                                                                    f"{tally_base_number}, not like '{tally_number}'"
+            tally_number = str(tally_number)
+            assert len(tally_number)>1, "Only use tally numbers with more than one digit."
+            tally_number = int(tally_number[:-1])
+
+        if tally_base_number not in TallyBase.all_tallies:
+            TallyBase.all_tallies[tally_base_number] = MCNPNumberMapping(f"F{tally_base_number}Tally", 1)
+
+        self._tally_number = tally_number
+
+        if isinstance(cell_or_number, Cell):
+            self.cell = cell_or_number
+            self.cell_number = self.cell.cell_number
+        else:
+            self.cell = None
+            self.cell_number = cell_or_number
+
+        self.__name__ = tally_name
+        self.tally_comment = tally_comment
+
+        TallyBase.all_tallies[tally_base_number][tally_number] = self
+
+    @property
+    def tally_number(self):
+        return int(f"{self._tally_number}{self.__tally_base_number__}")
 
     @staticmethod
     def clear():
-        TallyBase.all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
+        TallyBase.all_tallies = {}
 
     @staticmethod
     def get_all_tally_cards():
         outs = []
-        for tally in TallyBase.all_f4_tallies.values():
-            outs.append(tally.tally_card)
+        for _, mapping in TallyBase.all_tallies.items():
+            for tally in mapping.values():
+                outs.append(tally.tally_card)
         return '\n'.join(outs)
 
 
 class F4Tally(TallyBase):
-    def __init__(self, cell: Cell, particle: str, tally_number=None, tally_name=None, tally_comment=None):
+    def __init__(self, cell_or_number: Union[Cell, int, str], particle: str, tally_number=None,
+                 tally_name=None, tally_comment=None):
         """
         Args:
-            cell: Cell instance for which the tally will be applied
+            cell_or_number: Cell instance for which the tally_n will be applied (or cell number)
             particle: MCNP particle designator
             tally_number: Must end in a 4. Or, just leave as None and let the code pick for you
             tally_name:  Used in JSB_tools.outp_reader to fetch tallies by name.
             tally_comment:
         """
-        self.cell = cell
+
+        super().__init__(4, cell_or_number, tally_number, tally_name, tally_comment)
         assert isinstance(particle, str), 'Particle argument must be a string, e.g. "n", or, "p", or, "h"'
         self.erg_bins_array = None
-        self.tally_number = tally_number
-        if self.tally_number is not None:
-            assert str(self.tally_number)[-1] == '4', 'F4 tally number must end in a "4"'
-        self.__name__ = tally_name
-        self.tally_comment = tally_comment
-        TallyBase.all_f4_tallies[self.tally_number] = self
         self.__modifiers__ = []
 
         assert isinstance(particle, str), '`particle` argument must be a string.'
@@ -213,19 +241,19 @@ class F4Tally(TallyBase):
 
     def add_fission_rate_multiplier(self, mat: int) -> None:
         """
-        Makes this tally a fissionXS rate tally [fissions/(src particle)/cm3] for neutrons and protons
+        Makes this tally_n a fission xs rate tally_n [fissions/(src particle)/cm3] for neutrons and protons
         Args:
             mat: Material number
 
         Returns: None
 
         """
-        mod = 'FM{} -1 {mat} -2'.format(self.mcnp_tally_number, mat=mat)
+        mod = 'FM{} -1 {mat} -2'.format(self.tally_number, mat=mat)
         self.__modifiers__.append(mod)
 
-    @property
-    def mcnp_tally_number(self):
-        return int(str(self.tally_number) + '4')
+    # @property
+    # def mcnp_tally_number(self):
+    #     return int(str(self.tally_number) + '4')
 
     def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
         if erg_bins_array is not None:
@@ -244,17 +272,17 @@ class F4Tally(TallyBase):
     @property
     def tally_card(self):
         comment = get_comment(self.tally_comment, self.__name__)
-        out = 'F{num}:{par} {cell} {comment}'.format(num=self.mcnp_tally_number, par=self.particle,
-                                                     cell=self.cell.cell_number, comment=comment)
+        out = 'F{num}:{par} {cell} {comment}'.format(num=self.tally_number, par=self.particle,
+                                                     cell=self.cell_number, comment=comment)
         if self.erg_bins_array is not None:
-            out += '\nE{num} {bins}'.format(num=self.mcnp_tally_number, bins=' '.join(map(str, self.erg_bins_array)))
-
-        out += '\n'.join(self.__modifiers__)
+            out += '\nE{num} {bins}'.format(num=self.tally_number, bins=' '.join(map(str, self.erg_bins_array)))
+        if len(self.__modifiers__):
+            out += '\n' + '\n'.join(self.__modifiers__)
         return out
 
 
 class InputDeck:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, cleanup_msg=True, *args, **kwargs):
         assert '__internal__' in kwargs, '\nTo create an input file, use one of the two factory methods:\n' \
                                          '\tInputDeck.mcnp_input_deck(*args, **kwargs)\n' \
                                          '\tInputDeck.phits_input_deck(*args, **kwargs)'
@@ -283,8 +311,9 @@ class InputDeck:
             new_file_dir = self.inp_file_path.parent
         else:
             new_file_dir = Path(new_file_dir)
-            assert new_file_dir.exists() and new_file_dir.is_dir(), f'`new_file_dir` must be a directory that exists.\n' \
+            assert new_file_dir.parent.exists(), f'`new_file_dir` must be a directory that exists.\n' \
                                                                     f'"{new_file_dir}"'
+            new_file_dir.mkdir(exist_ok=True)
         self.inp_root_directory = new_file_dir
         self.directories_created = []
 
@@ -311,7 +340,15 @@ class InputDeck:
                     break
             else:
                 self.MCNP_EOF = len(self.inp_lines)
-        register(self.__del)
+
+        if cleanup_msg:
+            register(self.__del)
+
+    @staticmethod
+    def PHITS2MCNP_plotter(directory, new_file_name, dict_of_globals):
+        dict_of_globals['PHITSOuterVoid'] = PHITSOuterVoid
+        i = InputDeck.mcnp_input_deck(Path(__file__).parent/'PHITS2MCNP_geometry.inp', directory, cleanup_msg=False)
+        i.write_inp_in_scope(dict_of_globals, new_file_name, )
 
     def __split_new_lines__(self):
         title_line = self.__new_inp_lines__[0]  # Don't split the title line. MCNP sucks and won't allow it
@@ -393,15 +430,16 @@ class InputDeck:
                     else:
                         try:
                             evaluated = eval(exp_to_process, dict_of_globals)
-                            if isinstance(evaluated, float):
-                                _fmt = ':.{}g'.format(NDIGITS)
-                                evaluated = ('{' + _fmt + '}').format(evaluated)
-
-                            new_line += "{0}".format(evaluated)
                         except Exception as e:
                             err = _exception(str(e))
                             exception_msg += err
                             unregister(InputDeck.__del)  # Don't print closing messages if exception raised.
+                        else:
+                            if isinstance(evaluated, float):
+                                _fmt = f'.{NDIGITS}g'
+                                evaluated = f"{evaluated:{_fmt}}"
+
+                            new_line += "{0}".format(evaluated)
 
                     exp_to_process = None
                 else:
@@ -444,14 +482,30 @@ class InputDeck:
                     except TypeError:
                         pass
 
-    def write_inp_in_scope(self, dict_of_globals, new_file_name=None, script_name="cmd",
-                           **mcnp_or_phits_kwargs) -> Path:
+    def get_inp_path(self, new_file_name):
+        if new_file_name is None:
+            new_file_name = self.inp_file_path.name
+            _m = re.match(r"(.+)\..+", new_file_name)  # remove extension
+            if _m:
+                new_file_name = _m.groups()[0]
+
+            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
+        new_inp_directory = self.__create_directory_if_needed__(new_file_name)
+        new_file_full_path = new_inp_directory / new_file_name
+        return new_file_full_path
+
+    def write_inp_in_scope(self, dict_of_globals: Union[dict, List[dict]], new_file_name=None,
+                           script_name="cmd", overwrite_globals=None, **mcnp_or_phits_kwargs) -> Path:
         """
-        Creates and fills an input deck according to a dictionary of values. Usually, just use globals()
+        Creates and fills an input deck according to a dictionary of values. Usually, just use globals().
+
+        If the return path is needed but you don't want to run write_inp_in_scope, call self.get_inp_path().
+
         Args:
-            dict_of_globals:
-            new_file_name: name of generateed input file
+            dict_of_globals: Dict of scope. Usually just use globals(). Can also be a list of dicts.
+            new_file_name: name of generated input file
             script_name: Name of script to obe created that runs (all) simulation(s) automatically.
+            overwrite_globals: dictionary of variable names and values that will take precedence over globals()
             **mcnp_or_phits_kwargs: Command line args for MCNP or PHITS
 
         Returns: new_file_name
@@ -459,24 +513,26 @@ class InputDeck:
         """
         self.__has_called_write_inp_in_scope__ = True
 
+        if isinstance(dict_of_globals, list):
+            for d in dict_of_globals[1:]:
+                for k, v in d.items():
+                    dict_of_globals[0][k] = v
+
+            dict_of_globals = dict_of_globals[0]
+
         assert len(self.__new_inp_lines__) == 0
 
-        if new_file_name is None:
-            new_file_name = self.inp_file_path.name
-            _m = re.match(r"(.+)\..+", new_file_name)
-            if _m:
-                new_file_name = _m.groups()[0]
-
-            new_file_name = "{0}_{1}".format(self.__num_writes__, new_file_name)
-
-        new_inp_directory = self.__create_directory_if_needed__(new_file_name)
-        new_file_full_path = new_inp_directory / new_file_name
+        new_file_full_path = self.get_inp_path(new_file_name)
 
         exception_msgs = ""
         if self.is_mcnp:
             lines = self.inp_lines[:self.MCNP_EOF]
         else:
             lines = self.inp_lines
+
+        if overwrite_globals is not None:
+            dict_of_globals = {k: (v if k not in overwrite_globals else overwrite_globals[k])
+                               for k, v in dict_of_globals.items()}
 
         for line_num, line in enumerate(lines):
             line_num += 1
@@ -490,6 +546,7 @@ class InputDeck:
         if self.is_mcnp:
             self.__split_new_lines__()
             self.__new_inp_lines__.extend(self.inp_lines[self.MCNP_EOF:])
+
         if self.gen_run_script is True:
             self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs)
             if self.sch_cmd:
@@ -580,7 +637,6 @@ class InputDeck:
                     import inspect
                     cmds = inspect.getsource(__clean__)
                     rel_directories_created = [d.relative_to(self.inp_root_directory) for d in self.directories_created]
-                    # cmds += f'root_path = Path("{self.inp_root_directory}")\n'
                     cmds += '\n\n' + "paths = {}\n".format(list(map(str, rel_directories_created)))
                     cmds += '__clean__(paths, {})\n'.format(self.warn_msg_in_cleanpy)
                     clean_file.write(cmds)
@@ -588,18 +644,34 @@ class InputDeck:
             print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
             print('cd {0}\n./cmd.sh'.format(self.inp_root_directory))
             print('*or if using csh: ./cmd.csh   \n')
+
             if self.is_mcnp:
                 print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
+
         else:
             warnings.warn('\nTo evaluate and write input file use\n\ti.write_inp_in_scope(globals(), [optional args])\n'
                           'where `i` is an InputDeck instance.')
 
     @classmethod
     def mcnp_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
-                        warn_msg_in_cleanpy=True, sch_cmd=False):
-        return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
-                         is_mcnp=True, __internal__=True, warn_msg_in_cleanpy=warn_msg_in_cleanpy,
-                         sch_cmd=sch_cmd)
+                        warn_msg_in_cleanpy=True, sch_cmd=False, cleanup_msg=True):
+        """
+
+        Args:
+            inp_file_path:
+            new_file_dir:
+            cycle_rnd_seed:
+            gen_run_script:
+            warn_msg_in_cleanpy:
+            sch_cmd:
+            cleanup_msg:
+
+        Returns:
+
+        """
+        return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed,
+                         gen_run_script=gen_run_script, is_mcnp=True, __internal__=True,
+                         warn_msg_in_cleanpy=warn_msg_in_cleanpy, sch_cmd=sch_cmd, cleanup_msg=cleanup_msg)
 
     @classmethod
     def phits_input_deck(cls, inp_file_path, new_file_dir=None, cycle_rnd_seed=False, gen_run_script=True,
@@ -629,7 +701,8 @@ def __clean__(paths, warn_message):
             if not (yes_or_no == "yes"):
                 return
 
-    m = re.compile("(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)")
+    m = re.compile(r"(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
+                   r"(plot[m-z]\.ps)")
 
     for p in paths:
         for f_path in Path(p).iterdir():

@@ -13,7 +13,7 @@ from lmfit.models import GaussianModel
 
 cwd = Path(__file__).parent
 data_path = cwd/'user_saved_data'
-fit_data_path = data_path/"fits"
+fit_data_path = data_path/"fitsAndNotes"
 if not fit_data_path.exists():
     Path.mkdir(fit_data_path, parents=True, exist_ok=True)
 # if not

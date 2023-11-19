@@ -10,23 +10,13 @@ from abc import abstractmethod
 from numbers import Number
 
 
-def rotate_zhat_to_v(v):
-    # Todo
-    """
-    Gives the rotation matrix that rotates (0,0,1) to v: (x, y, z)
-    Args:
-        v: vector to rotate z hat to
-
-    Returns:rotqtion matrix
-
-    """
-    assert isinstance(v, Sized)
-    assert len(v) == 3
-
-
 class Distribution:
     @abstractmethod
     def __get_kwargs__(self):
+        pass
+
+    @abstractmethod
+    def __mul__(self, other):
         pass
 
 
@@ -47,8 +37,12 @@ class CylindricalSource(Distribution):
     def __get_kwargs__(self):
         if self.dz is not None:
             assert self.z1 is None, "cannot specify dz and z1. Use one or the other"
-            self.z1 = self.z0 + self.dz
-        kwargs = {'s-type': 1, "x0": self.x0, "y0": self.y0, "z0": self.z0, "z1": self.z1,
+            _z1 = self.z0 + self.dz
+        else:
+            assert self.dz is None and self.z1 is not None, "cannot specify dz and z1. Must use one or the other"
+            _z1 = self.z1
+            # self.z1 = self.z0 + self.dz
+        kwargs = {'s-type': 1, "x0": self.x0, "y0": self.y0, "z0": self.z0, "z1": _z1,
                   "r0": self.radius, "dir": self.dir}
 
         return kwargs
@@ -237,13 +231,12 @@ class NucleusSource:
         NucleusSource.__all_sources__.append(self)
         if not isinstance(nuclide_or_name, Nuclide):
             assert isinstance(nuclide_or_name, str)
-            self.nuclide = Nuclide.from_symbol(nuclide_or_name)
+            self.nuclide = Nuclide(nuclide_or_name)
         else:
             assert isinstance(nuclide_or_name, Nuclide)
             self.nuclide = nuclide_or_name
 
-        self.erg_dist = erg_dist
-        self.erg_dist *= 1.0/self.nuclide.A
+        self.erg_dist = erg_dist.__mul__(1.0/self.nuclide.A)  # MeV to MeV/n
         self.spacial_dist = spacial_dist
         self.src_weight = src_weight
 

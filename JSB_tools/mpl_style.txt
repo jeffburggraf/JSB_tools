@@ -4,13 +4,11 @@
 # see: https://github.com/mcekwonu/ExtensysPlots/
 
 
-# text.latex.preamble : \usepackage{amsmath, amssymb}
-
 ##***************************************************************************************************
 # set markers, color and no lines
 ##***************************************************************************************************
-axes.prop_cycle: (cycler('marker', ['s', '^', 'x', 'd', 'h' , '<', 'v', '>', 'D', '+', 'p', '*', 'o', '.', '1', '2', '3', '4', 'P', '8']) + cycler('color', ['black', '778899', 'FF0000', '0000CD', 'FF4500', '00FF00', '00BFFF', '00FFFF', 'F4A460', 'FFD700', '32CD32', 'FF1493', 'D2691E', '008080', '800000', '000000', '8B0000', 'FFFF00', '4B0082','000080']))
-# axes.prop_cycle : (cycler('color', ['black', '778899', 'FF0000', '0000CD', 'FF4500', '00FF00', '00BFFF', '00FFFF', 'F4A460', 'FFD700']) + cycler('ls', ['-', '--', ':', '-.']))
+# axes.prop_cycle: (cycler('marker', ['s', '^', 'x', 'd', 'h' , '<', 'v', '>', 'D', '+', 'p', '*', 'o', '.', '1', '2', '3', '4', 'P', '8']) + #cycler('color', ['black', '778899', 'FF0000', '0000CD', 'FF4500', '00FF00', '00BFFF', '00FFFF', 'F4A460', 'FFD700', '32CD32', 'FF1493', 'D2691E', #'008080', '800000', '000000', '8B0000', 'FFFF00', '4B0082','000080']))
+#axes.prop_cycle : (cycler('color', ['black', '778899', 'FF0000', '0000CD', 'FF4500', '00FF00', '00BFFF', '00FFFF', 'F4A460', 'FFD700']) + cycler('ls', ['-', '--', ':', '-.']))
 
 
 
@@ -30,15 +28,15 @@ text.color: 323034
 ##***************************************************************************************************
 axes.linewidth: 0.5
 axes.labelpad : 6.0
-axes.xmargin: 0
-axes.ymargin: 0
-axes.labelweight: normal
+axes.xmargin: 0.025
+# axes.ymargin: 0.05
+axes.labelweight: bold
 axes.labelsize: 16
-axes.autolimit_mode: round_numbers
-axes.formatter.limits: -4, 4
+#axes.formatter.limits: -3, 3  # handled in MPLStyle class
 grid.color: b1afb5
 axes.spines.right : False
 axes.spines.top : False
+axes.facecolor: "None"
 
 
 ##***************************************************************************************************
@@ -49,7 +47,6 @@ xtick.minor.size: 3.5
 xtick.major.width: 1.1
 xtick.minor.width: 1.1
 xtick.major.pad: 5
-xtick.minor.visible: True
 xtick.top: False
 xtick.labelsize: 16
 xtick.color: 323034
@@ -65,36 +62,29 @@ ytick.minor.size: 3.5
 ytick.major.width: 1.1
 ytick.minor.width: 1.1
 ytick.major.pad: 5
-ytick.minor.visible: True
 ytick.right: False
 ytick.labelsize: 16
-
 
 ##***************************************************************************************************
 # set error bar
 ##***************************************************************************************************
 errorbar.capsize: 3
 
-
 ##***************************************************************************************************
 # set figure
 ##***************************************************************************************************
-figure.figsize: 8, 6
-figure.subplot.left: 0.177
-figure.subplot.right: 0.946
-figure.subplot.bottom: 0.156
-figure.subplot.top: 0.965
-
+figure.subplot.left: 0.125
+figure.subplot.right: 0.85
+# figure.subplot.bottom: 0.156
+# figure.subplot.top: 0.875
 
 ##***************************************************************************************************
 # set marker properties
 ##***************************************************************************************************
 lines.markersize: 8
-lines.markerfacecolor: none
+# lines.markerfacecolor: none
 lines.markeredgewidth: 0.8
 lines.linewidth: 1.5
-
-
 
 ##***************************************************************************************************
 # set savefig
@@ -104,17 +94,14 @@ savefig.pad_inches: 0.05
 savefig.dpi: 500
 savefig.format: png
 
-
 ##***************************************************************************************************
 # set legend
 ##***************************************************************************************************
-legend.loc: upper right
-legend.title_fontsize : 8
+#legend.loc: upper right
+legend.title_fontsize : 15
 legend.labelspacing: 0.3
-legend.fontsize: 14
+legend.fontsize: 15
 legend.columnspacing: 1.0
-legend.borderaxespad: -0.5  # legend position borderaxespad
+legend.borderaxespad: 0  # legend position borderaxespad
 legend.frameon: True
 legend.framealpha: 0.8
-
-#

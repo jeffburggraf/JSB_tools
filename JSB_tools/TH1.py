@@ -21,6 +21,7 @@ import os
 import matplotlib.offsetbox as offsetbox
 from scipy.stats import norm
 from JSB_tools.regression import PeakFit
+from JSB_tools import rolling_median, mpl_hist
 
 
 class HistoBinMerger:
@@ -45,27 +46,6 @@ def binned_median(bin_left_edges, weights):
     error = median_w - cum_sum[index]
     dx = error/dy*b_width
     return x[index] + dx
-
-
-def rolling_median(window_width, values):
-    """
-    Rolling median (in the y direction) over a uniform window. Window is clipped at the edges.
-    Args:
-        window_width: Size of independent arrays for median calculations.
-        values: array of values
-
-    Returns:
-
-    """
-    window_width = int(window_width)
-    n = min([window_width, len(values)])
-    if not isinstance(values, np.ndarray):
-        values = np.array(values)
-    window_indicies = (range(max([0, i - n // 2]), min([len(values) - 1, i + n // 2])) for i in range(len(values)))
-
-    medians = np.array([np.median(values[idx]) for idx in window_indicies]) #, dtype=np.ndarray)
-
-    return medians
 
 
 def MAD(values):
@@ -431,8 +411,8 @@ class TH1F:
         s += ["75%   {:.2e}".format(quantiles[2])]
         return s
 
-    def plot(self, ax=None, logy=False, logx=False, xmax=None, xmin=None, leg_label=None, xlabel=None,
-             ylabel=None, show_stats=False, title=None, show_errors=True,  **kwargs):
+    def plot(self, ax=None, logy=False, logx=False, xlabel=None, ylabel=None, show_stats=False, title=None,
+             label=None, **mpl_kwargs):
         if title is not None:
             self.SetTitle(title)
 
@@ -443,6 +423,7 @@ class TH1F:
                 ax = ax.gca()
             if ax.get_title().rstrip().lstrip():
                 self.SetTitle(ax.get_title())
+
         if xlabel is not None:
             ax.set_xlabel(xlabel)
         if ylabel is not None:
@@ -456,26 +437,13 @@ class TH1F:
         if self.title is not None:
             ax.set_title(self.title)
 
-        if xmin is None:
-            xmin = self.__bin_left_edges__[0]
-        if xmax is None:
-            xmax = self.__bin_left_edges__[-1]
-        s = np.where((self.bin_centers <= xmax) & (xmin <= self.bin_centers))
-        try:
-            ax.errorbar(self.bin_centers[s], self.nominal_bin_values[s],
-                        yerr=self.bin_std_devs[s] if show_errors else None,  ds="steps-mid", label=leg_label, **kwargs)
-        except AttributeError as e:
-            warn('AttributeError on plt.errorbar. Could be due to bug in matplotlib. Try different mpl version.')
-            raise e
+        ax = mpl_hist(self.__bin_left_edges__, self.bin_values, ax=ax, label=label, **mpl_kwargs)
 
         if show_stats:
             text = self.get_stats_text()
             text = '\n'.join(text)
-            # ax.text(0.8, 0.95-0.03*h, text,  transform=ax.transAxes)
             ob = offsetbox.AnchoredText(text, loc=1)
             ax.add_artist(ob)
-        if leg_label:
-            ax.legend()
 
         return ax
 

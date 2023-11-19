@@ -12,7 +12,7 @@ from lmfit.model import save_modelresult, load_modelresult
 from pathlib import Path
 import re
 from scipy.interpolate import interp1d
-# from JSB_tools.TH1 import rolling_MAD, rolling_median
+from JSB_tools import rolling_median
 from abc import abstractmethod, ABCMeta
 from lmfit.model import ModelResult
 from lmfit.models import PolynomialModel
@@ -20,7 +20,6 @@ from lmfit import Parameters, fit_report
 from uncertainties.umath import log as ulog
 from scipy.odr import Model as ODRModel
 from scipy.odr import RealData, ODR, polynomial, Output
-from scipy.odr.models import _poly_fcn
 from lmfit import minimize
 from typing import List, Union
 
@@ -52,7 +51,7 @@ class FitBase(metaclass=ABCMeta):
             yerr = unp.std_devs(y)
             y = unp.nominal_values(y)
         if yerr is None:
-            yerr = np.zeros(len(x))
+            yerr = np.ones(len(x))
         self.x = np.array(x)
         self.y = np.array(y)
         self.yerr = np.array(yerr)
@@ -72,7 +71,7 @@ class FitBase(metaclass=ABCMeta):
         if directory is None:
             directory = Path(__file__).parent
 
-        path = directory/"user_saved_data"/'fits'/f'{f_name}_{type(self).__name__}.lmfit'
+        path = directory/"user_saved_data"/'fitsAndNotes'/f'{f_name}_{type(self).__name__}.lmfit'
         if path.exists():
             warnings.warn(f"Fit with name '{f_name}' already saved. Overwriting")
         try:
@@ -91,9 +90,9 @@ class FitBase(metaclass=ABCMeta):
         if directory is None:
             directory = Path(__file__).parent
 
-        path = directory/"user_saved_data"/'fits'/f'{f_name}_{cls.__name__}.lmfit'
+        path = directory/"user_saved_data"/'fitsAndNotes'/f'{f_name}_{cls.__name__}.lmfit'
 
-        # path = Path(__file__).parent/"user_saved_data"/'fits'/(f_name +'.lmfit')
+        # path = Path(__file__).parent/"user_saved_data"/'fitsAndNotes'/(f_name +'.lmfit')
         assert path.exists(), f"No fit result saved to\n{path}"
         out: FitBase = cls.__new__(cls)
         out.fit_result = load_modelresult(path, {"model_func": out.model_func})
@@ -149,24 +148,26 @@ class FitBase(metaclass=ABCMeta):
         #     # yerr = np.interp(x, self.x, self.fit_y_err)
         #     return unp.uarray(y, yerr)
 
-    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, xlabel=None, ylabel=None, upsampling=10):
+    def plot_fit(self, ax=None, params: Parameters = None, fit_x=None, label=None, marker='.', upsampling=10, color=None
+                ):
         if ax is None:
             plt.figure()
             ax = plt.gca()
-        if xlabel is not None:
-            ax.set_xlabel(xlabel)
-        if ylabel is not None:
-            ax.set_ylabel(ylabel)
 
-        points_line = ax.errorbar(self.x, self.y, self.yerr, label='Data', ls='None', marker='o')
+        if label is None:
+            label = 'Data'
+        points_line = ax.errorbar(self.x, self.y, self.yerr, label=label, ls='None', marker=marker, zorder=0, c=color)
+        if color is None:
+            color = points_line[0].get_color()
+
         if fit_x is None:
             fit_x = np.linspace(self.x[0], self.x[-1], len(self.x)*upsampling)
         fit_y = self.eval_fit(x=fit_x, params=params)
         fit_err = unp.std_devs(fit_y)
         fit_y = unp.nominal_values(fit_y)
-        plt.plot(fit_x, fit_y)
-        fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--')[0]
-        fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit')
+
+        fit_line = ax.plot(fit_x, unp.nominal_values(fit_y), ls='--', color=color)[0]
+        fill_poly = ax.fill_between(fit_x, fit_y-fit_err, fit_y+fit_err, alpha=0.7, label='Fit', color=color)
         ax.legend([points_line, (fill_poly, fit_line)], ["data", "Fit"])
         return ax
 
@@ -272,7 +273,7 @@ class PeakFit(FitBase):
         else:
             window_width = window_width//2  # full width -> half width
 
-        self.bg_est = TH1.rolling_median(window_width=window_width, values=self.y)
+        self.bg_est = rolling_median(window_width=window_width, values=self.y)
         self.__cut__(peak_center_guess - window_width, peak_center_guess + window_width)
         bg_guess = np.mean(self.bg_est)
         bg_subtracted = self.y - self.bg_est
@@ -282,6 +283,7 @@ class PeakFit(FitBase):
         guess_model.fit(x=self.x, data=bg_subtracted, params=params, weights=self.__weights__)
         params.add('bg', bg_guess)
         params['sigma'].min = x[len(x)//2] - x[len(x)//2-1]
+        params['sigma'].max = (x[-1] - x[0])*3
         params['sigma'].value = np.std(x)
 
         params['amp'] = params['amplitude']
@@ -294,11 +296,11 @@ class PeakFit(FitBase):
         model = Model(self.model_func)
         self.fit_result = model.fit(x=self.x, data=self.y, params=params,  weights=self.__weights__, scale_covar=False)
 
-        self.amp: UFloat = None  # are set later
-        self.center: UFloat = None
-        self.sigma: UFloat = None
-        self.fwhm: UFloat = None
-        self.bg: UFloat = None
+        self.amp: ufloat = None  # are set later
+        self.center: ufloat = None
+        self.sigma: ufloat = None
+        self.fwhm: ufloat = None
+        self.bg: ufloat = None
         self.set_params()
 
     def fit_report(self):
@@ -319,12 +321,17 @@ class LogPolyFit(FitBase):
     @staticmethod
     def model_func(x, **params):
         out = np.zeros(len(x), dtype=np.float)
-        for power, (_, coeff) in enumerate(params.items()):
-            out += coeff*np.log(x)**power
+
+        with np.errstate(invalid='ignore'):
+            for power, (_, coeff) in enumerate(params.items()):
+                y = coeff*np.log(x)**power
+                y[np.isinf(y)] = 0
+                out += y
+
         out = np.e**out
         return out
 
-    def __init__(self, x, y, yerr=None, order=3, fix_coeffs: Union[List[int], None] = None):
+    def __init__(self, x, y, yerr=None, order=3, fix_coeffs: Union[List[int], None, str] = None):
         """
         Log poly fit.
         Args:
@@ -335,13 +342,13 @@ class LogPolyFit(FitBase):
             fix_coeffs: Sometimes it is helpful to fix some coeffs to the value determined from the initial
                 fit (i.e. the guess) in Log-Log space (i.e. when the fit is linear).
                 This can help reduce issues during the final non-linear fit.
-                first.
+                first. 'all' fixes all coeffs except for the multiplicitive factor.
 
         """
         super().__init__(x, y, yerr)
         assert all([_ > 0 for _ in self.y]),  "All 'y' values must be greater than zero due to the log function!"
         assert all([_ > 0 for _ in self.x]),  "All 'x' values must be greater than zero due to the log function!"
-        _y = unp.uarray(self.y, self.yerr)
+        # _y = unp.uarray(self.y, self.yerr)
 
         log_y = [ulog(ufloat(_, _err)) for _, _err in zip(self.y, self.yerr)]
         log_y_error = np.array([_.std_dev for _ in log_y])
@@ -351,16 +358,21 @@ class LogPolyFit(FitBase):
 
         model_temp = PolynomialModel(degree=order)
         params = model_temp.guess(log_y, x=log_x, weights=1.0/log_y_error)
-        model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
+        _ = model_temp.fit(log_y, params=params, x=log_x, weights=1.0/log_y_error, scale_covar=True)
 
         if fix_coeffs is not None:
-            assert hasattr(fix_coeffs, '__iter__'), '`fix_coeffs` must be a list of coeffs'
-            assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! " \
-                                             "(coeff. doesn't exist)"
-            assert all([isinstance(a, int) for a in fix_coeffs]), "`fix_coeffs` all must be integers.!"
-            for c in fix_coeffs:
-                params[f'c{c}'].vary = False
+            assert hasattr(fix_coeffs, '__iter__'), '`fix_coeffs` must be a list of coeffs or string'
+
+            if fix_coeffs == 'all':
+                fix_coeffs = range(1, order + 1)
+
+            if len(fix_coeffs):
+                assert max(fix_coeffs) <= order, "`fix_coeffs` was given a value above the fit order! "
+                assert all([isinstance(a, int) for a in fix_coeffs]), "`fix_coeffs` all must be integers.!"
+                for c in fix_coeffs:
+                    params[f'c{c}'].vary = False
         model = Model(self.model_func)
+
         self.fit_result = model.fit(self.y, params=params, x=self.x, weights=self.__weights__, scale_covar=True,
                                     verbose=True, )
 
@@ -448,7 +460,7 @@ class ODRBase(metaclass=ABCMeta):
 
     def save(self, fname, extra__=None):
         fname = (fname + "_ODR"+'.lmfit')
-        path = Path(__file__).parent/"user_saved_data"/'fits'/fname
+        path = Path(__file__).parent/"user_saved_data"/'fitsAndNotes'/fname
         if path.exists():
             warnings.warn(f"Fit named '{fname} already exists!. Overwriting.")
         with open(path, 'wb') as f:
@@ -460,7 +472,7 @@ class ODRBase(metaclass=ABCMeta):
     @classmethod
     def load(cls, fname):
         fname = (fname + "_ODR" + '.lmfit')
-        path = Path(__file__).parent / "user_saved_data" / 'fits' / fname
+        path = Path(__file__).parent / "user_saved_data" / 'fitsAndNotes' / fname
         out = PolyFitODR.__new__(cls)
         if not path.exists():
             raise FileNotFoundError(f"No fit named {fname}")
@@ -519,7 +531,9 @@ class PolyFitODR(ODRBase):
         return self.__beta__
 
     def model_func(self, b, x):
-        return _poly_fcn(b, x, self._powers)
+        a, b = b[0], b[1:]
+        b.shape = (b.shape[0], 1)
+        return a + np.sum(b * np.power(x, self._powers), axis=0)
 
     def __repr__(self):
         self.fit_result.pprint()
@@ -600,7 +614,7 @@ class ExponentialMLL:
         self.params.add('_lambda', lambda_guess,min=0, max=max(self.times))
         # self.params.add('noise', noise_guess, min=0, max=sum(self.times))
         m = minimize(self.likelihood, self.params, args=(self.times,),
-                     kws={'_weights': self.weights, 'max_time': self.max_time}, method='cobyla')
+                     kws={'_weights': self.weights, 'time_cut_max': self.max_time}, method='cobyla')
         print(m.params)
 
 
@@ -662,11 +676,11 @@ if __name__ == '__main__':
     # c.add_peaks_4_calibration(counts, channel_guesses, fake_ergs, true_counts, fit_width=50, plot=False)
     # c.compute_calibration()
     # # c.plot_erg_spectrum()
-    # c.erg_fit.plot_fit()
+    # c.erg_calibration.plot_fit()
     # c.eff_fit.plot_fit()
     # c.save_calibration('die')
     # c2= PrepareGammaSpec.load_calibration('die')
     # c2.eff_fit.plot_fit()
-    # c2.erg_fit.plot_fit()
+    # c2.erg_calibration.plot_fit()
     # plt.show()
     # # plt.show()

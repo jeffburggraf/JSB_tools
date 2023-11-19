@@ -14,8 +14,8 @@ from pathlib import Path
 import os
 import re
 import numpy as np
-from JSB_tools import TBrowser
-from JSB_tools import ProgressReport
+from typing import Tuple
+from JSB_tools import TBrowser, ProgressReport, mpl_hist
 import time
 from typing import Union
 from JSB_tools.nuke_data_tools import Nuclide
@@ -26,7 +26,7 @@ __all__ = ["phits_to_root"]
 
 class PHITSTTreeHelper:
     """
-    A wrapper for a PHITS ROOT tree. Everything done in this class can be done manually, but this mkaes it smoother by,
+    A wrapper for a PHITS ROOT tree. Everything done in this class can be done manually, but this makas it smoother by,
     e.g., adding autocomplete, the ability to look up a nuclide that's being tracked, etc.
     """
     nuclides = {}
@@ -77,8 +77,9 @@ class PHITSTTreeHelper:
 
     @property
     def nuclide(self) -> Union[None, Nuclide]:
-        if self.tree.par_id != 19:
-            return None
+
+        if self.tree.par_id == 19:
+            pass
         elif 15 <= self.tree.par_id <= 18:
             par_id = self.tree.par_id
             try:
@@ -96,7 +97,10 @@ class PHITSTTreeHelper:
                 else:
                     n = Nuclide.from_Z_A_M(2, 4)
                     PHITSTTreeHelper.nuclides[par_id] = n
+
                 return n
+        else:
+            return None
 
         zaid = self.tree.zaid
         z = zaid // 1000
@@ -138,6 +142,10 @@ class PHITSTTreeHelper:
     @property
     def z(self):
         return self.tree.z
+
+    @property
+    def time(self):
+        return self.tree.time  # in ns
 
     @property
     def energy(self):
@@ -233,7 +241,7 @@ ROOT.gROOT.ProcessLine(
     "Int_t           y;"
     "Int_t           z;"
     "Int_t           erg;"
-    "Int_t           time;"
+    "Int_t           time;"  # in ns
     "Int_t           wgt;"
     "}"
 )
@@ -381,7 +389,7 @@ class Container:
 
     @time.setter
     def time(self, value):
-        self.time_br[0] = value
+        self.time_br[0] = value  # in ns
 
     @property
     def erg(self):
@@ -590,9 +598,11 @@ class Container:
             new_file_name = m.groups()[0]
         if __rename_index__ > 0:
             new_file_name = "{0}_{1}".format(new_file_name, __rename_index__)
-        new_file_name += ".root"
+        # new_file_name += ".root"
+        # new_file_name =
 
-        new_file_path = directory / new_file_name
+        new_file_path = Path(directory) / new_file_name
+        new_file_path = new_file_path.with_suffix('.root')
 
         if (not self.overwrite) and Path.exists(new_file_path):
             self.__make_ROOT_file_and_tree__(__rename_index__ + 1)
@@ -603,13 +613,6 @@ class Container:
 
         tree = ROOT.TTree("tree", self.tree_name)
         return file, tree
-
-"""prev_params.erg = values[0]
-            prev_params.time = values[1]
-            prev_params.x = values[2]
-            prev_params.y = values[3]
-            prev_params.z = values[4]"""
-# Todo: I don't think this is useful actually ???
 
 
 class PrevParameters:
@@ -640,12 +643,9 @@ class PrevParameters:
             return de/dx
 
 
-# _containers = []  # to preserve memory of ROOT files
-
-
 def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str, None] = None,
                   output_directory: Union[str, None] = None, max_histories=None, tree_name="tree",
-                  overwrite=True, max_time=None) -> ROOT.TTree:
+                  overwrite=True, max_time=None) -> Tuple[Path, ROOT.TTree]:
     """
 
     Args:
@@ -657,7 +657,8 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
         overwrite: If false, don't overwrite existing file.
         max_time: Maximum time to run in seconds.
 
-    Returns: Root tree.
+    Returns:
+        (path to TFile containing Tree, TTree object)
 
     """
 
@@ -701,6 +702,7 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
     t_start = time.time()
     next_print_time = t_start + 1
     line_number = 0
+
     while max_histories is None or n_events < max_histories:
         if max_time is not None:
             t_now = time.time()
@@ -816,7 +818,7 @@ def phits_to_root(input_file_path: Union[Path, str], output_file_name: Union[str
     f = ROOT.TFile(str(container.root_file_path))
     Container.root_files.append(f)
     tree = f.Get(container.tree_name)
-    return tree
+    return container.root_file_path, tree
 
 
 if __name__ == "__main__":
