@@ -152,16 +152,8 @@ class Image:
 
 
 if __name__ == '__main__':
-    p = '/Users/jeffreyburggraf/Pictures/Himalaya.png'
+    p = '/Users/burgjs/Library/CloudStorage/OneDrive-IdahoNationalLaboratory/Desktop/SN55-N51407A-GRETA-0/20201013 XRAY work/Image{2020-10-13 15.45.48}.tif'
     i = Image(p)
-    class Fake_press1:
-        xdata =  0
-        ydata = 0
-
-
-    class Fake_press2:
-        xdata =  100
-        ydata = 300
 
     # i.holding_space = True
     # i.on_click(Fake_press1)

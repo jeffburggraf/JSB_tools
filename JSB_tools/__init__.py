@@ -84,9 +84,13 @@ def binned_down_sample(bins, y, yerr, n):
     return bins, y, yerr
 
 
-def find_nearest(array, value, return_value=False):
+def find_nearest(array, value, return_value=False, side='left'):
     """
     Find the **INDEX** of element in array that is nearest to value.
+
+    If multiple values, return first or last depending on `side` argument.
+
+    If directly in middle of two entries, return left or right value depending on `side` argument
 
     NOTE: ASSUMES SORTED
 
@@ -94,15 +98,29 @@ def find_nearest(array, value, return_value=False):
         array: sorted array of values
         value:
         return_value: If True, return value itself instead of index.
+        side: If left, return first value, else return last (in cases of multiple repeat values).
+            In the case of value exactly in middle of two array entries, return left value or right value, respectively
 
     Returns:
 
     """
-    idx = np.searchsorted(array, value, side="left")
-    if idx > 0 and (idx == len(array) or abs(value - array[idx-1]) < abs(value - array[idx])):
-        idx = idx-1
+    idx = np.searchsorted(array, value, side=side)
+
+    if idx == 0:
+        return array[0] if return_value else 0
+
+    if idx == len(array):
+        idx -= 1
     else:
-        idx = idx
+        dleft = value - array[idx-1]
+        dright = array[idx] - value
+        if dright < dleft:
+            idx = idx
+        elif dright > dleft:
+            idx -= 1
+        elif dright == dleft:
+            if side == 'left':
+                idx = idx - 1
 
     if return_value:
         return array[idx]
