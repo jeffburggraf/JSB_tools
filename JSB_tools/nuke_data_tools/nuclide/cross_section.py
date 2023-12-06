@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from pathlib import Path
 from typing import Dict, List, Union, Tuple, Set
-from JSB_tools.nuke_data_tools.nuclide.data_directories import PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, NEUTRON_PICKLE_DIR
+from JSB_tools.nuke_data_tools.nuclide.data_directories import pickle_dir, all_particles
 import re
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
@@ -438,10 +438,7 @@ class ActivationReactionContainer:
     # all_instances set in code below
     all_instances: Dict[str, Dict[str, Dict[str, ActivationReactionContainer]]] = {}
 
-    directories: Dict[str, Path] = \
-        {'proton': PROTON_PICKLE_DIR,
-         'gamma': GAMMA_PICKLE_DIR,
-         'neutron': NEUTRON_PICKLE_DIR}
+    directories = {par: pickle_dir / 'activation' / par for par in all_particles}
 
     libraries = NuclearLibraries.xs_libraries
 
@@ -968,11 +965,13 @@ class ActivationReactionContainer:
         path = path.with_suffix('.pickle')
         return path
 
+    @staticmethod
+    def get_parents_dict_path(projectile, data_source):
+        return ActivationReactionContainer.directories[projectile] / data_source / 'parents.pickle'
+
     @property
     def parents_dict_path(self):
-        path = ActivationReactionContainer.directories[self.projectile] / self.data_source
-        path = path / 'parents.pickle'
-        return path
+        return self.get_parents_dict_path(projectile=self.projectile, library=self.data_source)
 
     @property
     def pickle_path(self):

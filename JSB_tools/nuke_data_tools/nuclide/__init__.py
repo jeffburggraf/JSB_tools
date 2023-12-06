@@ -5,8 +5,7 @@ from pathlib import Path
 import re
 from logging import warning as warn
 from typing import Dict, List, Tuple, Union, Literal
-from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR, PROTON_PICKLE_DIR, GAMMA_PICKLE_DIR, \
-    NEUTRON_PICKLE_DIR
+from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
 import pickle
 from datetime import datetime, timedelta

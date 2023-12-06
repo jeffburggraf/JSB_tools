@@ -15,7 +15,7 @@ style_path = cwd/'mpl_style.txt'
 
 
 class ProgressReport:
-    def __init__(self, i_final, sec_per_print=2, i_init=0, call_func=None):
+    def __init__(self, i_final, sec_per_print=2, i_init=0, final_msg=None, call_func=None):
         self.__i_final__ = i_final
         self.__i_init__ = i_init
         self.__sec_per_print__ = sec_per_print
@@ -25,6 +25,8 @@ class ProgressReport:
 
         self.events_log = [self.__i_init__]
         self.times_log = [self.__init_time__]
+
+        self.final_msg = final_msg
 
         if call_func is None:
             self.call_func = print
@@ -81,7 +83,10 @@ class ProgressReport:
         return False
 
     def __del__(self):
-        print(f"Complete! {self.elapsed_time:.1f} total seconds!")
+        if self.final_msg is None:
+            print(f"Complete in {self.elapsed_time:.1f} total seconds")
+        else:
+            print(f"{self.final_msg} ({self.elapsed_time:.1f} seconds)")
 
 
 class MPLStyle:
