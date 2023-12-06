@@ -829,7 +829,7 @@ class ActivationReactionContainer:
         if debug:
             from JSB_tools import TabPlot
 
-        target = e.gnd_name
+        target = e.gnds_name
         # s, z, a, m = nuclide_module.Nuclide.get_s_z_a_m_from_string(target)
 
         outs = {}
@@ -938,7 +938,7 @@ class ActivationReactionContainer:
         except (ValueError, KeyError):
             raise ActivationReactionContainer.EvaluationException(f"Could not create Evaluation for {endf_path}")
 
-        nuclide_name = e.gnd_name
+        nuclide_name = e.gnds_name
 
         self = ActivationReactionContainer(nuclide_name, projectile, data_source)
 

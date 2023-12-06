@@ -25,10 +25,6 @@ hl_match_2 = re.compile(r'T1\/2=([0-9.decE+-]+) ([A-Z]+).*')
 stable_match = re.compile('Parent half-life: STABLE.+')
 
 
-LEVEL_PICKLE_DIR.mkdir(exist_ok=True)
-DECAY_PICKLE_DIR.mkdir(exist_ok=True)
-
-
 def get_hl_from_ednf_file(path_to_file):
     """
     Used to correct for bug in openmc where the ENDF evaluation of some stable isotopes return a half life of zero.
@@ -151,7 +147,7 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
             print(f"Failed for {endf_file_path.name}")
             continue
 
-        nuclide_name = e.gnd_name
+        nuclide_name = e.gnds_name
 
         if nuclides_to_process is not None and nuclide_name not in nuclides_to_process:
             continue

@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Tuple, Dict, List, Union, Collection
 import numpy as np
 from numbers import Number
-from JSB_tools import TabPlot
+from JSB_tools.tab_plot import TabPlot
 from JSB_tools.nuke_data_tools.nuclide import DecayNuclide, Nuclide
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D
 from scipy.interpolate import interp1d
@@ -12,7 +12,7 @@ from uncertainties import unumpy as unp
 import re
 import matplotlib.pyplot as plt
 from pathlib import Path
-from JSB_tools.nuke_data_tools.nuclide.data_directories import FISS_YIELDS_PATH
+from JSB_tools.nuke_data_tools.nuclide.data_directories import FISS_YIELDS_PATH, fission_yield_dirs
 import marshal
 from functools import cached_property
 
@@ -28,8 +28,8 @@ class FissionYields:
         weights: Yields can be weighted by a quantity, e.g. flux, cross-sections
 
     """
-    FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': ['ukfy', None],
-                             'sf': ['gef'], 'alpha': [None], 'electron': [], }
+    # FISSION_YIELD_SUBDIRS = {'neutron': ['endf', 'gef'], 'proton': ['ukfy', None], 'gamma': ['ukfy', None],
+    #                          'sf': ['gef'], 'alpha': [None], 'electron': [], }
 
     @property
     def file_path(self):
@@ -108,7 +108,8 @@ class FissionYields:
         scores = []
         libraries = []
         datums = []
-        for lib in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par]:
+        for lib in fission_yield_dirs[self.inducing_par].keys():
+        # for lib in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par]:
             if lib is None:
                 continue
             try:
@@ -119,6 +120,7 @@ class FissionYields:
             data_ergs = data.ergs
             libraries.append(lib)
             scores.append(self.__score(self.energies if self.energies is not None else data_ergs, data_ergs))
+
         if len(scores):
             i = np.argmax(scores)
             self.library = libraries[i]
@@ -156,6 +158,8 @@ class FissionYields:
         """
         Load fission yield data into class instance. If `library` is None, find the best option for `energies`.
 
+        Best option is just the order as sources appear in data_directories.py/fission_yield_dirs[inducing_par]
+
         Args:
             target: Fission target nucleus
             inducing_par: None for SF. Or, e.g., 'proton', 'neutron', 'gamma'
@@ -165,13 +169,15 @@ class FissionYields:
         """
         if isinstance(energies, (float, int)):
             energies = [energies]
+
         if hasattr(energies, '__iter__') and len(energies) == 0:
             warn('length of `energies` is zero! Falling back on default library energy points.')
             energies = None
+
         assert isinstance(target, str), f'Bar `target` argument type, {type(target)}'
 
         self.target = target
-        yield_dirs = FissionYields.FISSION_YIELD_SUBDIRS
+
         if inducing_par is None:
             inducing_par = 'sf'
         else:
@@ -180,27 +186,43 @@ class FissionYields:
         if inducing_par == 'sf':
             assert energies is None, 'Cannot specify energies for SF'
             energies = [0]
+
         self.inducing_par = inducing_par
         self.independent_bool = independent_bool
-        assert inducing_par in yield_dirs, f"No fission yield data for projectile, '{self.inducing_par}'.\n" \
-                                           f"Your options are:\n{list(yield_dirs.keys())}"
+        assert inducing_par in fission_yield_dirs, f"No fission yield data for projectile, '{self.inducing_par}'.\n" \
+                                                   f"Your options are:\n{list(fission_yield_dirs.keys())}"
         self.energies = energies
         if not hasattr(self.energies, '__iter__'):
             if self.energies is not None:
                 assert isinstance(self.energies, Number), "Invalid `energies` argument."
                 self.energies = [self.energies]
-        self.library = library
-        if self.library is not None:
-            assert self.library in FissionYields.FISSION_YIELD_SUBDIRS[self.inducing_par], \
-                f"Library '{self.library}' for {self.inducing_par}-induced fission doesn't exist!"
-            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, self.library, self.independent_bool,
+
+        if library is not None:
+            assert library in fission_yield_dirs[inducing_par].keys(), \
+                f"Library '{library}' for {self.inducing_par}-induced fission doesn't exist!"
+            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, self.library,
+                                                                   self.independent_bool,
                                                                    self.target)
         else:
-            self.__data: RawFissionYieldData = self.__find_best_library__()  # sets self.library if data is found
-            if self.library is None:  # data wasn't found
-                raise FileNotFoundError(
-                    f"No fission yield file for {self.inducing_par}-induced fission on {target}.")
+            best_score = 0
+            library = list(fission_yield_dirs[inducing_par])[0]
+            for lib in fission_yield_dirs[inducing_par].keys():
+                raw = RawFissionYieldData(self.inducing_par, lib, self.independent_bool,
+                                          self.target)
+
+                # score by fraction of queried energies that are within raw data energy range
+                score = sum([raw.ergs[0] <= erg <= raw.ergs[-1] for erg in self.energies])/len(self.energies)
+
+                if score > best_score:
+                    library = lib
+
+            self.__data: RawFissionYieldData = RawFissionYieldData(self.inducing_par, library,
+                                                                   self.independent_bool,
+                                                                   self.target)
+        self.library = library
+
         self.data_ergs = self.__data.ergs
+
         if self.energies is None:
             self.energies = self.data_ergs
 
@@ -210,9 +232,11 @@ class FissionYields:
             warn(f"\nExtrapolation being used in the {inducing_par}-fission yields of {target} for energies greater "
                  f"than {self.data_ergs[-1]} and/or less than {self.data_ergs[0]}\n Plot yields to make \nsure results"
                  f"are reasonable")
+
         __yields_unsorted__ = {}  # data placeholder so as not to calculate again during sorting.
         _sorter = []  # used for sorting
         _keys_in_order = []
+
         for n, yield_ in self.__data.data.items():
             if len(self.__data.ergs) > 1:
                 yield_nominal = self.interp(self.energies, self.__data.ergs, yield_[0])

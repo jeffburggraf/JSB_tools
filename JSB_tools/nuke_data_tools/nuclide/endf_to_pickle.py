@@ -1,10 +1,8 @@
 from __future__ import annotations
-import pickle
 
-import openmc.data
-from openmc.data.endf import Evaluation
+import openmc
+import pickle
 from openmc.data import FissionProductYields
-from openmc.data import Decay
 from pathlib import Path
 import re
 from typing import Union, List
@@ -15,11 +13,14 @@ from warnings import warn
 from JSB_tools.nuke_data_tools.nuclide.data_directories import GAMMA_PICKLE_DIR,\
      PROTON_PICKLE_DIR, NEUTRON_PICKLE_DIR, FISS_YIELDS_PATH, DECAY_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationReactionContainer
-from data_directories import parent_data_dir, decay_data_dir, proton_enfd_b_data_dir,\
-    gamma_endf_dir, neutron_enfd_b_data_dir, gamma_tendl_dir, neutron_tendl_data_dir, proton_tendl_data_dir
+from data_directories import parent_data_dir, fission_yield_dirs, activation_directories
 from JSB_tools import ProgressReport
 from multiprocessing import Process
 cwd = Path(__file__).parent
+
+# fixes bug (from KeyError) caused by alpha ENDF file where alpha sublibrary is labeled by 20041 when it's suppose
+# to be 20040
+openmc.data.endf._SUBLIBRARY[20041] = 'Incident-alpha data'
 
 
 instructions = """
@@ -178,31 +179,48 @@ def pickle_proton_fission_xs_data():
                 pickle.dump(data, f)
 
 
-def pickle_proton_activation_data(pickle=True, endf=True, tendl=True, parallel=False, paths=None):
+def pickle_activation_data(particle, libraries, parallel=False):
+    if libraries is not None and not isinstance(libraries, list):
+        libraries = [libraries]
 
-    if endf:
-        run(proton_enfd_b_data_dir, 'proton', 'endf', _pickle=pickle, parallel=parallel, paths=paths)
+    if libraries is None:
+        libraries = list(activation_directories[particle].keys())
 
-    if tendl:
-        run(proton_tendl_data_dir, 'proton', 'tendl', _pickle=pickle, parallel=parallel, paths=paths)
+    for lib in libraries:
+        data_dir = activation_directories[particle][lib]
+        run(data_dir, particle, lib, parallel=parallel)
 
-
-def pickle_neutron_activation_data(pickle=True, endf=True, tendl=True, parallel=False, paths=None):
-
-    if endf:
-        run(neutron_enfd_b_data_dir, 'neutron', 'endf', _pickle=pickle, parallel=parallel, paths=paths)
-
-    if tendl:
-        run(neutron_tendl_data_dir, 'neutron', 'tendl', _pickle=pickle, parallel=parallel, paths=paths)
-
-
-def pickle_gamma_activation_data(pickle=True, endf=True, tendl=True, parallel=False, paths=None):
-
-    if endf:
-        run(gamma_endf_dir, 'gamma', 'endf', _pickle=pickle, parallel=parallel, paths=paths)
-
-    if tendl:
-        run(gamma_tendl_dir, 'gamma', 'tendl', _pickle=pickle, parallel=parallel, paths=paths)
+#
+# def pickle_proton_activation_data(pickle=True, endf=True, tendl=True, parallel=False, paths=None):
+#
+#     if endf:
+#         run(proton_endf_b_data_dir, 'proton', 'endf', _pickle=pickle, parallel=parallel, paths=paths)
+#
+#     if tendl:
+#         run(proton_tendl_data_dir, 'proton', 'tendl', _pickle=pickle, parallel=parallel, paths=paths)
+#
+#
+# def pickle_neutron_activation_data(pickle=True, endf=True, libraries=None, parallel=False, paths=None):
+#
+#     if libraries is not None and not isinstance(libraries, list):
+#         libraries = [libraries]
+#
+#     run(activation_directories['neutron']['library'])
+#     # if endf:
+#     #     library = 'endf'
+#     #     run(activation_directories['neutron']['endf], 'neutron', 'endf', _pickle=pickle, parallel=parallel, paths=paths)
+#     #
+#     # if tendl:
+#     #     run(neutron_tendl_data_dir, 'neutron', 'tendl', _pickle=pickle, parallel=parallel, paths=paths)
+#
+#
+# def pickle_gamma_activation_data(pickle=True, endf=True, tendl=True, parallel=False, paths=None):
+#
+#     if endf:
+#         run(gamma_endf_dir, 'gamma', 'endf', _pickle=pickle, parallel=parallel, paths=paths)
+#
+#     if tendl:
+#         run(gamma_tendl_dir, 'gamma', 'tendl', _pickle=pickle, parallel=parallel, paths=paths)
 
 
 def _run_fission_yield_pickle(raw_dir, particle, library):
@@ -212,15 +230,18 @@ def _run_fission_yield_pickle(raw_dir, particle, library):
         _l = len(y.energies)   # number of energies
         for attrib in ['independent', 'cumulative']:
             out = _data[attrib]
+
             for index, yield_dict in enumerate(getattr(y, attrib)):  # one `index` for each energy in y.energies
                 for nuclide_name, yield_ in yield_dict.items():
                     try:
                         entry = out[nuclide_name]
                     except KeyError:
-                        out[nuclide_name] = [[0]*_l, [0]*_l]  # sometimes entries are missing. This sets those to 0.
+                        out[nuclide_name] = [[0]*_l, [0]*_l]  # zero by default
                         entry = out[nuclide_name]
+
                     entry[0][index] = yield_.n
                     entry[1][index] = float(yield_.std_dev)
+
         _ergs = list(map(float, y.energies*1E-6))
         return _ergs, _data
 
@@ -252,8 +273,7 @@ def _run_fission_yield_pickle(raw_dir, particle, library):
 
 def pickle_fission_product_yields(particles=None, libraries=None, parallel=False):
     """
-    To add more fission yield sources/ search for the tag 'Add here for fiss yield' and make the needed changes.
-    To selectively update one type of fission yields, look at the helpers variable below.
+    To add more fission yield sources, modify the data_directories.py/fission_yield_dirs dictionary.
 
     Marshal'd fission yield data is a dict of the form:
         1st dump is energies:
@@ -265,30 +285,27 @@ def pickle_fission_product_yields(particles=None, libraries=None, parallel=False
             }
 
     """
+    if libraries is not None and not isinstance(libraries, list):
+        libraries = [libraries]
 
-    for raw_dir in (Path(__file__).parent/'endf_files').iterdir():
-        if raw_dir.is_dir():
-            if _m := re.match("([A-z]+)-(.)fy", raw_dir.name):
-                try:
-                    particle = {'n': 'neutron', 'p': 'proton', 's': 'sf', 'g': 'gamma'}[_m.groups()[1]]
-                except KeyError:
+    if particles is not None and not isinstance(particles, list):
+        particles = [particles]
+
+    for particle, path_dict in fission_yield_dirs.items():
+        for library, path in path_dict.items():
+            if libraries is not None:
+                if library.lower() not in libraries:
                     continue
 
-                library = _m.groups()[0].lower()
+            if particles is not None:
+                if particle.lower() not in particles:
+                    continue
 
-                if libraries is not None:
-                    if library not in libraries:
-                        continue
-
-                if particles is not None:
-                    if particle not in particles:
-                        continue
-
-                if not parallel:
-                    _run_fission_yield_pickle(raw_dir, particle, library)
-                else:
-                    proc = Process(target=_run_fission_yield_pickle, args=(raw_dir, particle, library))
-                    proc.start()
+            if not parallel:
+                _run_fission_yield_pickle(path, particle, library)
+            else:
+                proc = Process(target=_run_fission_yield_pickle, args=(path, particle, library))
+                proc.start()
 
 
 for _directory in [DECAY_PICKLE_DIR, GAMMA_PICKLE_DIR, PROTON_PICKLE_DIR, FISS_YIELDS_PATH, NEUTRON_PICKLE_DIR]:
@@ -323,18 +340,8 @@ def pickle_everything(_pickle=True, parallel=True):
 
 if __name__ == '__main__':
     pass
-    # pickle_neutron_activation_data(parallel=False, tendl=False)
-    # pickle_proton_activation_data(parallel=True, tendl=True)
-    # pickle_gamma_activation_data(parallel=True, tendl=True)
-
-    # pickle_proton_fission_xs_data()
-    # pickle_proton_fission_xs_data()
-    # pickle_all_activation(False, False)
-    # pickle_gamma_activation_data(False, tendl=False)
-    # pickle_neutron_activation_data(False, tendl=False)
-    # pickle_neutron_activation_data(endf=False, paths=['/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-neutrons/Pb207g.asc'])
-    # pickle_neutron_activation_data(parallel=True)
-    # p = '/Users/burggraf1/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-protons/p-Yb173.tendl'
-
-    # pickle_proton_activation_data(endf=False, parallel=False, paths = [p])
+    # pickle_fission_product_yields('proton', parallel=True)
+    # pickle_fission_product_yields('neuton', parallel=True)
+    # pickle_fission_product_yields('gamma', parallel=True)
+    pickle_fission_product_yields('alpha', parallel=False)
 
