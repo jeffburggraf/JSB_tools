@@ -12,3 +12,7 @@ sdef
 nps 1
 {mat_card}
 print 85
+FMESH144:p GEOM=cyl ORIGIN=0 0 1 AXS=0 0 1 VEC=1 0 0  $ None
+     IMESH 10  IINTS 2
+     JMESH 5  JINTS 10
+     KMESH 1  KINTS 1

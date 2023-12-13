@@ -81,7 +81,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post',
                           elinewidth=elinewidth, **mpl_kwargs)
 
-    handle1[0].set_marker(None)
+    handle1[0].set_marker('None')
 
     if "c" in mpl_kwargs:
         pass

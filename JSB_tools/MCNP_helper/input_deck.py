@@ -17,7 +17,7 @@ from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumb
 import numpy as np
 from typing import Dict, List, Union, Tuple, Iterable
 
-NDIGITS = 5  # Number of significant digits to round all numbers to when used in input decks.
+NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
 
 
 def _split_line(line):

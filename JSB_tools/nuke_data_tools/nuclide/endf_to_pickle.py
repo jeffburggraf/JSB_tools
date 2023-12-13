@@ -9,7 +9,7 @@ from typing import Union, List
 import marshal
 from openmc.data import Tabulated1D
 from warnings import warn
-
+import traceback
 from JSB_tools.nuke_data_tools.nuclide.data_directories import pickle_dir, all_particles, FISS_YIELDS_PATH, DECAY_PICKLE_DIR
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationReactionContainer
 from data_directories import endf_data_dir, fission_yield_dirs, activation_directories
@@ -104,7 +104,9 @@ def _run(data_directory, incident_projectile, library_name, _pickle, paths=None,
             continue
 
         except Exception as e:
-            warn(f"\nThe following exception occurred for {file_path.relative_to(file_path.parents[2])}:\n{e}")
+            exception = traceback.format_exc()
+            warn(f"\nThe following exception occurred for {file_path.relative_to(file_path.parents[2])}:\n{exception}\n")
+            continue
 
         if _pickle:
             act.__pickle__()
@@ -202,11 +204,8 @@ def pickle_proton_fission_xs_data():
             proton_fission_xs[nuclide_name] = xs_obj
 
     if len(proton_fission_xs):
-        save_path = (PROTON_PICKLE_DIR /'endf'/'fission_xs')
+        save_path = (ActivationReactionContainer.directories['proton'] /'endf'/'fission_xs')
         save_path.mkdir(parents=True, exist_ok=True)
-
-        # if NO_PICKLE_DEBUG:
-        #     return
 
         for n_name, data in proton_fission_xs.items():
             with open(save_path/'{}.pickle'.format(n_name), 'wb') as f:
@@ -352,7 +351,5 @@ if NO_PICKLE_DEBUG:
 
 if __name__ == '__main__':
     pass
-    pickle_activation_data(libraries=None, parallel=True)
-
-
+    pickle_activation_data(libraries='tendl', parallel=True)
 

@@ -14,6 +14,7 @@ from matplotlib.patches import Circle
 from functools import cached_property, cache
 from typing import List, Dict, Union, Optional, Literal
 import matplotlib.patches as mpatches
+from numbers import Number
 from matplotlib.text import Annotation
 from matplotlib.transforms import Transform, Bbox
 from lmfit import Model, Parameters, Parameter
@@ -226,8 +227,6 @@ def erg_cut(bins, erg_binned_times, effs, emin=None, emax=None):
     return erg_binned_times[i0: i1 + 1], bins[i0: i1 + 2], effs[i0: i1 + 1] if effs is not None else None
 
 
-
-
 def find_local_max(a, i0):
     """
     Starting from a[i0], find index of nearest local maxima.
@@ -300,6 +299,7 @@ class GausFitResult(ModelResult):
 
     def __init__(self, *args, **kwargs):
         self.fit_x = self.userkws['x']
+        self.bin_widths = self.userkws['bin_widths']
 
     @property
     def fit_y(self):
@@ -312,7 +312,7 @@ class GausFitResult(ModelResult):
         return errs
 
     @staticmethod
-    def _get_param(param):
+    def _get_param_value(param):
         if param.stderr is None:
             err = np.nan
         else:
@@ -324,30 +324,33 @@ class GausFitResult(ModelResult):
             return [self.centers(i) for i in range(len(self))]
 
         param = self.params[f'_{i}_center']
-        return self._get_param(param)
+        return self._get_param_value(param)
 
     def amplitudes(self, i=None) -> Union[List[UFloat], UFloat]:
         if i is None:
             return [self.amplitudes(i) for i in range(len(self))]
 
         param = self.params[f'_{i}_amplitude']
-        return self._get_param(param)
+        return self._get_param_value(param)
 
     def sigmas(self, i=None):
         if i is None:
             return [self.sigmas(i) for i in range(len(self))]
 
         param = self.params[f'_{i}_sigma']
-        return self._get_param(param)
+        return self._get_param_value(param)
 
     def bg(self):
-        return self._get_param(self.params['bg'])
+        return self._get_param_value(self.params['bg'])
 
     def slope(self):
-        return self._get_param(self.params['slope'])
+        return self._get_param_value(self.params['slope'])
 
     def plot_fit_curve(self, *args, **kwargs):  # bw compat.
         return self.plot(*args, **kwargs)
+
+    def density2count_scales(self):
+        return self.bin_widths
 
     def plot(self, ax=None, fill_between=True, npoints=300, plot_data=True, label=None, label_params=False, **plt_kwargs):
         if ax is None:
@@ -413,7 +416,7 @@ class GausFitResult(ModelResult):
 
 def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, make_density=False, yerr=None,
                     share_sigma=True, sigma_guesses: Union[list, float] = None, fix_sigmas: bool = False,
-                    fix_centers: Union[bool, List[bool]] = False, fix_bg: float = None,
+                    fix_centers: Union[bool, List[bool]] = False, fix_bg: float = None, poissonian_errs = False,
                     fit_buffer_window: Union[int, None] = 5, nobins=False, bg: Literal['const', 'lin'] = 'lin',
                     **kwargs) -> GausFitResult:
     """
@@ -455,6 +458,8 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
         fix_bg: Fix background to this value
 
+        poissonian_errs: Automatically set errors to be np.sqrt(y)
+
         fit_buffer_window:
             The data will be truncated around peak centers with a buffer of this value (in keV) to the left and right
             Use None to not truncate.
@@ -485,6 +490,8 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         assert fixed_in_binQ is None
     else:
         assert len(y) == len(bins) - 1
+
+    yfull = y[:]  # y without being cut to only include peaks
 
     if fit_buffer_window is not None and not nobins:
         bins_slice, y_slice = get_fit_slice(bins=bins, center_guesses=center_guesses,
@@ -530,11 +537,19 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     if isinstance(y[0], UFloat):
         yerr = unp.std_devs(y)
         y = unp.nominal_values(y)
+    elif poissonian_errs:
+        if not make_density:
+            warnings.warn("Assume auto-generated poissonian errors is ON. Make sure the histogram values supplied to "
+                          "multi_gaus_fit are NOT a density and that `make_density`=True")
+        yerr = np.sqrt(y)
+
+    yscale = 1  # used for bg geuss
 
     if make_density:  # divide bin values by bin widths.
         assert not nobins, 'Cannot make `y` into a density unless bins are used.'
         _bws = (bins[1:] - bins[:-1])  # bin widths
         y = y / _bws
+        yscale *= 1/np.mean(_bws)
         if yerr is not None:
             yerr = yerr / _bws
 
@@ -550,9 +565,11 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     max_slope = max(0.01, max_slope)  # zero max_slope will cause error bc range is ser to (-max_slope, max_slope)
 
     slope_guess = np.median(np.gradient(y))
-    bg_guess = fix_bg if fix_bg is not None else min([np.mean([y[i-1], y[i], y[i + 1]]) for i in range(1, len(y) - 1)])
+    bg_guess = fix_bg if fix_bg is not None else min([np.mean([yfull[i-1], yfull[i], yfull[i + 1]]) for i in range(1, len(yfull) - 1)])
 
-    min_sigma, max_sigma = 1.75*b_width, b_width * len(y)/3
+    bg_guess *= yscale
+
+    min_sigma, max_sigma = b_width/2, b_width * len(y)/2
 
     def set_sigma(param: Parameter):
         kwargs = {'min': min_sigma, 'max': max_sigma}
@@ -563,8 +580,9 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             kwargs['vary'] = True
 
         if share_sigma:
-            if param.name == '_0_sigma':  # this param is the only sigma, don't change kwargs
-                pass
+            if param.name == '_0_sigma':  # this param name labels is the only *real* sigma, so sert value
+                if isinstance(sigma_guesses, Number):
+                    kwargs['value'] = sigma_guesses
             else:
                 kwargs['expr'] = f'_0_sigma'  # param
                 kwargs['value'] = None
@@ -626,6 +644,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     fit_result = model.fit(data=y, params=params, weights=weights, x=x)
 
     fit_result.userkws['b_width'] = None if nobins else b_width
+    if not nobins:
+        fit_result.userkws['bin_widths'] = bins[1:] - bins[:-1]
+    else:
+        fit_result.userkws['bin_widths'] = None
 
     return GausFitResult(fit_result)
 

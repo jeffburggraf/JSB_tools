@@ -98,7 +98,6 @@ class CylFMESH(TallyBase):
 
 
 if __name__ == '__main__':
-    fmesh = CylFMESH('p', rmax=10, rbins=2, axis_length=5, theta_max=1, origin=[0, 0, 1])
-    fmesh2 = CylFMESH('p', rmax=100, rbins=2, axis_length=5, theta_max=1, origin=[0, 0, 1])
+    fmesh = CylFMESH('p', rmaxs=10, rbins=2, axis_lengths=5, theta_maxs=1, origin=[0, 0, 1])
     print(fmesh)
-    print(fmesh2)
+    # print(fmesh2)

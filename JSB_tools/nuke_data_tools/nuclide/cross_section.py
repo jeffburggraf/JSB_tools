@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from pathlib import Path
 from typing import Dict, List, Union, Tuple, Set
-from JSB_tools.nuke_data_tools.nuclide.data_directories import pickle_dir, all_particles
+from JSB_tools.nuke_data_tools.nuclide.data_directories import pickle_dir, all_particles, activation_directories
 import re
 import JSB_tools.nuke_data_tools.nuclide as nuclide_module
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
@@ -17,6 +17,9 @@ except ModuleNotFoundError:
     openmc = None
     from JSB_tools import no_openmc_warn
     no_openmc_warn()
+
+TOTAL_MTS = [2, 4, 5, 11, 16, 17, 18, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 41, 42, 44, 45, 102,
+             103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117]
 
 
 class CustomUnpickler(pickle.Unpickler):
@@ -76,6 +79,8 @@ class CrossSection1D:
     @property
     def emin(self):
         if self.__yield__ is None:
+            if isinstance(self.__xs__, ResonancesWithBackground):
+                return self.__xs__.background.x[0]
             return self.__xs__.x[0]
         else:
             return 1E-6 * max(self.__xs__.x[0], self.__yield__.x[0])
@@ -83,6 +88,8 @@ class CrossSection1D:
     @property
     def emax(self):
         if self.__yield__ is None:
+            if isinstance(self.__xs__, ResonancesWithBackground):
+                return self.__xs__.background.x[-1]
             return self.__xs__.x[-1]
         else:
             return 1E-6 * min(self.__xs__.x[-1], self.__yield__.x[-1])
@@ -90,6 +97,9 @@ class CrossSection1D:
     @property
     def ergs(self):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), 250)
+
+    def get_plot_ergs(self, npoints=300):
+        return np.logspace(np.log10(self.emin), np.log10(self.emax), npoints)
 
     def __call__(self, ergs):
         """
@@ -109,6 +119,8 @@ class CrossSection1D:
              **mpl_kwargs):
         if ergs is None:
             ergs = self.ergs
+        elif isinstance(ergs, int):
+            ergs = self.get_plot_ergs(ergs)
 
         if erg_max is not None:
             i1 = np.searchsorted(ergs, erg_max)
@@ -190,6 +202,32 @@ class ActivationCrossSection(CrossSection1D):
     Behaves much like CrossSection1D instance.
 
     """
+    def __init__(self, xss: Dict[int, Tabulated1D], yields: Dict[int, Union[None, List[Tabulated1D]]], fig_label: str = None,
+                 incident_particle: str = 'particle', data_source='', mt_values=None, endf_path=None,
+                 **misc_data):
+        super().__init__(None, None, fig_label=fig_label, incident_particle=incident_particle,
+                         data_source=data_source, mt_value=None, endf_path=endf_path, **misc_data)
+
+        if yields is None:
+            yields = {k: [CrossSection1D.identity] for k in xss.keys()}
+
+        self.__xss__: Dict[int, Tabulated1D] = {}
+        self.__yields__: Dict[int, List[Tabulated1D]] = {}
+
+        for mt in xss:
+            if mt not in yields:
+                yields[mt] = None
+
+            self._add_xs(mt, xss[mt], yields[mt])
+
+    def __iadd__(self, other: ActivationCrossSection, exclude_MTs=None):
+        for mt, xs in other.__xss__.items():
+            if exclude_MTs is not None and mt in exclude_MTs:
+                continue
+            self._add_xs(mt, xs, other.__yields__[mt])
+
+        return self
+
     def get_reaction_name(self, mt=None):
         if len(self.__xss__) == 1:
             mt = list(self.__xss__.keys())[0]
@@ -247,11 +285,14 @@ class ActivationCrossSection(CrossSection1D):
             try:
                 xs_y = self.__xss__[_mt](ergs)
             except AttributeError:  # bug? I dont know.
-                if isinstance(self.__xss__[_mt], ResonancesWithBackground):
-                    self.__xss__[_mt] = self.__xss__[_mt].background
-                    xs_y = self.__xss__[_mt](ergs)
-                else:
-                    raise
+                pass
+                raise
+                # if isinstance(self.__xss__[_mt], ResonancesWithBackground):
+                    # self.__xss__[_mt] = self.__xss__[_mt].background
+                    # self.__xss__[_mt] = self.__xss__[_mt]
+                    # xs_y = self.__xss__[_mt](ergs)
+                # else:
+                #     raise
 
             if self.__yields__[_mt] is not None:
                 yield_y = np.zeros_like(xs_y)
@@ -270,36 +311,25 @@ class ActivationCrossSection(CrossSection1D):
 
         return out
 
-    def __init__(self, xss: Dict[int, Tabulated1D], yields: Dict[int, Union[None, List[Tabulated1D]]], fig_label: str = None,
-                 incident_particle: str = 'particle', data_source='', mt_values=None, endf_path=None,
-                 **misc_data):
-        super().__init__(None, None, fig_label=fig_label, incident_particle=incident_particle,
-                         data_source=data_source, mt_value=None, endf_path=endf_path, **misc_data)
-
-        if yields is None:
-            yields = {k: [CrossSection1D.identity] for k in xss.keys()}
-
-        self.__xss__: Dict[int, Tabulated1D] = xss
-        self.__yields__: Dict[int, List[Tabulated1D]] = yields
-
-        for mt in xss:
-            if mt not in yields:
-                yields[mt] = None
-
-            self._add_xs(mt, xss[mt], yields[mt])
-
     @property
     def mts(self):
         return list(self.__xss__.keys())
 
-    def _add_xs(self, mt: int, xs: Union[ResonancesWithBackground, Tabulated1D], yield_: Union[None, Tabulated1D]):
+    def _add_xs(self, mt: int, xs: Union[ResonancesWithBackground, Tabulated1D],
+                yield_: Union[None, Tabulated1D, List[Tabulated1D]]):
         if yield_ is None:
             yield_ = CrossSection1D.identity
 
         try:
-            self.__yields__[mt].append(yield_)
+            if isinstance(yield_, list):
+                self.__yields__[mt].extend(yield_)
+            else:
+                self.__yields__[mt].append(yield_)
         except KeyError:
-            self.__yields__[mt] = [yield_]
+            if isinstance(yield_, list):
+                self.__yields__[mt] = [k for k in yield_]
+            else:
+                self.__yields__[mt] = [yield_]
 
         if isinstance(xs, ResonancesWithBackground):
             assert xs.mt == mt
@@ -393,7 +423,10 @@ class ActivationCrossSection(CrossSection1D):
     def emin(self):
         out = None
         for xs in self.__xss__.values():
-            min_ = min(xs.x)
+            if isinstance(xs, ResonancesWithBackground):
+                min_ = min(xs.background.x)
+            else:
+                min_ = min(xs.x)
             if out is None or min_ < out:
                 out = min_
 
@@ -403,20 +436,19 @@ class ActivationCrossSection(CrossSection1D):
     def emax(self):
         out = None
         for xs in self.__xss__.values():
-            max_ = max(xs.x)
+            if isinstance(xs, ResonancesWithBackground):
+                max_ = max(xs.background.x)
+            else:
+                max_ = max(xs.x)
+
             if out is None or max_ > out:
                 out = max_
 
         return 1E-6 * out
 
 
-class NuclearLibraries:
-    # list of nuclear library sources for each incident particle. The order in which a given data source is
-    # first used (in endf_to_pickle.py) determines the order in which they appear in `libraries`,
-    # which in turn determines priority.
-    xs_libraries = {'proton': ['endf', 'tendl'],
-                    'gamma': ['endf', 'tendl'],
-                    'neutron': ['endf', 'tendl']}
+# dist of available libraries for each particle
+activation_libraries = {k: list(v.keys()) for k, v in activation_directories.items()}
 
 
 class ActivationReactionContainer:
@@ -435,14 +467,12 @@ class ActivationReactionContainer:
     """
     parents_ = {}  # Dict of parents grouped by data source. Loaded during cls.from_pickle.
 
-    # all_instances set in code below
+    # all_instances set in code below. Format is: {'neutron': {'endf': {'Ge74': self, ...} ...}, 'proton': {...}}
     all_instances: Dict[str, Dict[str, Dict[str, ActivationReactionContainer]]] = {}
 
     directories = {par: pickle_dir / 'activation' / par for par in all_particles}
 
-    libraries = NuclearLibraries.xs_libraries
-
-    for __proj, __list_of_libraries in libraries.items():
+    for __proj, __list_of_libraries in activation_libraries.items():
         all_instances[__proj] = {k: {} for k in __list_of_libraries}
 
     @staticmethod
@@ -479,16 +509,16 @@ class ActivationReactionContainer:
             data_source:
         """
         data_source = data_source.lower()
-        assert data_source in self.libraries[projectile], f'Data source "{data_source}" not included in ' \
-                                                          'ActivationReactionContainer.libraries. ' \
-                                                          'Add new source if needed.'
+        assert data_source in activation_libraries[projectile], f'Data source "{data_source}" not included in ' \
+                                                                  'ActivationReactionContainer.libraries. ' \
+                                                                  'Add new source if needed.'
         self.projectile = projectile
         self.nuclide_name = nuclide_name
         self.product_nuclide_names_xss: Dict[str, ActivationCrossSection] = {}
         self.parent_nuclide_names: Set[str] = set()
 
         self.elastic_xs: Union[CrossSection1D, None] = None
-        self.inelastic_xs: Union[CrossSection1D, None] = None
+        self.nonelastic_xs: Union[CrossSection1D, None] = None
         self.total_xs: Union[CrossSection1D, None] = None
 
         self.path = None  # Path to ENDF file.
@@ -507,7 +537,11 @@ class ActivationReactionContainer:
         Returns:
 
         """
-        del self.all_instances[self.projectile][self.data_source][self.nuclide_name]
+        try:
+            del self.all_instances[self.projectile][self.data_source][self.nuclide_name]
+        except KeyError:
+            warn(f"KeyError where I wouldn't expect it...  for {self.projectile}'s on nucleus {self.nuclide_name} "
+                 f"from library {self.data_source}")
 
     @classmethod
     def fetch_xs(cls, parent_name, residue_name, projectile, data_source=None) -> CrossSection1D:
@@ -522,10 +556,11 @@ class ActivationReactionContainer:
         Returns:
 
         """
-        assert projectile in cls.libraries, f'Invalid projectile, {projectile}.'
-        assert data_source in cls.libraries[projectile], f"No library named {data_source} for projectile {projectile}."
+        assert projectile in activation_libraries, f'Invalid projectile, {projectile}.'
+        assert data_source in activation_libraries[projectile], \
+            f"No library named {data_source} for projectile {projectile}."
 
-        for data_source in (cls.libraries[projectile] if data_source is None else [data_source]):
+        for data_source in (activation_libraries[projectile] if data_source is None else [data_source]):
             try:
                 r = cls.from_pickle(parent_name, projectile, data_source)
                 if residue_name in r.product_nuclide_names_xss:
@@ -562,11 +597,11 @@ class ActivationReactionContainer:
         if data_source is None:
             return cls.from_pickle(nuclide_name, projectile, data_source=None)
 
-        elif data_source in cls.libraries[projectile]:
+        elif data_source in activation_libraries[projectile]:
             return cls.from_pickle(nuclide_name, projectile, data_source=data_source)
 
         elif data_source == 'all':
-            for library in cls.libraries[projectile][::-1]:  # reversed so that higher priority xs data overwrites lower
+            for library in activation_libraries[projectile][::-1]:  # reversed so that higher priority xs data overwrites lower
                 # , e.g. ENDF overwrites TENDL.
 
                 try:
@@ -595,12 +630,12 @@ class ActivationReactionContainer:
     @classmethod
     def from_pickle(cls, nuclide_name, projectile, data_source) -> ActivationReactionContainer:
 
-        assert projectile in cls.libraries, f'No activation data for incident particle "{projectile}"'
+        assert projectile in activation_libraries, f'No activation data for incident particle "{projectile}"'
 
         if data_source is None:  # default library is always the first element
-            data_source = cls.libraries[projectile][0]
+            data_source = activation_libraries[projectile][0]
 
-        if data_source not in cls.libraries[projectile]:
+        if data_source not in activation_libraries[projectile]:
             raise FileNotFoundError(f'No data source "{data_source}" for projectile "{projectile}"')
 
         all_instances = cls.all_instances[projectile][data_source]  # shouldn't have KeyError here
@@ -665,52 +700,37 @@ class ActivationReactionContainer:
         Write non_elastic, elastic, and total if available.
         Returns:
         """
+        assert isinstance(self._evaluation, Evaluation)
+        mts_labels = [(2, 'elastic')]   # nonelastic is not working (3, 'nonelastic')]  # (1, 'total')
 
-        assert isinstance(self._evaluation, Evaluation)  # todo
-        #
-        # def get_xy(mt):
-        #     r = Reaction.from_endf(self._evaluation, mt)
-        #     xs = r.xs["0K"]  # cross-sections at zero Kelvin
-        #     return xs.x * 1E-6, xs.y
-        #
-        # non_elastic = 3
-        #
-        # fig_label = f"{self.nuclide_name}({self._get_projectile_short}, inelastic)"
-        #
-        # x, y = None, None
-        #
-        # if self.projectile == 'neutron':
-        #     xtot, ytot = get_xy(1)
-        #     xel, yel = get_xy(2)
-        #
-        #     x = xel
-        #     if not (xel[0] > xtot[0] and xel[-1] < xtot[-1]):
-        #         x = xtot
-        #         yel = np.interp(x, xel, yel)
-        #     else:
-        #         ytot = np.interp(x, xtot, ytot)
-        #     y = ytot - yel
-        # else:
-        #     if non_elastic in self._available_mts:
-        #         x, y = get_xy(non_elastic)
-        #
-        # if x is not None:
-        #     self.inelastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
-        #
-        # if 2 in self._available_mts:
-        #     x, y = get_xy(2)
-        #     fig_label = f"{self.nuclide_name}({self._get_projectile_short}, elastic)"
-        #     self.elastic_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
-        #
-        # if 1 in self._available_mts:
-        #     x, y = get_xy(1)
-        #     fig_label = f"{self.nuclide_name}({self._get_projectile_short}, total)"
-        #     self.total_xs = CrossSection1D(x, y, fig_label, self.projectile, self.data_source)
+        reactions = self._get_reactions(self._evaluation, self.projectile)
+
+        for mt, label in mts_labels:
+            if mt in reactions:
+                fig_label = f"{self.nuclide_name}({self._get_projectile_short}, {label})"
+
+                r = reactions[mt]
+                xs = r.xs['0K']
+
+                XS = CrossSection1D(xs, fig_label=fig_label, incident_particle=self.projectile,
+                                    data_source=self.data_source, mt_value=mt, endf_path=self._evaluation.path)
+
+                setattr(self, f'{label}_xs', XS)
+
+        if self.total_xs is None:
+            for res, xs in self.product_nuclide_names_xss.items():
+                if self.total_xs is None:
+                    fig_label = f"{self.nuclide_name}({self._get_projectile_short}, total)"
+                    self.total_xs = ActivationCrossSection(xs.__xss__, xs.__yields__, fig_label=fig_label)
+                else:
+                    for mt in xs.__xss__.keys():
+                        if mt in TOTAL_MTS:
+                            self.total_xs._add_xs(mt, xs.__xss__[mt], xs.__yields__[mt])
 
     @property
     def _get_projectile_short(self):
         try:
-            return {'proton': 'p', 'neutron': 'n', 'gamma': 'g', 'electron': 'e', 'alpha': 'a'}[self.projectile]
+            return {'proton': 'p', 'neutron': 'n', 'gamma': 'γ', 'electron': 'e', 'alpha': 'a'}[self.projectile]
         except KeyError:
             assert False, 'Invalid incident particle: "{}"'.format(self.projectile)
 
@@ -942,10 +962,9 @@ class ActivationReactionContainer:
         self.path = endf_path
 
         self._evaluation = e
+        self._evaluation.path = endf_path
 
         self._available_mts = set([x[1] for x in self._evaluation.reaction_list])
-
-        self.set_misc_xs()
 
         for product_name, reaction_cross_section in self._get_activation_products(e, projectile, debug).items():
             self.product_nuclide_names_xss[product_name] = reaction_cross_section
@@ -955,6 +974,8 @@ class ActivationReactionContainer:
                     parents_dict[product_name].add(self.nuclide_name)
                 except KeyError:
                     parents_dict[product_name] = {self.nuclide_name}
+
+        self.set_misc_xs()
 
         return self
 
@@ -971,7 +992,7 @@ class ActivationReactionContainer:
 
     @property
     def parents_dict_path(self):
-        return self.get_parents_dict_path(projectile=self.projectile, library=self.data_source)
+        return self.get_parents_dict_path(projectile=self.projectile, data_source=self.data_source)
 
     @property
     def pickle_path(self):
@@ -1047,6 +1068,8 @@ class ActivationReactionContainer:
 
 if __name__ == "__main__":
     print()
+    nuclide_module.Nuclide('In113').get_incident_neutron_daughters(data_source='TENDL')['In112'].xs.plot()
+
     ax = nuclide_module.Nuclide('In114').neutron_capture_xs().plot()
     print(nuclide_module.Nuclide('In114').thermal_neutron_capture_xs())
     ax.axvline(0.025*1E-6)

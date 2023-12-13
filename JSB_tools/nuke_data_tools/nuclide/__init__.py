@@ -6,7 +6,8 @@ import re
 from logging import warning as warn
 from typing import Dict, List, Tuple, Union, Literal
 from JSB_tools.nuke_data_tools.nuclide.data_directories import DECAY_PICKLE_DIR
-from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D, ActivationCrossSection, ActivationReactionContainer
+from JSB_tools.nuke_data_tools.nuclide.cross_section import (CrossSection1D, ActivationCrossSection,
+                                                             ActivationReactionContainer, activation_libraries)
 import pickle
 from datetime import datetime, timedelta
 from JSB_tools.nuke_data_tools.nudel import LevelScheme
@@ -50,7 +51,7 @@ def all_isotopes():
     return ALL_ISOTOPES
 
 
-def get_abundance():
+def get_abundance_dict():
     """
     Return dict like
         {SS1: {A1: abun1, A2: abum2, ...},
@@ -732,7 +733,7 @@ class Nuclide(Element):
         _, symbol, A = m.groups()
 
         try:
-            return get_abundance()[symbol][int(A)]
+            return get_abundance_dict()[symbol][int(A)]
         except KeyError:
             return 0
 
@@ -776,7 +777,9 @@ class Nuclide(Element):
     @staticmethod
     def get_all_isotopes(atomic_symbol: str, non_zero_abundance=True) -> List[str]:
         """
-        Returns list of strings of all isotopes with atomic number according to `atomic_symbol` argument.
+        Returns list of strings of all isotopes (with existing data) with atomic number according to `atomic_symbol`
+        argument.
+
         Args:
             atomic_symbol:
             non_zero_abundance: If True, only return nuclides that occur naturally. Otherwise, return any for which
@@ -784,23 +787,35 @@ class Nuclide(Element):
         Returns:
 
         """
-        m = re.match('^([A-z]{0,3})(?:[0-9]+[_m]*([0-9]+)?)', atomic_symbol)
+        # m = re.match('^([A-z]{0,3})(?:[0-9]+[_m]*([0-9]+)?)', atomic_symbol)
+        m = re.match(r'^([A-z]{0,3})$', atomic_symbol)
         assert m, f"Invalid argument, '{atomic_symbol}'"
 
         s = m.groups()[0]
-        s = f"{s[0].upper()}{s[1:]}"
+        s = f"{s[0].upper()}{s[1:].lower()}"
         outs = []
 
+        abun = get_abundance_dict()
         for a in all_isotopes()[s]:
             other_s = f"{s}{a}"
 
             if non_zero_abundance:
-                if a in get_abundance()[s] and get_abundance()[s][a] > 0:
+                if a in abun[s] and abun[s][a] > 0:
                     outs.append(other_s)
             else:
                 outs.append(other_s)
 
         return outs
+
+    @staticmethod
+    def isotopic_breakdown(atomic_symbol):
+        m = re.match(r'^([A-z]{0,3})$', atomic_symbol)
+        assert m, f"Invalid argument, '{atomic_symbol}'"
+
+        s = m.groups()[0]
+        s = f"{s[0].upper()}{s[1:].lower()}"
+
+        return get_abundance_dict()[s]
 
     def all_isotopes(self, non_zero_abundance=False):
         return Nuclide.get_all_isotopes(self.atomic_symbol, non_zero_abundance)
@@ -1124,11 +1139,11 @@ class Nuclide(Element):
         Returns:
 
         """
-        assert projectile in ActivationReactionContainer.libraries, f'No data for projectile, "{projectile}"'
+        assert projectile in activation_libraries, f'No data for projectile, "{projectile}"'
         out = None
 
         if data_source is None:
-            data_sources = ActivationReactionContainer.libraries[projectile]
+            data_sources = activation_libraries[projectile]
         else:
             data_sources = [data_source]
 
