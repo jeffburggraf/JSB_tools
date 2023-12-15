@@ -73,6 +73,49 @@ class SphereSurface(Surface):
         return out
 
 
+class SimplePlaneSurface(Surface):
+    def __init__(self, loc=0, ax='z', surf_name=None, surf_num=None, comment=None):
+        """
+        Generate a plane from a location and normal. Needs sognioficant reworking and kscdjgnvbadgf
+        Args:
+            loc:
+            normal_vec_or_str:
+            surf_name:
+            surf_num:
+            comment:
+        """
+        super(SimplePlaneSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+        self.mnemonic = f'p{ax.lower()}'
+        self.ax = ax
+        self.loc = loc
+
+    @property
+    def surface_card(self):
+        comment = get_comment(self.surface_comment, self.surface_name)
+        out = f'{self.surface_number} {self.mnemonic} {self.loc:.{NDIGITS}g} {comment}'
+        return out
+
+
+class SimpleCylinderSurface(Surface):
+    def __init__(self, radius, ax='z', surf_name=None, surf_num=None, comment=None):
+        """
+        Generate a plane from a location and normal. Needs sognioficant reworking and kscdjgnvbadgf
+        Args:
+            loc:
+            ax: Axis of cylinder
+        """
+        super(SimpleCylinderSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+        self.mnemonic = f'c{ax.lower()}'
+        self.ax = ax
+        self.radius = radius
+
+    @property
+    def surface_card(self):
+        comment = get_comment(self.surface_comment, self.surface_name)
+        out = f'{self.surface_number} {self.mnemonic} {self.radius:.{NDIGITS}g} {comment}'
+        return out
+
+
 class SphereCell(Cell, SphereSurface):
     def __init__(self, radius, x=0, y=0, z=0,
                  material: Union[int, mat, PHITSOuterVoid] = 0,
