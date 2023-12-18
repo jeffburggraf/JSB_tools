@@ -193,6 +193,7 @@ class Material:
         self.density = density
         self._zaids = []
         self._zaid_proportions = []
+        self._xs_libraries: List[str] = []  # e.g. .84p
 
         if mat_kwargs is None:
             self.mat_kwargs = {}
@@ -427,13 +428,14 @@ class Material:
         out.is_gas = True
         return out
 
-    def add_element_natural(self, element_symbol, fraction: float = 1.) -> None:
+    def add_element_natural(self, element_symbol, fraction: float = 1., xs_library='') -> None:
         """
         Add all of an element's isotopes according to their natural abundances.
 
         Args:
             element_symbol: e.g. "Ar", "U", "W"
             fraction: negative for weight fraction, positive for atom fraction.
+            xs_library: e.g.:  .84p
 
         Returns: None
         """
@@ -444,10 +446,23 @@ class Material:
             m = re.match('[A-Z][a-z]{0,2}([0-9]+)', symbol)
             a = int(m.groups()[0])
             zaid = 1000 * z + a
-            self.add_zaid(zaid, percent*fraction, False)
+            self.add_zaid(zaid, percent*fraction, False, xs_library=xs_library)
 
     def add_zaid(self, zaid_or_nuclide: Union[Nuclide, int], fraction, is_weight_fraction=False,
-                 elemental_zaid=False):
+                 elemental_zaid=False, xs_library=''):
+        """
+
+        Args:
+            zaid_or_nuclide:
+            fraction:
+            is_weight_fraction:
+            elemental_zaid:
+            xs_library: e.g.:  .84p
+
+
+        Returns:
+
+        """
         if self.is_weight_fraction is None:
             self.is_weight_fraction = is_weight_fraction
         if isinstance(zaid_or_nuclide, int):
@@ -462,16 +477,19 @@ class Material:
         self._zaids.append(zaid_or_nuclide)
         self._zaid_proportions.append(fraction)
 
+        self._xs_libraries.append(xs_library)
+
     @property
     def mat_card(self, mat_kwargs=None) -> str:
         if mat_kwargs is not None:
             self.mat_kwargs.update(mat_kwargs)
 
         assert len(self._zaids) > 0, 'No materials added! Use Material.add_zaid'
-        comment = get_comment('density = {}'.format(self.density), self.name )
+        comment = get_comment('density = {}'.format(self.density), self.name)
         outs = ['M{}  {}'.format(self.mat_number, comment)]
-        for n, zaid in zip(self._zaid_proportions, self._zaids):
-            outs.append('     {} {}'.format(zaid, '-{}'.format(n) if self.is_weight_fraction else n))
+        for n, zaid, xs_lib in zip(self._zaid_proportions, self._zaids, self._xs_libraries):
+            zaid_str = f'{zaid}{xs_lib}'
+            outs.append('     {} {}'.format(zaid_str, '-{}'.format(n) if self.is_weight_fraction else n))
 
         outs.extend(["     {} = {}".format(k, v) for k, v in self.mat_kwargs.items()])
 
