@@ -380,9 +380,9 @@ Hold "O" and click to set (0,0) origin.
 
 """
 if __name__ == '__main__':
-    p = Path('/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/RMET3/xray_center1.tif')
+    p = Path('/detectorModels/RMET3/Xrays/xray_center1.tif')
     # p = Path('/Users/burgjs/PycharmProjects/MiscMCNP/detectorModels/RMET3/XRay1.tif')
-    i = Image(p)
-    # i = Image.from_pickle(p)
+    # i = Image(p)
+    i = Image.from_pickle(p)
 
     plt.show()
