@@ -115,12 +115,12 @@ class MCNPSICard:
         if cell_vol_dist is True:
             self.sp_option = 'V'
         else:
-            self.sp_option = ''
+            self.sp_option = ' ' * len(self.si_option)
 
         self.card = 'SI{0} {1} {2}\n'.format(self.si_card_number, self.si_option,
                                              ' '.join(map(lambda x: f'{x:.4e}', self.variable_values)))
-        self.card += 'SP{0} {1} {2}'.format(self.si_card_number,
-                                            self.sp_option, ' '.join(map(lambda x: f'{x:.4e}', self.variable_probs)))
+        self.card += f"SP{self.si_card_number} {self.sp_option} {' '.join(map(lambda x: f'{x:.4e}', self.variable_probs))}"
+
 
     @classmethod
     def from_function(cls, function, variable_values, si_card_number=None, discrete=False, *func_args, **func_kwargs):
@@ -154,10 +154,8 @@ class MCNPSICard:
         out.card = card
         return out
 
-    @classmethod
-    def si_k_for_each_value_in_si_0(cls, si_0, si_ks):
-        pass
-
+    def __repr__(self):
+        return self.card
 
 
 class TallyBase:

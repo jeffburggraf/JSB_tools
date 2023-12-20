@@ -13,7 +13,7 @@ import numpy as np
 from JSB_tools.MCNP_helper.materials import Material as mat
 from JSB_tools.MCNP_helper.materials import PHITSOuterVoid
 
-NDIGITS = 10  # Number of significant digits to round all numbers to when used in input decks.
+NDIGITS = 7  # Number of significant digits to round all numbers to when used in input decks.
 
 
 __all__ = ['clear_all', 'clear_all_but_materials', 'clear_cells', 'clear_surfaces']
@@ -94,6 +94,34 @@ class SimplePlaneSurface(Surface):
         comment = get_comment(self.surface_comment, self.surface_name)
         out = f'{self.surface_number} {self.mnemonic} {self.loc:.{NDIGITS}g} {comment}'
         return out
+
+
+class GeneralPlaneSurface(Surface):
+    def __init__(self, point, vec,  surf_name=None, surf_num=None, comment=None):
+        """
+        Generate a plane from a location and normal. Needs sognioficant reworking and kscdjgnvbadgf
+        Args:
+            point: A point which the plane passes through
+            vec: Vector normal to the plane
+            surf_name:
+            surf_num:
+            comment:
+        """
+        super(GeneralPlaneSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
+        d = np.sum(np.array(vec) * np.array(point))
+        self.point = point
+        self.vec = vec
+
+        self.arguments = f"{vec[0]:.{NDIGITS}g} {vec[1]:.{NDIGITS}g} {vec[2]:.{NDIGITS}g} {d:.{NDIGITS}g}"
+
+    @property
+    def surface_card(self):
+        comment = get_comment(self.surface_comment, self.surface_name)
+        out = f'{self.surface_number} P {self.arguments} {comment}'
+        return out
+
+    def __repr__(self):
+        return self.surface_card
 
 
 class SimpleCylinderSurface(Surface):

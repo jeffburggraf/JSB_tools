@@ -352,6 +352,47 @@ class Nuclide(Element):
         """
         return LevelScheme(f"{self.atomic_symbol}{self.A}")
 
+    def get_gammas(self, decay_rate_ratio_thresh=10, n_generations=1, **kwargs):
+        """
+        Include daughter decays, assuming equilibrium is achieved.
+        Args:
+            decay_rate_ratio_thresh: if daughter decays less than this times as fast, then don't include.
+            n_generations:
+
+            **kwargs: Internal use only. Do not use.
+
+        Returns:
+
+        """
+        out:  List[GammaLine] = kwargs.get('out', self.decay_gamma_lines)
+        parent_decay_rate = kwargs.get('parent_decay_rate', self.decay_rate)
+        cum_branching_ratio = kwargs.get('cum_branching_ratio', 1)
+        cum_modes = kwargs.get('cum_modes', [])
+
+        if n_generations == 0:
+            return []
+
+        for decay_type, decay_modes in self.decay_modes.items():
+            for mode in decay_modes:
+                daughter = mode.daughter_nuclide
+
+                if daughter.decay_rate > parent_decay_rate * decay_rate_ratio_thresh:
+                    cum_modes.append(mode)
+
+                    new_branching_ratio = cum_branching_ratio * mode.branching_ratio
+
+                    for g in daughter.decay_gamma_lines:
+                        intensity = new_branching_ratio * g.intensity
+                        new_g = GammaLine.__new__(GammaLine, intensity=intensity, erg=g.erg, absolute_rate=parent_decay_rate * intensity, _from_modes=cum_modes,
+                                                  parent_nuclide_name=cum_modes[0].parent_name)
+
+                        out.append(new_g)
+
+                    daughter.get_gammas(decay_rate_ratio_thresh=decay_rate_ratio_thresh, n_generations=n_generations - 1,
+                                        out=out, parent_decay_rate=parent_decay_rate, cum_branching_ratio=new_branching_ratio, cum_modes=cum_modes)
+
+        return out
+
     @property
     def decay_gamma_lines(self) -> List[GammaLine]:
         if not self.__decay_gamma_lines:
@@ -1347,7 +1388,7 @@ class _DiscreteSpectrum:
         radiation_type = radiation_type.replace('/', '_')
         # if radiation_type == 'ec/beta+':
         #     radiation_type = 'ec_beta_plus'
-        return pwd / 'data' / 'nuclides' / f'{radiation_type}_spectra' / f'{nuclide_name}.pickle'
+        return pwd / 'pickled_data' / 'nuclides' / f'{radiation_type}_spectra' / f'{nuclide_name}.pickle'
 
     def __pickle__(self):
         path = self.__pickle_path(self.radiation_type, self.__nuclide_name)
@@ -1368,6 +1409,27 @@ class DecayMode:
         partial_decay_constant: Rate of decays through this mode.
         partial_half_life: Half life for decays through this mode.
     """
+    @classmethod
+    def from_values(cls, daughter_name,  parent_name, parent_half_life, branching_ratio, q_value=None, modes: Union[None, tuple[str]] = None,
+                    intermediates=None):
+        out = cls.__new__(cls)
+
+        out.q_value = q_value
+
+        if modes is None:
+            out.modes = []
+        else:
+            out.modes = modes
+
+        out.daughter_name = daughter_name
+        out.parent_name = parent_name
+        out.branching_ratio = branching_ratio
+        out.partial_decay_constant = np.log(2) / parent_half_life * branching_ratio
+
+        if len(intermediates) == 0:
+            intermediates = None
+        out.intermediates = intermediates
+        return out
 
     def __init__(self, openmc_decay_mode, parent_half_life):
         self.q_value = openmc_decay_mode.energy * 1E-6
@@ -1382,12 +1444,24 @@ class DecayMode:
         else:
             self.partial_half_life = np.inf
 
+        self.intermediates = None
+
+    @property
+    def daughter_nuclide(self):
+        return Nuclide(self.daughter_name)
+
     def is_mode(self, mode_str):
         return mode_str in self.modes
 
     def __repr__(self):
-        out = "{0} -> {1} via {2} with BR of {3}".format(self.parent_name, self.daughter_name, self.modes,
-                                                         self.branching_ratio)
+        # if self.intermediates is not None:
+        #     chain = [self.parent_name] + self.intermediates + [self.daughter_name]
+        #
+        #     ss = '->'.join(chain)
+        # else:
+        ss = f"{self.parent_name} -> {self.daughter_name}"
+
+        out = f"{ss} via {self.modes} with BR of {self.branching_ratio}"
         return f"{out}, Q-value: {self.q_value}"
 
 
@@ -1402,6 +1476,8 @@ class DecayModeHandlerMixin:
             self._from_modes: List[DecayMode] = nuclide.decay_modes[emission_data['from_mode']]
         except KeyError:
             self._from_modes = []
+
+        self._parents = [nuclide.name]  # for the case of gamma lines from decay chain
 
     @property
     def parent_nuclide(self) -> Nuclide:
@@ -1440,11 +1516,12 @@ class GammaLine(DecayModeHandlerMixin):
             obj.intensity = kwargs['intensity']
             obj.erg = kwargs['erg']
             obj.absolute_rate = kwargs['absolute_rate']
-        return obj
+            try:
+                obj.parent_nuclide_name = kwargs['parent_nuclide_name']
+            except KeyError:
+                obj.parent_nuclide_name = args[0].name
 
-    def __copy__(self):
-        return GammaLine.__new__(GammaLine, _from_modes=self._from_modes, intensity=self.intensity, erg=self.erg,
-                                 absolute_rate=self.absolute_rate)
+        return obj
 
     def __init__(self, nuclide: Nuclide, emission_data):
         """
@@ -1458,6 +1535,10 @@ class GammaLine(DecayModeHandlerMixin):
         self.erg = emission_data['energy']
         self.intensity = emission_data['intensity']
         self.absolute_rate = nuclide.decay_rate * self.intensity
+
+    def __copy__(self):
+        return GammaLine.__new__(GammaLine, _from_modes=self._from_modes, intensity=self.intensity, erg=self.erg,
+                                 absolute_rate=self.absolute_rate)
 
     def get_n_gammas(self, ref_activity: float, activity_ref_date: datetime, tot_acquisition_time: float,
                      acquisition_ti: datetime = datetime.now(), activity_unit='uCi') -> UFloat:
@@ -1775,7 +1856,10 @@ class DecayNuclide:
 
 
 if __name__ == '__main__':
-    a = ActivationReactionContainer.load('Ar40', 'neutron', 'endf')
+    n = Nuclide('Cs137')
+    oiut = n.get_gammas()
+    print()
+    # a = ActivationReactionContainer.load('Ar40', 'neutron', 'endf')
     pass
     # print(Nuclide('U235').atomic_mass('u'))
-    # print(Nuclide('U235_m1').rest_energy())
+    # print(_out('U235_m1').rest_energy())
