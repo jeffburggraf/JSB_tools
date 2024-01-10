@@ -540,7 +540,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     elif poissonian_errs:
         if not make_density:
             warnings.warn("Assume auto-generated poissonian errors is ON. Make sure the histogram values supplied to "
-                          "multi_gaus_fit are NOT a density and that `make_density`=True")
+                          "multi_gaus_fit are NOT a density. If you want density, supply raw counts and use `make_density`=True")
         yerr = np.sqrt(y)
 
     yscale = 1  # used for bg geuss
