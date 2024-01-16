@@ -117,12 +117,18 @@ class TabPlot:
     def axes_flat(self) -> List[Axes]:
         return flatten(self.plt_axs)
 
-    def __init__(self, figsize=(10, 8), universal_zoom=True, *fig_args, **fig_kwargs):
+    def __init__(self, figsize=(10, 8), universal_zoom=True,  window_title: Union[str, None] = None,
+                 *fig_args, **fig_kwargs):
+
         """
 
         Args:
             figsize:
+
             universal_zoom: Zoom on one axis will be applied to all other axis (with the same subplots nrow/ncols).
+
+            window_title: title at top of figure window (not same as the suptitle)
+
             *fig_args:
             **fig_kwargs:
         """
@@ -135,6 +141,9 @@ class TabPlot:
         self.fig = plt.figure(figsize=figsize, *fig_args, **fig_kwargs)
 
         self.fig.canvas.mpl_connect('key_press_event', self._key_press)
+
+        if window_title is not None:
+            self.fig.canvas.manager.set_window_title(window_title)
 
         self._vis_flag = True
 

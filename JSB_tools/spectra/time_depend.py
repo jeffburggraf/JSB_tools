@@ -269,7 +269,8 @@ def get_fit_slice(bins, center_guesses, fit_buffer_window):
     Returns: bins_slice, y_slice
 
     """
-    xmin, xmax = bins[0], bins[-1] - 1E-3
+    delta = bins[-1] - bins[-2]
+    xmin, xmax = bins[0], bins[-1] - delta * 1E-3
     I0, I1 = np.searchsorted(bins, [max(xmin, min(center_guesses) - fit_buffer_window),
                                     min(xmax, max(center_guesses) + fit_buffer_window)],
                              side='right') - 1
@@ -498,9 +499,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
                                             fit_buffer_window=fit_buffer_window)
 
         if (y_slice[1] - y_slice[0]) <= 1 + 2 + 3 * len(center_guesses):  # more params than data points. widen window
-            print(f"Fit window being increased from {fit_buffer_window} to {fit_buffer_window * 2}")  # todo: make log?
-            fit_buffer_window *= 2
-            return multi_guass_fit(**locals())
+            if y_slice[0] > 0 and y_slice[1] < len(y):
+                print(f"Fit window being increased from {fit_buffer_window} to {fit_buffer_window * 2}")  # todo: make log?
+                fit_buffer_window *= 2
+                return multi_guass_fit(**locals())
 
         bins = bins[slice(*bins_slice)]
         y = y[slice(*y_slice)]
@@ -539,8 +541,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         y = unp.nominal_values(y)
     elif poissonian_errs:
         if not make_density:
-            warnings.warn("Assume auto-generated poissonian errors is ON. Make sure the histogram values supplied to "
-                          "multi_gaus_fit are NOT a density. If you want density, supply raw counts and use `make_density`=True")
+            if any(int(yi) != yi for yi in y):
+                warnings.warn("Assuming auto-generated Poissonian errors. Make sure the histogram values supplied to\n"
+                              "multi_gaus_fit are in units of counts (e.g. not NOT a density histogram). \n"
+                              "If you want density histogram, supply raw counts and set the `make_density` argument to True ")
         yerr = np.sqrt(y)
 
     yscale = 1  # used for bg geuss
