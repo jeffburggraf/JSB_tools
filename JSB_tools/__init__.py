@@ -5,6 +5,7 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
+from matplotlib.colors import LogNorm, SymLogNorm
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -56,6 +57,53 @@ except ModuleNotFoundError:
 
 
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=5, xfmt='.2g', yfmt='.2g'):
+    def get_min_after_zero(a):
+        return min(flatZ[np.where(a > 0)])
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    Z, xbins, ybins = np.histogram2d(datax, datay, bins=bins)
+    Z = Z.transpose()
+
+    flatZ = Z.flatten()
+    abs_flatZ = np.abs(flatZ)
+    if logz:
+        if min(flatZ) < 0:
+            linthresh = np.percentile(abs_flatZ, 1)
+            if linthresh == 0:
+                linthresh = get_min_after_zero(abs_flatZ)
+
+            norm = SymLogNorm(linthresh=linthresh, vmin=min(flatZ), vmax=max(flatZ), )
+        else:
+            if min(flatZ) == 0:
+                z0 = get_min_after_zero(flatZ)
+                Z[np.where(Z == 0)] = z0
+                _min = z0
+            else:
+                _min = np.min(flatZ)
+            norm = LogNorm(vmin=_min, vmax=max(flatZ))
+
+    else:
+        norm = None
+
+    im = ax.imshow(Z, origin='lower', norm=norm)
+    cbar = fig.colorbar(im, ax=ax)
+
+    y_labels = list(map(lambda x: float(f'{x:{yfmt}}'), np.linspace(0, ybins[-1], n_labels_x)))
+    x_labels = list(map(lambda x: float(f'{x: {xfmt}}'), np.linspace(0, xbins[-1], n_labels_y)))
+
+    ax.set_yticks(np.linspace(0, len(ybins) - 1, len(y_labels)), labels=y_labels)
+    ax.set_xticks(np.linspace(0, len(xbins) - 1, len(x_labels)), labels=x_labels)
+
+    ax.format_coord = lambda x, y: f'x={x * x_labels[-1]/(len(xbins) -1):g}, y={y * y_labels[-1]/(len(ybins) -1):g}'
+
+    return {'ax': ax, 'cbar': cbar, 'im': im}
 
 
 def binned_down_sample(bins, y, yerr, n):
