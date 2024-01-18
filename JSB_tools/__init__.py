@@ -103,7 +103,7 @@ def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=
 
     ax.format_coord = lambda x, y: f'x={x * x_labels[-1]/(len(xbins) -1):g}, y={y * y_labels[-1]/(len(ybins) -1):g}'
 
-    return {'ax': ax, 'cbar': cbar, 'im': im}
+    return {'ax': ax, 'cbar': cbar, 'im': im, 'xbins': xbins, 'ybins': ybins}
 
 
 def binned_down_sample(bins, y, yerr, n):
