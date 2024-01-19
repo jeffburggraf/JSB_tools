@@ -73,7 +73,11 @@ class Surface(GeomSpecMixin, metaclass=ABCMeta):
     def clear():
         Surface.all_surfs = MCNPNumberMapping('Surface', 1)
 
-    def __init__(self, surface_number: float = None,
+    @property
+    def surfnum(self):
+        return self.surface_number
+
+    def __init__(self, surface_number: int = None,
                  surface_name: Union[str, None] = None,
                  surface_comment: Union[str, None] = None):
         self.__name__ = surface_name

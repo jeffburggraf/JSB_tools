@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import re
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -59,30 +61,36 @@ def _get_SPE_data(path):
             if lines[i] == '$SPEC_ID:\n':
                 i += 1
                 out['description'] = lines[i].rstrip()
-                i += 1
-            if lines[i] == '$SPEC_REM:\n':
+                # i += 1
+            elif lines[i] == '$SPEC_REM:\n':
                 i += 1
                 out['detector_id'] = int(lines[i][5:])
-                i += 1
-            if lines[i][:8] == 'DETDESC#':
+                # i += 1
+            elif lines[i][:8] == 'DETDESC#':
                 out['device_serial_number'] = lines[i][8:].rstrip().lstrip()
-                i += 1
-            if 'Maestro Version' in lines[i]:
+                # i += 1
+            elif 'Maestro Version' in lines[i]:
                 out['maestro_version'] = lines[i].split()[-1]
-                i += 1
-            if lines[i] == '$DATE_MEA:\n':
+                # i += 1
+            elif lines[i] == '$DATE_MEA:\n':
                 i += 1
                 try:
-                    out['system_start_time'] = datetime.strptime(lines[i].rstrip(),
-                                                             SPEFile.time_format)
+                    m = re.match(r'([0-9]+)\/([0-9]+)\/([0-9]+) ([0-9]+):([0-9]+):([0-9]+)\.?[0-9]*', lines[i].strip())
+                    if m:
+                        mo, day, yr, hr, min, sec = map(int, m.groups())
+                        out['system_start_time'] = datetime(year=yr, month=mo, day=day,hour=hr, minute=min, second=sec, )
+                    # out['system_start_time'] = datetime.strptime(lines[i].rstrip(),
+                    #                                          SPEFile.time_format)
+                    else:
+                        raise ValueError
                 except ValueError:
                     warnings.warn(f"Spe file, '{path}' contains invalid date format:\n{lines[i]}")
                     out['system_start_time'] = datetime(1, 1, 1)
-                i += 1
-            if lines[i] == '$MEAS_TIM:\n':
+                # i += 1
+            elif lines[i] == '$MEAS_TIM:\n':
                 i += 1
                 try:
-                    out['livetime'], out['realtime'] = map(int, lines[i].split())
+                    out['livetime'], out['realtime'] = map(float, lines[i].split())
                 except ValueError:
                     raise ValueError(
                         f"Livetime and realtime did not appear in correct format after '$MEAS_TIM:'. in '{path}'\n"
@@ -91,8 +99,8 @@ def _get_SPE_data(path):
                           "What I got,\n"
                           f"\t$MEAS_TIM:\n\t{lines[i]}\n"
                           "There is a problem in Spe file.")
-                i += 1
-            if lines[i] == '$DATA:\n':
+                # i += 1
+            elif lines[i] == '$DATA:\n':
                 i += 1
                 try:
                     out['n_channels'] = int(lines[i].split()[-1]) + 1

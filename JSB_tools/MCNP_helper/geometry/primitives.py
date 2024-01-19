@@ -108,7 +108,8 @@ class GeneralPlaneSurface(Surface):
             comment:
         """
         super(GeneralPlaneSurface, self).__init__(surface_number=surf_num, surface_name=surf_name, surface_comment=comment)
-        d = np.sum(np.array(vec) * np.array(point))
+        vec = np.array(vec)/np.linalg.norm(vec)
+        d = np.sum(vec * np.array(point))
         self.point = point
         self.vec = vec
 
