@@ -39,6 +39,83 @@ class Tally:
         self.tally_modifiers: Set[str]
 
 
+class F8Tally:
+    card_match = re.compile('[+*]?F(?P<number>[0-9]*8)', re.IGNORECASE)
+    mev2j = 1.602E-13
+
+    def __init__(self, tally_number, outp):
+        assert isinstance(outp, OutP)
+        self.tally_number = str(tally_number)
+        index = outp.__find_tally_indicies__[self.tally_number]
+
+        self.pulse_heights = []
+        self.erg_bins = [0]
+        self.cells = []  # either None's or cell numbers in same shape as self.pulse_heights
+        read_flag = False
+        read_erg_bins_flag = False
+        cell_num = None
+
+        while index < len(outp.__outp_lines__):
+            line = outp.__outp_lines__[index]
+            if m := re.match(' +cell + ([0-9]+)', line):
+                cell_num = int(m.groups()[0])
+
+                read_flag = True
+
+                index += 1
+                line = outp.__outp_lines__[index]
+
+            elif re.match(' +energy', line):
+                read_flag = True
+
+                index += 1
+                line = outp.__outp_lines__[index]
+
+            if read_flag:
+                if re.match(' +([0-9.E+-]+) +([0-9.E+-]+) *$', line):
+                    val, rel_err = map(float, line.split())
+                    err = val * rel_err
+                    val = ufloat(val, err)
+                    self.cells.append(cell_num)
+                    self.pulse_heights.append(val)
+                    self.erg_bins = None
+
+                elif re.match(" +([0-9.E+-]+) +([0-9.E+-]+) +([0-9.E+-]+)", line):
+                    erg, val, rel_err = map(float, line.split())
+                    err = val * rel_err
+                    val = ufloat(val, err)
+
+                    self.pulse_heights.append(val)
+                    self.cells.append(cell_num)
+                    self.erg_bins.append(erg)
+
+                    index += 1
+                    line = outp.__outp_lines__[index]
+
+                    if 'total' in line:
+                        break
+                    else:
+                        continue
+
+            if re.match(" *=+", line):
+                break
+
+            index += 1
+
+        self.pulse_heights = unp.uarray([float(x.n) for x in self.pulse_heights], [x.std_dev for x in self.pulse_heights])
+        self.cells = np.array(self.cells)
+
+        if self.erg_bins is not None:
+            self.erg_bins = np.array(self.erg_bins)
+
+    @property
+    def energies(self):
+        if self.erg_bins is None:
+            return None
+
+        return 0.5 * (self.erg_bins[1:] + self.erg_bins[:-1])
+
+
 class F6Tally:
     card_match = re.compile('[+*]?F(?P<number>[0-9]*6)(?:: *[a-z, ]+)? +(?P<cell>[0-9]+)', re.IGNORECASE)
     mev2j = 1.602E-13
@@ -535,7 +612,7 @@ class OutP:
         self.__f_path__ = Path(file_path)
         with open(file_path) as f:
             self.__outp_lines__ = f.readlines()
-        if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0]):
+        if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0], re.IGNORECASE):
             warn('\nThe file\n"{}"\ndoes not appear to be an MCNP output file!\n'.format(file_path))
 
         self.input_deck = []

@@ -125,7 +125,7 @@ def _get_SPE_data(path):
 
     while True:
         try:
-            counts.append(int(lines[i]))
+            counts.append(float(lines[i]))
             i += 1
         except ValueError:
             break

@@ -589,116 +589,27 @@ def errorbar(x, y, ax=None, **kwargs):
     return ax
 
 
-def rebin2(old_x, old_y, new_bins, yerr=None):
-    new_x = 0.5 * (new_bins[1:] + new_bins[:-1])
-
-    rel_error = None
-
-    if yerr is not None:
-        rel_error = np.abs(yerr / old_y)
-
-    interp = InterpolatedUnivariateSpline(old_x, old_y)
-
-    new_y = np.array([interp.integral(x0, x1) for x0, x1 in zip(new_bins[:-1], new_bins[1:])])
-
-    if yerr is not None:
-        yerr = np.interp(new_x, old_x, rel_error) * np.abs(new_y)
-
-    return new_y, yerr
-
-
-def rebin(oldbins, oldy, newbins, force_equal_norm=False, kind='linear'):
+def rebin(old_bin_edges, ys, new_bin_edges, N=1000):
     """
-    Rebin a histogram.
-    Do not use for density histograms, use interpolation instead.
 
     Args:
-        oldbins:
-        oldy:
-        newbins:
-        force_equal_norm: If True, force integrals to be the same.
-        kind:
+        old_bin_edges: Bin edges corresponding to `ys`
+        ys: Y values (len(old_bin_edges) - 1)
+        new_bin_edges:
+        N: Number of random samples per bin
 
-    Returns: new histogram bin values.
-
-    Example:
-        np.random.seed(0)
-        xmax = 120
-        x1 = np.arange(0, xmax, 1, dtype=float)
-        x1 += np.linspace(0, 0.75, len(x1))
-
-        x2 = np.linspace(0, xmax, 100)
-
-        y1 = np.zeros(len(x1) - 1)
-
-        points = np.concatenate(
-            [8*np.random.randn(10000) + 55,
-             4*np.random.randn(4000) + 20,
-             np.random.randn(4500) + 80,
-             0.3*np.random.randn(4500) + 5,
-             ])
-
-        for i in np.searchsorted(x1, points, side='right') - 1:
-            if i < 0:
-                continue
-            y1[i] += 1
-
-        ax = mpl_hist(x1, y1, label='Original bins')
-        s, y2 = rebin(x1, y1, x2)
-
-        mpl_hist(x2, y2, ax=ax, label='Rebinned')
-
-        _x = np.linspace(0, xmax-3, 1000)
-
-        ax.plot(_x, s.evaluate(_x), label='Interp')
-
-        ax.legend()
-
-        plt.show()
-
-
+    Returns:
 
     """
-    # xmids = 0.5*(oldbins[:-1] + oldbins[1:])
-    # if kind != 'linear':
-    #     x = np.hstack((oldbins[0], xmids, oldbins[-1]))
-    #     y = np.hstack((oldy[0], oldy, oldy[-1]))
-    # else:
-    #     x = xmids
-    #     y = oldy
+    samples = []
+    weights = []
+    for l0, l1, y in zip(old_bin_edges[:-1], old_bin_edges[1:], ys):
+        samples.extend(np.random.uniform(l0, l1, N))
+        weights.extend(np.ones(N)*(y/N))
 
-    # todo: find a way to do higher order without occilations.
-    # cumy = cumulative_trapezoid(y, x, initial=0)
-    if isinstance(oldy[0], UFloat):
-        yerr = unp.std_devs(oldy)
-        oldy = unp.nominal_values(oldy)
-    else:
-        yerr = None
-        oldy = np.array(oldy)
+    out, _ = np.histogram(samples, bins=new_bin_edges, weights=weights)
 
-    oldbins = np.array(oldbins)
-    newbins = np.array(newbins)
-
-    cumy = np.cumsum(oldy)
-    interp = interp1d(oldbins[1:], cumy, kind=kind, bounds_error=False, assume_sorted=True, fill_value=(0, cumy[-1]))
-
-    newy = np.array([float(interp(newbins[i + 1])) - float(interp(newbins[i])) for i in range(len(newbins) - 1)])
-
-    if yerr is not None:
-        old_bwidths = oldbins[1:] - oldbins[:-1]
-        new_bwidths = newbins[1:] - newbins[:-1]
-        err_density = yerr**2/old_bwidths
-        oldxmids = 0.5*(oldbins[:-1] + oldbins[1:])
-        newxmids = 0.5*(newbins[:-1] + newbins[1:])
-
-        err_interp = interp1d(oldxmids, err_density, bounds_error=False, assume_sorted=True, fill_value=(0, 0))
-        newyerr = np.sqrt(new_bwidths*err_interp(newxmids))
-        newy = unp.uarray(newy, newyerr)
-
-    if force_equal_norm:
-        newy *= sum(oldy)/sum(newy)
-
-    return newy
+    return out
 
 
 def mpl_2dhist_from_data(x_bin_edges, y_bin_edges, x_points, y_points, weights=None, ax: Axes3D = None, cmap: Colormap = None):
@@ -949,6 +860,8 @@ class InteractivePlot:
 
     @property
     def n_frames(self):
+        if not len(self.ys):
+            return 0
         return max(map(len, self.ys))
 
     def __minmax(self, s):
