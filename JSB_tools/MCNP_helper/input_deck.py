@@ -158,6 +158,46 @@ class MCNPSICard:
         return self.card
 
 
+class TallyErgBinsMixin:
+    def __init__(self):
+        self.erg_bins_spec = None
+
+    @property
+    def erg_bins_array(self):
+        if self.erg_bins_spec is None:
+            return None
+        if isinstance(self.erg_bins_spec, np.ndarray):
+            return self.erg_bins_spec
+        elif isinstance(self.erg_bins_spec, tuple):
+            return np.linspace(self.erg_bins_spec[0], self.erg_bins_spec[2], self.erg_bins_spec[1] + 1)
+
+    def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
+        if erg_bins_array is not None:
+            assert hasattr(erg_bins_array, '__iter__')
+            assert len(erg_bins_array) >= 2
+            assert erg_min == erg_max == n_erg_bins, 'Can either specify energy bins by an array of values, or by ' \
+                                                     'erg_min, erg_max, and the number of bins, n_erg_bins.'
+            self.erg_bins_spec = np.array([round(x, _round) for x in erg_bins_array])
+
+        else:
+            assert erg_bins_array is None, "Can't specify bins by using an array and a min, max, and number of bins." \
+                                           "Set erg_bins_array to None."
+            self.erg_bins_spec = (erg_min, n_erg_bins, erg_max)
+
+    def get_erg_bins_card(self):
+        if self.erg_bins_spec is None:
+            return ''
+        else:
+            out = f'\nE{self.tally_number} '
+            if isinstance(self.erg_bins_spec, np.ndarray):
+                out += ' '.join(map(str, self.erg_bins_array))
+            elif isinstance(self.erg_bins_spec, tuple):
+                emin, nbins, emax = self.erg_bins_spec
+                out += f"{emin} {nbins - 1}i {emax}"
+
+            return out
+
+
 class TallyBase:
     # all_f4_tallies = MCNPNumberMapping("F4Tally", 1)
     all_tallies = {}
@@ -206,7 +246,7 @@ class TallyBase:
         return '\n'.join(outs)
 
 
-class F4Tally(TallyBase):
+class F4Tally(TallyBase, TallyErgBinsMixin):
     def __init__(self, cell_or_number: Union[Cell, int, str], particle: str, tally_number=None,
                  tally_name=None, tally_comment=None):
         """
@@ -219,8 +259,10 @@ class F4Tally(TallyBase):
         """
 
         super().__init__(4, cell_or_number, tally_number, tally_name, tally_comment)
+        super(TallyBase, self).__init__()
+
         assert isinstance(particle, str), 'Particle argument must be a string, e.g. "n", or, "p", or, "h"'
-        self.erg_bins_array = None
+        # self.erg_bins_array = None
         self.__modifiers__ = []
 
         assert isinstance(particle, str), '`particle` argument must be a string.'
@@ -249,31 +291,16 @@ class F4Tally(TallyBase):
         mod = 'FM{} -1 {mat} -2'.format(self.tally_number, mat=mat)
         self.__modifiers__.append(mod)
 
-    # @property
-    # def mcnp_tally_number(self):
-    #     return int(str(self.tally_number) + '4')
-
-    def set_erg_bins(self, erg_min=None, erg_max=None, n_erg_bins=None, erg_bins_array=None, _round=3):
-        if erg_bins_array is not None:
-            assert hasattr(erg_bins_array, '__iter__')
-            assert len(erg_bins_array) >= 2
-            assert erg_min == erg_max == n_erg_bins, 'Can either specify energy bins by an array of values, or by ' \
-                                                     'erg_min, erg_max, and the number of bins, n_erg_bins.'
-            self.erg_bins_array = erg_bins_array
-
-        else:
-            assert erg_bins_array is None, "Can't specify bins by using an array and a min, max, and number of bins." \
-                                           "Set erg_bins_array to None."
-            self.erg_bins_array = np.linspace(erg_min, erg_max, n_erg_bins)
-        self.erg_bins_array = np.array([round(x, _round) for x in self.erg_bins_array])
-
     @property
     def tally_card(self):
         comment = get_comment(self.tally_comment, self.__name__)
         out = 'F{num}:{par} {cell} {comment}'.format(num=self.tally_number, par=self.particle,
                                                      cell=self.cell_number, comment=comment)
-        if self.erg_bins_array is not None:
-            out += '\nE{num} {bins}'.format(num=self.tally_number, bins=' '.join(map(str, self.erg_bins_array)))
+        out += self.get_erg_bins_card()
+
+        # if self.erg_bins_array is not None:
+        #     out += '\nE{num} {bins}'.format(num=self.tally_number, bins=' '.join(map(str, self.erg_bins_array)))
+
         if len(self.__modifiers__):
             out += '\n' + '\n'.join(self.__modifiers__)
         return out
@@ -699,7 +726,7 @@ def __clean__(paths, warn_message):
             if not (yes_or_no == "yes"):
                 return
 
-    m = re.compile(r"(ptra[a-z]$)|(runtp[a-z]$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
+    m = re.compile(r"(ptra[a-z]$)|(runtp[a-z]$)|(runtp[a-z]\.h5$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
                    r"(plot[m-z]\.ps)")
 
     for p in paths:
@@ -709,4 +736,6 @@ def __clean__(paths, warn_message):
 
 
 if __name__ == "__main__":
-    pass
+    f = F4Tally(10, 'p')
+    f.set_erg_bins(erg_bins_array=[1,2,3])
+    print(f.tally_card)

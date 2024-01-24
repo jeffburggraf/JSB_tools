@@ -43,16 +43,20 @@ class F8Tally:
     card_match = re.compile('[+*]?F(?P<number>[0-9]*8)', re.IGNORECASE)
     mev2j = 1.602E-13
 
-    def __init__(self, tally_number, outp):
+    def __init__(self, tally_number, outp, units='MeV'):
+        if units != 'MeV':
+            erg_scale = {'keV': 1E3, 'eV': 1E6}[units]
+        else:
+            erg_scale = 1
+
         assert isinstance(outp, OutP)
         self.tally_number = str(tally_number)
         index = outp.__find_tally_indicies__[self.tally_number]
 
-        self.pulse_heights = []
+        self.pulse_heights = []  # counts
         self.erg_bins = [0]
         self.cells = []  # either None's or cell numbers in same shape as self.pulse_heights
         read_flag = False
-        read_erg_bins_flag = False
         cell_num = None
 
         while index < len(outp.__outp_lines__):
@@ -87,7 +91,7 @@ class F8Tally:
 
                     self.pulse_heights.append(val)
                     self.cells.append(cell_num)
-                    self.erg_bins.append(erg)
+                    self.erg_bins.append(erg_scale * erg)
 
                     index += 1
                     line = outp.__outp_lines__[index]
@@ -114,6 +118,10 @@ class F8Tally:
             return None
 
         return 0.5 * (self.erg_bins[1:] + self.erg_bins[:-1])
+
+    @property
+    def bin_widths(self):
+        return self.erg_bins[1:] - self.erg_bins[:-1]
 
 
 class F6Tally:
@@ -693,7 +701,7 @@ class OutP:
         """
         Locates the location in the output file where every tally results are written.
 
-        Finds the line indicies for the final time each tally's data from the problem is written to the output file.
+        Finds the line indices for the final time each tally's data from the problem is written to the output file.
 
         Returns: Dict[tally_number, card_index]
             , where card_index can be used as in Outp.__outp_lines__[card_index] to get the text of the input card.

@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from JSB_tools.interactive_plot import InteractivePlot
 import re
 import warnings
 from pathlib import Path
@@ -17,6 +17,7 @@ from lmfit.models import GaussianModel
 from scipy.signal import find_peaks
 from matplotlib.axes import Axes
 from JSB_tools.spectra import EfficiencyCalMixin
+from JSB_tools.spectra.time_depend import multi_guass_fit, GausFitResult
 
 
 def _rebin(rebin, values, bins):
@@ -202,6 +203,36 @@ class SPEFile(EfficiencyCalMixin):
         except FileNotFoundError:
             pass
 
+    def change_erg_cal(self, c0, c1, c2=0.0):
+        assert self.path.suffix != '.pickle'
+
+        erg_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}\n"
+
+        with open(self.path) as f:
+            lines = f.readlines()
+            new_lines = lines.copy()
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if "$ENER_FIT:" in line:
+                i += 1
+                new_lines[i] = erg_fit_line
+            elif "$MCA_CAL:" in line:
+                i += 1
+                new_lines[i] = '3\n'
+                i += 1
+                new_lines[i] = erg_fit_line
+
+            i += 1
+
+        new_text = "".join(new_lines)
+
+        self._erg_calibration = [c0, c1, c2]
+
+        with open(self.path, 'w') as f:
+            f.write(new_text)
+
     def set_useful_energy_range(self, erg_min=None, erg_max=None):
         if erg_min is None:
             i0 = 0
@@ -256,7 +287,7 @@ class SPEFile(EfficiencyCalMixin):
     @property
     def energies(self):
         if self._energies is None:
-            self._energies = self.channel_2_erg(self.channels)
+            self._energies = self.channel_2_erg(self.channels + 0.5)
         return self._energies
 
     def pickle(self, f_path: Union[str, Path] = None):
@@ -459,7 +490,8 @@ class SPEFile(EfficiencyCalMixin):
             return self._erg_bins
         else:
             chs = np.concatenate([self.channels, [self.channels[-1]+1]])
-            out = self.channel_2_erg(chs-0.5)
+            out = self.channel_2_erg(chs)
+            # out = self.channel_2_erg(chs)
             self._erg_bins = out
             return out
 
@@ -860,59 +892,67 @@ class SPEFile(EfficiencyCalMixin):
     def __len__(self):
         return len(self.counts)
 
+    def interactive_plot(self, fit_window=3, ):
+        fig, ax = plt.subplots(1, 1, sharex="all")
+        counts = self.get_counts(make_density=True)
+        iplot = InteractivePlot(self.erg_bins, counts, ax=ax, fit_window=fit_window)
+        if not hasattr(self, 'iplots'):
+            setattr(self, 'iplots', [])
+
+        getattr(self, 'iplots').append(iplot)
+
+        return iplot
+
+    def erg_cal_plot(self, fit_window=3):
+        def format_coord(ch, yp):
+            erg = self.channel_2_erg(ch)
+            return f"ch={ch:.1f} erg={erg:.1f};  y={yp:.2g}"
+
+        fig, ax = plt.subplots(1, 1, sharex="all")
+        ax.format_coord = format_coord
+
+        chs_bins = np.arange(len(self.erg_bins))
+        # chs = 0.5 * (chs_bins[1:] + chs_bins[:-1])
+
+        counts = self.get_counts(make_density=True)
+        iplot = InteractivePlot(chs_bins, counts, ax=ax, fit_window=fit_window)
+        ax2 = ax.twiny()
+
+        ax2.set_zorder(ax.get_zorder() - 1)
+
+        ax2.plot(self.energies, unp.nominal_values(counts), alpha=1)
+
+        ax2.set_xlabel("Energy")
+        ax.set_xlabel("Channel")
+
+        if not hasattr(self, 'iplots'):
+            setattr(self, 'iplots', [])
+
+        getattr(self, 'iplots').append(iplot)
+
+        return iplot
 
 
 
 if __name__ == '__main__':
     from scipy.stats.mstats import winsorize
     from JSB_tools.MCNP_helper.outp_reader import OutP
-    outp = OutP('/Users/burggraf1/PycharmProjects/IACExperiment/mcnp/sims/du_shot131/outp')
-    tally = outp.get_f4_tally('Active up')
+    from JSB_tools.nuke_data_tools import Nuclide
+    n = Nuclide("Eu152")
+    for g in n.decay_gamma_lines:
+        if g.intensity > 0.01:
+            print(g)
 
-    products = []
+    spe = SPEFile("/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/RMET3/calSpectra/20221013_RM3_Eu152_20cm.SPE")
+    #
+    spe.interactive_plot()
 
-    for n in [Nuclide('Ni58'), Nuclide('Ni60')]:
-        for k, v in n.get_incident_gamma_daughters('all').items():
-            y = np.average(v.xs.interp(tally.energies), weights=tally.nif_fluxes)
-            y *= 0.5**(10/v.half_life) - 0.5**(300/v.half_life)
-            products.append([y, v])
-    products = list(sorted(products, key=lambda x: -x[0]))
-    yields = np.array([p[0] for p in products])
-    yields /= max(yields)
-    products = [p[1] for p in products]
+    # ax.secondary_xaxis('top', functions=(spe.channel_2_erg, lambda xs: [spe.erg_2_channel(x) for x in xs]))
+    # mpl_hist(chs_bins, spe.get_counts(), ax=axs[0])
 
-    for y, p in zip(yields, products):
-        if len(p.decay_gamma_lines):
-            print(y, p.name, p)
-            for g in p.decay_gamma_lines[:3]:
-                print(f"\t{g}")
+    # axs[0].set_xtixks(pos=ch)
 
-    spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot140.Spe')
-    spe.plot_erg_spectrum(eff_corr=False, make_rate=True)
+    # i = spe.interactive_plot()
+    #
+    # [(121.78, 121.98), (344.28, 343.94), (1408.01, 1406.64)]
     plt.show()
-    # save_spe(spe, '/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/_test.spe')
-    # _set_SPE_data('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/Nickel/Nickel.Spe')
-    # pass
-    # spe = SPEFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/friday/shot119.Spe')
-
-    # def win(a, w):
-    #     w = int(w/np.mean(spe.erg_bin_widths))
-    #     _hw = w//2
-    #     g = (a[i - _hw if _hw < i else 0: i + _hw if i + _hw < len(a) else len(a) - 1] for i in range(len(a)))
-    #
-    #     def _win(x):
-    #         return np.mean(winsorize(x, limits=(0.25, 0.5)))
-    #
-    #     out = np.fromiter(map(_win, g), dtype=float)
-    #     # slices = [slice(max([0, i-w//2]), min([len(a)-1, i+w//2])) for i in range(len(a))]  # works
-    #     # out = [np.mean(winsorize(a[s], limits=(0.25, 0.5))) for s in slices]  # works
-    #     return out
-    # ar = spe.get_counts(nominal_values=True)
-    # ax = spe.plot_erg_spectrum()
-    # w = win(ar, 30)
-    # mpl_hist(spe.erg_bins, w, ax=ax, poisson_errors=False)
-    # mpl_hist(spe.erg_bins, calc_background(ar), ax=ax, label='convent.')
-    # ax.legend()
-    #
-    #
-    # plt.show()

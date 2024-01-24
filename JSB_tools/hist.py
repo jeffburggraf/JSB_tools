@@ -189,3 +189,4 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
     return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
                        stats_box=stats_box,  **mpl_kwargs)
 
+

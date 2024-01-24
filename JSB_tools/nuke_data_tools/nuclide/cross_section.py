@@ -285,14 +285,14 @@ class ActivationCrossSection(CrossSection1D):
             try:
                 xs_y = self.__xss__[_mt](ergs)
             except AttributeError:  # bug? I dont know.
-                pass
-                raise
-                # if isinstance(self.__xss__[_mt], ResonancesWithBackground):
-                    # self.__xss__[_mt] = self.__xss__[_mt].background
+                # print()
+                # raise
+                if isinstance(self.__xss__[_mt], ResonancesWithBackground):
+                    self.__xss__[_mt] = self.__xss__[_mt].background
                     # self.__xss__[_mt] = self.__xss__[_mt]
-                    # xs_y = self.__xss__[_mt](ergs)
-                # else:
-                #     raise
+                    xs_y = self.__xss__[_mt](ergs)
+                else:
+                    raise
 
             if self.__yields__[_mt] is not None:
                 yield_y = np.zeros_like(xs_y)

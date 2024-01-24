@@ -451,7 +451,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
         share_sigma: If True, all peaks share the same sigma (as determined by fit).
 
-        sigma_guesses: sigma guess. If number, use same number for all fitsAndNotes.
+        sigma_guesses: sigma guess. If number, use same number for all fits.
 
         fix_sigmas: Force sigmas to sigma_guesses.
 
@@ -534,7 +534,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         b_width = 0.5 * ((bins[1] - bins[0]) + (bins[-1] - bins[-2]))  # ~mean bin width
 
     if sigma_guesses is None:
-        sigma_guesses = b_width * 3
+        if share_sigma:
+            sigma_guesses = b_width * 3
+        else:
+            sigma_guesses = [b_width * 3] * len(center_guesses)
 
     if isinstance(y[0], UFloat):
         yerr = unp.std_devs(y)
@@ -572,6 +575,8 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     bg_guess = fix_bg if fix_bg is not None else min([np.mean([yfull[i-1], yfull[i], yfull[i + 1]]) for i in range(1, len(yfull) - 1)])
 
     bg_guess *= yscale
+    if isinstance(bg_guess, UFloat):
+        bg_guess = bg_guess.n
 
     min_sigma, max_sigma = b_width/2, b_width * len(y)/2
 
@@ -615,7 +620,10 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         param.set(**kwargs)
 
     def amp_guess(max_y, sigma):
-        return (max_y - bg_guess) * np.sqrt(2 * np.pi) * sigma
+        out = (max_y - bg_guess) * np.sqrt(2 * np.pi) * sigma
+        if isinstance(out, UFloat):
+            out = out
+        return out
 
     for i, (fixedQ, center_guess) in enumerate(zip(fixed_in_binQ, center_guesses)):
         i0 = np.searchsorted(bins, center_guess, side='right') - 1
@@ -1701,106 +1709,22 @@ def trest_gassian(peaks, rel_amplitudes, N, slope_ratio=3, xmin=0, xmax=100, sig
 
 
 
-if __name__ == '__main__':pass
+if __name__ == '__main__':
 
-    # np.random.seed(0)
-    # n_peaks = 6
-    # xmin=100
-    # xmax=1200
-    # N=10000
-    # nbins = 350
-    #
-    # InteractiveSpectra.VERBOSE = True
-    # InteractiveSpectra.FIT_VERBOSE = True
-    #
-    # interactive = InteractiveSpectra()
-    # for i in range(11):
-    #     peaks = np.random.uniform(xmin, xmax, n_peaks)
-    #     amps = np.random.uniform(0, 1, n_peaks)
-    #     trest_gassian(peaks=peaks, rel_amplitudes=amps, N=N, xmin=xmin, xmax=xmax, i=interactive, sigma=4,
-    #                   nbins=nbins)
-    #
-    # plt.show()
-    # from lmfit.models import LinearModel
-    # model = LinearModel()
-    # x = np.array([1,2,3,4,5,6])
-    # y = 2 * x + 3 + np.random.randn(len(x))
-    # fit_Result = model.fit(data=y, x=x, )
-    # fit_Result = FitResult(fit_Result)
-    # print()
-    # n = int(1E6)
-    # is_ = np.random.randint(0, n, n)
-    # times = np.arange(0, n)
-    # erg_binned_timnes = make_energy_binned_times(3000, is_, times)
-    # print('hi')
-    # from JSB_tools import mpl_hist_from_data, TabPlot
-    # erg_binned_times = [[] for i in range(10)]
-    # n = 10000
-    # n_ergs = len(erg_binned_times)
-    # time_bins = np.linspace(0, 30, 12)
-    # ax1 = None
-    #
-    # for e, t in zip(np.random.normal(n_ergs/2, 1.5, n), np.random.exponential(10/np.log(2), n)):
-    #     i = int(e)
-    #     if not 0 <= i < n_ergs:
-    #         continue
-    #     erg_binned_times[i].append(t)
-    #
-    # for i, ts in enumerate(erg_binned_times):
-    #     erg_binned_times[i] = np.array(erg_binned_times[i])
-    #
-    #     _, ax1 = mpl_hist_from_data(time_bins, ts, ax=ax1, label=i - n_ergs/2)
-    #
-    # erg_binned_times = numba_list(erg_binned_times)
-    #
-    # plt.figure()
-    #
-    # tab = TabPlot()
-    # gaus_times = np.linspace(0, max(time_bins), 20)
-    # result = []
-    #
-    # for i, erg_spec in enumerate(gaussian_weighted_cut(erg_binned_times, gaus_times, 4)):
-    #     ax = tab.new_ax(f"{gaus_times[i]:.1f}")
-    #     result.append(sum(erg_spec))
-    #     mpl_hist(np.arange(0, n_ergs + 1), erg_spec, ax=ax)
-    #
-    #
-    # ax1.plot(gaus_times, result, label='gaus time dep')
-    # ax1.legend()
-    #
-    # plt.show()
-    #
-    # from analysis import Shot
-    # # times_ = None
-    # # #
-    # #
-    # #
-    # # def phelix_list():
-    # #     from Germany2022 import Shot
-    # #     out = None
-    # #     for shotnum in range(50, 65):
-    # #         out += Shot(shotnum).left_spec
-    # #         out += Shot(shotnum).right_spec
-    # #     return out
-    # #
-    # list_shot1 = Shot(134).list
-    # list_shot2 = Shot(13).list
-    # #
-    # # InteractiveSpectra.print_click_coords = True
-    # #
-    # interactive = InteractiveSpectra()
-    # interactive.print_click_coords = True
-    #
-    # interactive.add_list(list_shot1, erg_min=200, erg_max=300)
-    # interactive.add_list(list_shot2, erg_min=200, erg_max=300)
-    # interactive.show()
-    # #
-    # interactive.checkbox_track_fits.set_active(0)
-    # interactive.checkbox_time_integrated.set_active(0)
-    # #
-    # interactive._perform_fits([218])
-    # #
-    # # interactive.slider_window.val = 50
-    #
-    #
-    # plt.show()
+    bins = np.arange(0, 20, 0.5)
+    xs = [5, 16]
+    vals = np.concatenate([np.random.normal(loc=xs[0], scale=1, size=10000),
+                          np.random.normal(loc=xs[1], scale=2, size=10000)])
+
+
+    y, _  = np.histogram(vals, bins=bins)
+    fit = multi_guass_fit(bins, y, center_guesses=xs, share_sigma=False)
+
+    for i in range(2):
+        print(fit.sigmas(i))
+
+    fit.plot_fit(
+
+    )
+    plt.show()
+

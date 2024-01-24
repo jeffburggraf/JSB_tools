@@ -17,7 +17,8 @@ from numpy.core._exceptions import UFuncTypeError
 from uncertainties import unumpy as unp
 from uncertainties import UFloat, ufloat
 import JSB_tools
-from JSB_tools import mpl_hist, calc_background, rolling_median, _float, discrete_interpolated_median, shade_plot
+from JSB_tools.hist import mpl_hist
+from JSB_tools import calc_background, rolling_median, _float, discrete_interpolated_median, shade_plot
 from JSB_tools import convolve_gauss, calc_background, InteractivePlot
 from copy import deepcopy
 from matplotlib.axes import Axes

@@ -72,8 +72,6 @@ class CylFMESH(TallyBase):
         self.axs_hat = axs_hat
         self.radius_hat = radius_hat
 
-        # self.all_f4_tallies[self.tally_number] = self
-
         self.ref = ref
 
     @property

@@ -473,6 +473,9 @@ class Nuclide(Element):
         """
         assert isinstance(tot_acquisition_time, (float, int)), tot_acquisition_time
 
+        if self.is_stable:
+            return ufloat(0, 0)
+
         tot_acquisition_time = timedelta(seconds=tot_acquisition_time).total_seconds()
 
         corr_seconds = (acquisition_ti - activity_ref_date).total_seconds()  # seconds since ref date.
