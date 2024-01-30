@@ -66,7 +66,6 @@ class CalSource:
         n_nuclides_begin = n_nuclides_ref*0.5**(dt/hl)
 
         percent_decay = 1 - 0.5**(duration/hl)
-        # print(n_nuclides_ref, percent_decay)
         return n_nuclides_begin*percent_decay
 
     def __repr__(self):
