@@ -15,6 +15,8 @@ import functools
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
 from uncertainties.core import Variable
+from scipy.integrate import odeint
+from typing import Callable
 try:
     from openmc.data.endf import Evaluation
     from openmc.data import Reaction, Decay, Product
@@ -32,7 +34,8 @@ constants = {'neutron_mass': 939.56542052,
              'proton_mass': 938.272088,
              'u_to_kg': 1.6605390666E-27,  # atomic mass units to kg
              'J_to_eV': 1.0 / 1.602176634E-19,  # Joules to eV
-             'c': 299792458}
+             'c': 299792458,
+             'A': 6.023E23}
 
 NATURAL_ABUNDANCE: dict = None  # Has form {SS1: {A1: abun1, A2: abum2, ...}, SS2: {...} }
 ALL_ISOTOPES: dict = None  #
@@ -76,9 +79,9 @@ class CustomUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
         try:
             return {'GammaLine': GammaLine,
-                     'DecayMode': DecayMode,
-                     'Nuclide': Nuclide,
-                     '_DiscreteSpectrum': _DiscreteSpectrum}[name]
+                    'DecayMode': DecayMode,
+                    'Nuclide': Nuclide,
+                    '_DiscreteSpectrum': _DiscreteSpectrum}[name]
         except KeyError:
             return super().find_class(module, name)
 
@@ -115,6 +118,7 @@ class Element:
     def is_noble_gas(self):
         return self.element_group == 18
 
+
 def get_symbol_etc(symbol):
     """
     Get (correct) symbol from argument and return nucleus Z, A, etc.
@@ -133,7 +137,7 @@ def get_symbol_etc(symbol):
     if symbol[0] == 'n' and symbol.lower() in ['n', 'neutron']:
         symbol = 'Nn1'
 
-    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  #         "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
+    _m = Nuclide.NUCLIDE_NAME_MATCH.match(symbol)  # "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")  # Nuclide name in GND naming convention
 
     if not _m:
         raise ValueError(
@@ -356,7 +360,10 @@ class Nuclide(Element):
         """
         Include daughter decays, assuming equilibrium is achieved.
         Args:
-            decay_rate_ratio_thresh: if daughter decays less than this times as fast, then don't include.
+            decay_rate_ratio_thresh:
+                If daughter decays less than this times as fast, then don't include. Set to None to include all
+                If None, no restriction on gammas
+
             n_generations:
 
             **kwargs: Internal use only. Do not use.
@@ -364,7 +371,7 @@ class Nuclide(Element):
         Returns:
 
         """
-        out:  List[GammaLine] = kwargs.get('out', self.decay_gamma_lines)
+        out: List[GammaLine] = kwargs.get('out', self.decay_gamma_lines)
         parent_decay_rate = kwargs.get('parent_decay_rate', self.decay_rate)
         cum_branching_ratio = kwargs.get('cum_branching_ratio', 1)
         cum_modes = kwargs.get('cum_modes', [])
@@ -376,20 +383,27 @@ class Nuclide(Element):
             for mode in decay_modes:
                 daughter = mode.daughter_nuclide
 
-                if daughter.decay_rate > parent_decay_rate * decay_rate_ratio_thresh:
-                    cum_modes.append(mode)
+                if decay_rate_ratio_thresh is None:
+                    proceed_flag = True
+                else:
+                    proceed_flag = (daughter.decay_rate > parent_decay_rate * decay_rate_ratio_thresh)
 
-                    new_branching_ratio = cum_branching_ratio * mode.branching_ratio
+                if not proceed_flag:
+                    continue
 
-                    for g in daughter.decay_gamma_lines:
-                        intensity = new_branching_ratio * g.intensity
-                        new_g = GammaLine.__new__(GammaLine, intensity=intensity, erg=g.erg, absolute_rate=parent_decay_rate * intensity, _from_modes=cum_modes,
-                                                  parent_nuclide_name=cum_modes[0].parent_name)
+                cum_modes.append(mode)
 
-                        out.append(new_g)
+                new_branching_ratio = cum_branching_ratio * mode.branching_ratio
 
-                    daughter.get_gammas(decay_rate_ratio_thresh=decay_rate_ratio_thresh, n_generations=n_generations - 1,
-                                        out=out, parent_decay_rate=parent_decay_rate, cum_branching_ratio=new_branching_ratio, cum_modes=cum_modes)
+                for g in daughter.decay_gamma_lines:
+                    intensity = new_branching_ratio * g.intensity
+                    new_g = GammaLine.__new__(GammaLine, intensity=intensity, erg=g.erg, absolute_rate=parent_decay_rate * intensity, _from_modes=cum_modes,
+                                              parent_nuclide_name=cum_modes[0].parent_name)
+
+                    out.append(new_g)
+
+                daughter.get_gammas(decay_rate_ratio_thresh=decay_rate_ratio_thresh, n_generations=n_generations - 1,
+                                    out=out, parent_decay_rate=parent_decay_rate, cum_branching_ratio=new_branching_ratio, cum_modes=cum_modes)
 
         return out
 
@@ -668,7 +682,7 @@ class Nuclide(Element):
         try:
             return self.get_fission_xs('proton', 'endf')
         except FileNotFoundError:
-            p = Path(__file__).parent/'endf_files'/'proton_fission_xs' / 'readme'
+            p = Path(__file__).parent / 'endf_files' / 'proton_fission_xs' / 'readme'
             with open(p) as f:
                 msg = '\n'.join(f.readlines())
             raise FileNotFoundError(
@@ -693,7 +707,7 @@ class Nuclide(Element):
         Returns:
 
         """
-        return  self.get_fission_xs('neutron')
+        return self.get_fission_xs('neutron')
 
     def rest_energy(self, units='MeV'):  # in J or MeV
         units = units.lower()
@@ -751,7 +765,7 @@ class Nuclide(Element):
         a -= 2
 
         return (Nuclide.from_Z_A_M(z, a, m).rest_energy('MeV') + Nuclide('He-4').rest_energy('MeV')) \
-               - self.rest_energy('MeV')
+            - self.rest_energy('MeV')
 
     @property
     def grams_per_mole(self) -> Union[float, None]:
@@ -788,7 +802,7 @@ class Nuclide(Element):
         Returns:
 
         """
-        return self.density/self.atomic_mass(unit='g')
+        return self.density / self.atomic_mass(unit='g')
 
     def atomic_mass(self, unit='g'):
         """
@@ -801,8 +815,8 @@ class Nuclide(Element):
         u_to_kg = constants['u_to_kg']
 
         if self.excitation_energy != 0:
-            eV_to_J = 1.0/constants['J_to_eV']
-            excitation_mass = eV_to_J * 1E3 * self.excitation_energy / constants['c']**2  # mass in kg
+            eV_to_J = 1.0 / constants['J_to_eV']
+            excitation_mass = eV_to_J * 1E3 * self.excitation_energy / constants['c'] ** 2  # mass in kg
             excitation_mass /= u_to_kg  # kg -> u
         else:
             excitation_mass = 0
@@ -1055,7 +1069,7 @@ class Nuclide(Element):
         return out
 
     def thermal_neutron_capture_xs(self, T=270, data_source=None):
-        erg = T*8.6E-11
+        erg = T * 8.6E-11
         return self.neutron_capture_xs(data_source=data_source)(np.array([erg]))[0]
 
     def neutron_capture_xs(self, data_source=None) -> CrossSection1D:
@@ -1132,7 +1146,7 @@ class Nuclide(Element):
 
             if a_z_hl_m_cut != '' or is_stable_only:
                 a, z, hl, m = daughter_nuclide.A, daughter_nuclide.Z, daughter_nuclide.half_life, \
-                              daughter_nuclide.isometric_state
+                    daughter_nuclide.isometric_state
 
                 if not __nuclide_cut__(a_z_hl_m_cut, a, z, hl, is_stable_only, m):
                     continue
@@ -1270,7 +1284,7 @@ def __nuclide_cut__(a_z_hl_cut: str, a: int, z: int, hl: UFloat, is_stable_only=
             makes_cut = False
         else:
             try:
-                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z, 'm': m, 'year':31536000, 'day': 86400, 'hr': 3600})
+                makes_cut = eval(a_z_hl_cut, {"hl": hl, 'a': a, 'z': z, 'm': m, 'year': 31536000, 'day': 86400, 'hr': 3600})
                 assert isinstance(makes_cut, bool), "Invalid cut: {0}".format(a_z_hl_cut)
             except NameError as e:
                 invalid_name = str(e).split("'")[1]
@@ -1412,8 +1426,9 @@ class DecayMode:
         partial_decay_constant: Rate of decays through this mode.
         partial_half_life: Half life for decays through this mode.
     """
+
     @classmethod
-    def from_values(cls, daughter_name,  parent_name, parent_half_life, branching_ratio, q_value=None, modes: Union[None, tuple[str]] = None,
+    def from_values(cls, daughter_name, parent_name, parent_half_life, branching_ratio, q_value=None, modes: Union[None, tuple[str]] = None,
                     intermediates=None):
         out = cls.__new__(cls)
 
@@ -1612,12 +1627,13 @@ def decay_default_func(nuclide_name):
     Returns:
 
     """
+
     def func(ts, scale=1, decay_rate=False, *args, **kwargs):
         if decay_rate:
             scale = 0
 
         if hasattr(ts, '__iter__'):
-            out = {nuclide_name: scale*np.ones_like(ts)}
+            out = {nuclide_name: scale * np.ones_like(ts)}
         else:
             out = {nuclide_name: scale}
 
@@ -1636,7 +1652,7 @@ class DecayNuclide:
     Either y or y' can be returned (see documentation in __call__).
 
     Use driving_term arg for the case of nuclei being generated at a constant rate (in Hz), e.g. via a beam.
-    A negative driving_term can be used, however, not that if the number of parent nuclei goes negative
+    A negative driving_term can be used, however, note that if the number of parent nuclei goes negative
     the solution is unphysical.
 
     Spontaneous fission products are not (yet) included in decay progeny.
@@ -1656,6 +1672,7 @@ class DecayNuclide:
             Only one of the two init args can be used
 
         driving_term: Set to non-zero number to have the parent nucleus be produced at a constant rate (in Hz).
+            Note:
 
         fiss_prod: If True, decay fission products as well.
 
@@ -1670,18 +1687,19 @@ class DecayNuclide:
         See 'return_func' docstring below for more details.
 
     """
+    @property
+    def nuclide(self):
+        return Nuclide(self.nuclide_name)
 
-    def __init__(self, nuclide_name: str, init_quantity=1., init_rate=None, driving_term=0.,
+    def __init__(self, nuclide_name: str, init_quantity=1., init_rate=None,
                  fiss_prod=False, fiss_prod_thresh=0, max_half_life=None):
         nuclide = Nuclide(nuclide_name)
         self.nuclide_name = nuclide_name
-        self.driving_term = driving_term
 
         if (not nuclide.is_valid) or nuclide.is_stable:
             self.return_default_func = True
         else:
             self.return_default_func = False
-            # return decay_default_func(nuclide_name)
 
         if fiss_prod:
             from JSB_tools.nuke_data_tools.nuclide.fission_yields import FissionYields
@@ -1695,7 +1713,7 @@ class DecayNuclide:
         assert isinstance(init_rate, (float, int, type(None))), "`init_rate` must be a float or int"
         assert not init_quantity is init_rate is None, "Only one of the two init args can be used"
         if init_rate is not None:
-            init_quantity = init_rate/nuclide.decay_rate.n
+            init_quantity = init_rate / nuclide.decay_rate.n
 
         self.column_labels = [nuclide_name]  # Nuclide names corresponding to lambda_matrix.
         self.lambda_matrix = [[-nuclide.decay_rate.n]]  # Seek solutions to F'[t] == lambda_matrix.F[t]
@@ -1724,7 +1742,7 @@ class DecayNuclide:
                             _mode = type('', (), {})()
                             _mode.parent_name = parent_nuclide.name
                             _mode.daughter_name = fp_name
-                            _mode.branching_ratio = y*fiss_branching.n
+                            _mode.branching_ratio = y * fiss_branching.n
                             modes.append(_mode)
                     else:
                         continue
@@ -1751,7 +1769,7 @@ class DecayNuclide:
                         for _list in self.lambda_matrix:
                             _list.append(0)  # add another column to maintain an nxn matrix
 
-                        child_row = [0]*len(self.lambda_matrix[-1])  # create source(/sink) vector for current daughter nucleus
+                        child_row = [0] * len(self.lambda_matrix[-1])  # create source(/sink) vector for current daughter nucleus
 
                         child_row[child_index] = -child_lambda  # Set entry for decay of child (diagonal term).
 
@@ -1759,7 +1777,7 @@ class DecayNuclide:
 
                     # Do not use += below. The parent feeding rate is a constant no matter how many times the same
                     # parent/daughter combo is encountered.
-                    child_row[parent_index] = mode.branching_ratio.n*parent_nuclide.decay_rate.n  # parent feeding term
+                    child_row[parent_index] = mode.branching_ratio.n * parent_nuclide.decay_rate.n  # parent feeding term
 
                     if (max_half_life is not None) and child_nuclide.half_life.n > max_half_life:
                         continue  # don't worry about daughter bc nucleus decays too slow according to `max_half_life`
@@ -1776,27 +1794,30 @@ class DecayNuclide:
 
         self.eig_vecs = self.eig_vecs.T
 
-        b = [init_quantity] + [0.] * (len(self.eig_vals) - 1)
+        self.init_conditions = np.array([init_quantity] + [0.] * (len(self.eig_vals) - 1))
 
-        if self.driving_term != 0:
-            # coefficients of the particular solution (which will be added to homo. sol.)
-            self.particular_coeffs = np.linalg.solve(-self.lambda_matrix, [self.driving_term] + [0.] * (len(self.eig_vals) - 1))
-        else:
-            self.particular_coeffs = np.zeros_like(self.eig_vals)  # No driving term. Will have no effect in this case.
+        # if self.driving_term != 0:
+        self.coeffs = None  # use odeint
 
-        self.coeffs = np.linalg.solve(self.eig_vecs.T, b - self.particular_coeffs)  # solve for initial conditions
+        # else:
+        #     self.coeffs = np.linalg.solve(self.eig_vecs.T, self.init_conditions)  # solve for initial conditions
 
-    def __call__(self, ts, scale=1, decay_rate=False, threshold=None, plot=False) -> Dict[str, np.ndarray]:
+    def __call__(self, ts, scale=1, decay_rate=False, driving_term=None, threshold=None, plot=False) -> Dict[str, np.ndarray]:
         """
         Evaluates the diff. eq. solution for all daughter nuclides at the provided times (`ts`).
         Can determine, as a function of time, the quantity of all decay daughters or the decay rate.
         This is controlled by the `decay_rate` argument.
         Args:
             ts: Times at which to evaluate the specified quantity
+
             scale: Scalar to be applied to the yield of all daughters.
+
             decay_rate: If True, return decays per second instead of fraction remaining. I.e. return y[i]*lambda_{i}
+
             threshold: Fraction of the total integrated yield below which solution arent included. None includes all.
+
             plot: Plot for debugging.
+
         Returns: dict of the form, e.g.:
             {'U235': [1., 0.35, 0.125],
              'Pb207': [0, 0.64, 0.87],
@@ -1807,6 +1828,9 @@ class DecayNuclide:
             scale = scale[0]
 
         if isinstance(scale, UFloat):
+            if self.coeffs is None:
+                raise ValueError("Cannot pass errors through solution when driving term is present. ")
+
             warn("`scale` argument is a UFloat. This reduces performance by a factor of ~1000. `")
 
         if self.return_default_func:
@@ -1819,24 +1843,59 @@ class DecayNuclide:
             iter_flag = True
         else:
             iter_flag = False
-            ts = [ts]
+            ts = np.array([ts])
+
+        if not isinstance(ts, np.ndarray):
+            ts = np.array(ts)
 
         #
         # yields = [np.sum([c * vec * np.e ** (val * t) for c, vec, val in
         #                   zip(self.coeffs, self.eig_vecs, self.eig_vals)], axis=0) for t in ts]  # old
-        yields = np.matmul((self.coeffs.reshape((len(self.coeffs), 1)) * self.eig_vecs).T,
-                           np.e ** (self.eig_vals.reshape((len(self.coeffs), 1)) * ts))  # New
-        if self.driving_term != 0:
-            yields += self.particular_coeffs[:, np.newaxis]  # new
-            # yields += self.particular_coeffs  # old
 
-        # yields = np.array(yields).T  # old
+        if driving_term is None:
+            if self.coeffs is None:
+                self.coeffs = np.linalg.solve(self.eig_vecs.T, self.init_conditions)  # solve for initial conditions
+
+            yields = np.matmul((self.coeffs.reshape((len(self.coeffs), 1)) * self.eig_vecs).T,
+                               np.e ** (self.eig_vals.reshape((len(self.coeffs), 1)) * ts))  # New
+        else:
+            driving_func = None
+            driving = np.zeros(len(self.eig_vals))
+
+            if isinstance(driving_term, (int, float, UFloat)):
+                if isinstance(driving_term, UFloat):
+                    rel_err = driving_term.std_dev
+                    warn('Errors not current propagated through solution! todo')
+
+                driving[0] = driving_term
+
+            elif isinstance(driving_term, Callable):
+                driving[0] = 1
+                driving_func = driving_term
+            else:
+                raise ValueError
+
+            def J(y, t):
+                return self.lambda_matrix
+
+            def func(y, t):
+                out = np.matmul(self.lambda_matrix, y)
+                if driving_func is not None:
+                    out += driving * driving_func(t)
+                else:
+                    out += driving
+
+                return out
+
+            yields, infodict = odeint(func, self.init_conditions, t=ts, Dfun=J, full_output=True)
+
+            yields = yields.transpose()
 
         if not decay_rate:
-            out = {name: scale*yield_ for name, yield_ in zip(self.column_labels, yields)}
+            out = {name: scale * yield_ for name, yield_ in zip(self.column_labels, yields)}
         else:
-            out = {name: scale*yield_*lambda_ for name, yield_, lambda_ in
-                    zip(self.column_labels, yields, np.abs(np.diagonal(self.lambda_matrix)))}
+            out = {name: scale * yield_ * lambda_ for name, yield_, lambda_ in
+                   zip(self.column_labels, yields, np.abs(np.diagonal(self.lambda_matrix)))}
 
         if not iter_flag:
             for k, v in out.items():

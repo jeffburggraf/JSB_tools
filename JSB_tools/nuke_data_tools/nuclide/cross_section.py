@@ -98,7 +98,7 @@ class CrossSection1D:
     def ergs(self):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), 250)
 
-    def get_plot_ergs(self, npoints=300):
+    def get_plot_ergs(self, npoints=1500):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), npoints)
 
     def __call__(self, ergs):
@@ -118,15 +118,16 @@ class CrossSection1D:
     def plot(self, ergs=None, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
              **mpl_kwargs):
         if ergs is None:
-            ergs = self.ergs
+            self.__call__(self.emin)  # induce TENDL fetch if resonance bug is present
+
+            ergs = self.get_plot_ergs()
+
         elif isinstance(ergs, int):
             ergs = self.get_plot_ergs(ergs)
 
         if erg_max is not None:
             i1 = np.searchsorted(ergs, erg_max)
             ergs = ergs[:i1]
-        # else:
-        #     i1 = len(ergs)
 
         unit_convert = {"b": 1, "mb": 1000, "ub": 1E6, "nb": 1E9}
         try:
@@ -141,6 +142,8 @@ class CrossSection1D:
             ax.set_title('')
 
         label = mpl_kwargs.pop('label', None)
+        y = self(ergs) * unit_factor
+
         if label is None:
             try:
                 src = self.data_source.lower() if isinstance(self.data_source, str) else ""
@@ -148,7 +151,7 @@ class CrossSection1D:
                 src = 'No src data'
             label = f"{self.__fig_label__}" + (f"({src})" if src else "")
 
-        handle = ax.plot(ergs, self(ergs) * unit_factor, label=label, **mpl_kwargs)[0]
+        handle = ax.plot(ergs, y, label=label, **mpl_kwargs)[0]
 
         y_label = "Cross-section [{}]".format(units)
         x_label = "Incident {} energy [MeV]".format(self.__incident_particle__)
@@ -220,6 +223,23 @@ class ActivationCrossSection(CrossSection1D):
 
             self._add_xs(mt, xss[mt], yields[mt])
 
+        self.parent = self.product = None  # Set later (unfortunately, should fix by pickling this info)
+
+    def set_TENDL_resonance(self):
+
+        tendlr = ActivationReactionContainer.from_pickle(self.parent, 'neutron', 'tendl')
+
+        for k, v in self.__xss__.items():
+            try:
+                new_xs = tendlr.product_nuclide_names_xss[self.product].__xss__[k]
+                if hasattr(self.__xss__[k], 'resonances'):
+                    self.__xss__[k].resonances = new_xs.resonances  # Replace bugged END wiht TENDKL
+                # self.__xss__[k] = new_xs
+            except KeyError:
+                continue
+
+        self.data_source = f'{self.data_source}/tendl'
+
     def __iadd__(self, other: ActivationCrossSection, exclude_MTs=None):
         for mt, xs in other.__xss__.items():
             if exclude_MTs is not None and mt in exclude_MTs:
@@ -282,13 +302,19 @@ class ActivationCrossSection(CrossSection1D):
                 if _mt != mt_value:
                     continue
 
+            _call = self.__xss__[_mt]
+
             try:
-                xs_y = self.__xss__[_mt](ergs)
-            except AttributeError:  # bug? I dont know.
+                xs_y = _call(ergs)
+            except AttributeError:  # bug
                 # print()
                 # raise
-                if isinstance(self.__xss__[_mt], ResonancesWithBackground):
-                    self.__xss__[_mt] = self.__xss__[_mt].background
+                if self.data_source != 'tendl':
+                    self.set_TENDL_resonance()
+                    return self.__call__(ergs=ergs*1E-6, mt_value=mt_value, ith_channel=ith_channel)
+
+                if isinstance(_call, ResonancesWithBackground):
+                    _call = self.__xss__[_mt] = _call.background
                     # self.__xss__[_mt] = self.__xss__[_mt]
                     xs_y = self.__xss__[_mt](ergs)
                 else:
@@ -388,36 +414,7 @@ class ActivationCrossSection(CrossSection1D):
                                                               erg_max=erg_max, return_handle=True, lw=2,
                                                               c=color_, **mpl_kwargs)
 
-        if not plot_mts:
-            return ax if not return_handle else (ax, handle)
-
-        x = handle.get_xdata()
-
-        cmap = plt.get_cmap("tab10")
-        for c_i, mt in enumerate(self.mt_values):
-            def get_mt_label():
-                out = f"MT={mt} "
-                if len(self.__yields__[mt]) > 1:
-                    out += f" ({i})"
-                return out
-
-            n = len(self.__yields__[mt])
-
-            color = cmap(c_i)
-
-            for i in range(n):
-                alpha = 1.0 - 0.7*i / n
-
-                y = self.__call__(x, mt, i)
-
-                ax.plot(x, y, label=get_mt_label(), ls='--', alpha=alpha, color=color)
-
-        ax.legend()
-
-        if return_handle:
-            return ax, handle
-        else:
-            return ax
+        return ax
 
     @property
     def emin(self):
@@ -627,13 +624,31 @@ class ActivationReactionContainer:
                                     f'Available data libraries are:\n\t{cls.libraries[projectile]}\n, '
                                     f'or, you can specify "all"')
 
+    def set_misc_attribs(self):
+        for k, v in self.product_nuclide_names_xss.items():
+            if not hasattr(v, 'product'):
+                v.parent = self.nuclide_name
+                v.product = k
+
     @classmethod
     def from_pickle(cls, nuclide_name, projectile, data_source) -> ActivationReactionContainer:
+        """
+
+        Args:
+            nuclide_name: 'neutron', 'proton', 'gamma', etc...
+            projectile:
+            data_source:
+
+        Returns:
+
+        """
 
         assert projectile in activation_libraries, f'No activation data for incident particle "{projectile}"'
 
         if data_source is None:  # default library is always the first element
             data_source = activation_libraries[projectile][0]
+        else:
+            data_source = data_source.lower()
 
         if data_source not in activation_libraries[projectile]:
             raise FileNotFoundError(f'No data source "{data_source}" for projectile "{projectile}"')
@@ -664,6 +679,8 @@ class ActivationReactionContainer:
             existing_instance.parent_nuclide_names.update(cls.parents_[data_source][nuclide_name])
         except KeyError:
             pass
+
+        existing_instance.set_misc_attribs()
 
         return existing_instance
 
