@@ -63,7 +63,7 @@ class InteractivePlot:
                 y0 = y0.n
 
             dy = (self.ax.get_ylim()[1] - self.ax.get_ylim()[0])/12
-            t = self.ax.text(efit.n, y0 + dy, fr"x={efit:.2f}" "\n" fr"$\sigma={fit.sigmas(i):.2g}$" "\n" f"{A:.3e}", va='center')
+            t = self.ax.text(efit.n, y0 + dy, fr"$\mu$={efit:.2f}" "\n" fr"$\sigma={fit.sigmas(i):.2g}$" "\n" f"A={A:.3e}", va='center')
 
             self.texts.append(t)
 

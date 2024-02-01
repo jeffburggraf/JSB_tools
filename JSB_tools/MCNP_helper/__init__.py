@@ -84,7 +84,7 @@ class CylFMESH(TallyBase):
 
     def __repr__(self):
         def f(a):  # iter to MCNP input
-            return " ".join(map(str, a))
+            return " ".join(map(lambda x: f'{x:.4g}', a))
         optional = {}  # for any optional kwargs. None implemented yet...
         optional = ' '.join(f'{k}={v}' for k, v in optional.items())
         out = f'FMESH{self.fmesh_number}:{self.particle} GEOM=cyl ORIGIN={f(self.origin)} AXS={f(self.axs_hat)} ' \
@@ -92,6 +92,74 @@ class CylFMESH(TallyBase):
               f'     IMESH {f(self.rmax)}  IINTS {f(self.rbins)}\n' \
               f'     JMESH {f(self.axis_length)}  JINTS {f(self.axis_bins)}\n' \
               f'     KMESH {f(self.theta_max)}  KINTS {f(self.theta_bins)}'
+        return out
+
+
+class RecFMESH(TallyBase):
+    """Cylindrical Fmesh for MCNP"""
+
+    # all_meshes = MCNPNumberMapping('CylFMESH', 1)
+    # all_meshes = F4Tally.all_f4_tallies
+    def __init__(self, particle: str,
+                 x_poses,
+                 y_poses,
+                 z_poses,
+                 origin=(0, 0, 0),
+                 xbins: Union[int, tuple] = 10,
+                 ybins: Union[int, tuple] = 10, axs_hat=(0, 0, 1),
+                 zbins=1,
+                  tally_number=None, fmesh_name=None, ref=None):
+        """
+
+
+        Args:
+            particle:
+            rmaxs:
+            axis_lengths: Distance along axis specified by `axs`
+            origin: max theta in revolutions
+            rbins: Number of radial bins.
+            axis_bins: Number of bins along the axis
+            axs_hat:
+            radius_hat:
+            tally_number:
+            fmesh_name:
+            theta_bins: Number of bins in theta. Pretty much always should be 1.
+            theta_maxs:
+            ref: REF keyword for mesh weight windows
+        """
+        super(RecFMESH, self).__init__(4, tally_number=tally_number, tally_name=fmesh_name)
+
+        self.x_poses = x_poses if hasattr(x_poses, '__iter__') else (x_poses,)
+        self.y_poses = y_poses if hasattr(y_poses, '__iter__') else (y_poses,)
+        self.z_poses = z_poses if hasattr(z_poses, '__iter__') else (z_poses,)
+
+        self.xbins = xbins if hasattr(xbins, '__iter__') else (xbins,)
+        self.ybins = ybins if hasattr(ybins, '__iter__') else (ybins,)
+        self.zbins = zbins if hasattr(zbins, '__iter__') else (zbins,)
+
+        self.origin = origin
+        self.particle = particle
+
+        self.ref = ref
+
+    @property
+    def fmesh_number(self):
+        return int(str(self.tally_number) + '4')
+
+    @property
+    def tally_card(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        def f(a):  # iter to MCNP input
+            return " ".join(map(str, a))
+        optional = {}  # for any optional kwargs. None implemented yet...
+        optional = ' '.join(f'{k}={v}' for k, v in optional.items())
+        out = f'FMESH{self.fmesh_number}:{self.particle} GEOM=REC ORIGIN={f(self.origin)} AXS={f(self.axs_hat)} ' \
+              f' {optional} $ {self.__name__}\n' \
+              f'     IMESH {f(self.x_poses)}  IINTS {f(self.xbins)}\n' \
+              f'     JMESH {f(self.y_poses)}  JINTS {f(self.ybins)}\n' \
+              f'     KMESH {f(self.z_poses)}  KINTS {f(self.zbins)}'
         return out
 
 
