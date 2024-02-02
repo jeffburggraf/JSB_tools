@@ -892,10 +892,12 @@ class SPEFile(EfficiencyCalMixin):
     def __len__(self):
         return len(self.counts)
 
-    def interactive_plot(self, fit_window=3, ):
-        fig, ax = plt.subplots(1, 1, sharex="all")
+    def interactive_plot(self):
         counts = self.get_counts(make_density=True)
-        iplot = InteractivePlot(self.erg_bins, counts, ax=ax, fit_window=fit_window)
+        iplot = InteractivePlot(self.erg_bins, counts)
+
+        iplot.fig.suptitle(self.path.name)
+
         if not hasattr(self, 'iplots'):
             setattr(self, 'iplots', [])
 

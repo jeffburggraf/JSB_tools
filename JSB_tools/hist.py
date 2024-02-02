@@ -9,6 +9,77 @@ from matplotlib.axes import Axes
 from scipy.integrate import trapezoid
 
 
+__default_stats_kwargs = {'loc': (0.7, 0.8)}
+
+
+
+def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
+    """
+    Returns dict of stats. Inspired by ROOT's TH1F default behavior.
+    Args:
+        bins: Bin left edges
+        y: Bin values
+        errors: Bin errors
+        percentiles: Percentiles to include in return value.
+
+    Returns: dict
+        {'count': count,
+        'mean': mean,
+        'std': std,
+        'percentiles': [(percentile_1, x_value1), (percentile_2, x_value2), ...]
+        }
+
+    """
+    b_centers = 0.5*(bins[1:] + bins[:-1])
+    x = b_centers
+    if errors:
+        x = unp.uarray(x, (bins[1:] - bins[:-1])/(2*np.sqrt(3)))
+    else:
+        y = unp.nominal_values(y)
+
+    mean = sum(y*x)/sum(y)
+    std = usqrt(sum(y*(x - mean)**2)/sum(y))
+
+    cumsum = np.cumsum(unp.nominal_values(y))
+
+    percentiles_xs = []
+
+    for p in percentiles:
+        frac = unp.nominal_values(cumsum[-1]*p)
+        i = np.searchsorted(cumsum, frac, side='right') - 1
+
+        if i < 0:
+            percentiles_xs.append(x[0])
+            continue
+        elif i == len(cumsum):
+            percentiles_xs.append(x[-1])
+            continue
+
+        x0 = x[i]
+
+        y0 = cumsum[i]
+        try:
+            y1 = cumsum[i + 1]
+        except:
+            print()
+
+        x1 = x[i + 1]
+        di = (frac - y0)/(y1 - y0)
+        dx = di*(x1 - x0)
+
+        percentiles_xs.append(x0 + dx)
+
+        count = sum(unp.nominal_values(y))
+
+        if int(count) == count:
+            count = int(count)
+
+    return {'count': count,
+            'mean': mean,
+            'std': std,
+            'percentiles': list(zip(percentiles, percentiles_xs))}
+
+
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
              return_handle=False, stats_box=False, stats_kwargs=None, elinewidth=1.1, errorevery=1, **mpl_kwargs):
     """
@@ -78,8 +149,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     capsize = mpl_kwargs.pop('capsize', None)
 
-    handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post',
-                          elinewidth=elinewidth, **mpl_kwargs)
+    # handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post', elinewidth=elinewidth, **mpl_kwargs)
+    handle1 = ax.plot(bin_edges, yp, label=label,  ds='steps-post',  **mpl_kwargs)
 
     handle1[0].set_marker('None')
 
@@ -91,7 +162,10 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         mpl_kwargs['color'] = handle1[0].get_color()
     mpl_kwargs.pop('ls', None)
     mpl_kwargs.pop('linestyle', None)
-    handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, errorevery=errorevery, **mpl_kwargs)  # draw error_bars and markers.
+
+    handle2 = None
+    if yerr is not None:
+        handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, errorevery=errorevery, **mpl_kwargs)  # draw error_bars and markers.
 
     if label is not None:
         ax.legend()
@@ -190,3 +264,12 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
                        stats_box=stats_box,  **mpl_kwargs)
 
 
+
+
+if __name__ == '__main__':
+    import matplotlib
+    matplotlib.use('Qt5agg')
+
+    y = [1,2,34]
+
+    mpl_hist([1,2,3,4], y)

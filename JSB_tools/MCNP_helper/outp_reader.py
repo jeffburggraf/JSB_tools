@@ -123,6 +123,13 @@ class F8Tally:
     def bin_widths(self):
         return self.erg_bins[1:] - self.erg_bins[:-1]
 
+    def plot(self, ax=None):
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        ax.errorbar(self.energies, unp.nominal_values(self.pulse_heights), unp.std_devs(self.pulse_heights))
+        return ax
+
 
 class F6Tally:
     card_match = re.compile('[+*]?F(?P<number>[0-9]*6)(?:: *[a-z, ]+)? +(?P<cell>[0-9]+)', re.IGNORECASE)
@@ -665,6 +672,21 @@ class OutP:
             if m := cell_match.match(card):
                 cell_num = int(m.groups()[0])
                 self.cells[cell_num].name = m.groups()[1]
+
+    def pickle(self, path=None):
+        if path is None:
+            path = self.__f_path__.with_suffix('.pickle')
+
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def from_pickle(cls, path):
+        path = Path(path).with_suffix('.pickle')
+
+        with open(path, 'rb') as f:
+            self = pickle.load(f)
+        return self
 
     def get_cell_activity(self, particle):
         """

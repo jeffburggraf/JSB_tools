@@ -35,7 +35,7 @@ constants = {'neutron_mass': 939.56542052,
              'u_to_kg': 1.6605390666E-27,  # atomic mass units to kg
              'J_to_eV': 1.0 / 1.602176634E-19,  # Joules to eV
              'c': 299792458,
-             'A': 6.023E23}
+             'A': 6.0221421E23}
 
 NATURAL_ABUNDANCE: dict = None  # Has form {SS1: {A1: abun1, A2: abum2, ...}, SS2: {...} }
 ALL_ISOTOPES: dict = None  #
@@ -866,7 +866,18 @@ class Nuclide(Element):
         return outs
 
     @staticmethod
-    def isotopic_breakdown(atomic_symbol):
+    def isotopic_breakdown(atomic_symbol) -> Dict[int, float]:
+        """
+
+        Args:
+            atomic_symbol:
+
+        Returns: Dictionary, e.g.
+                    {A1: frac1, A2: frac2, ...}
+                 where,
+                    A is mass number
+
+        """
         m = re.match(r'^([A-z]{0,3})$', atomic_symbol)
         assert m, f"Invalid argument, '{atomic_symbol}'"
 

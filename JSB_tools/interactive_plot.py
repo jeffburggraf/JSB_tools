@@ -59,7 +59,7 @@ class InteractivePlot:
 
         self.setup_buttons()
 
-        mpl_hist(bins, self.y, ax=self.ax)
+        mpl_hist(bins, self.y, ax=self.ax, zorder=-10, return_handle=True)
 
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         self.fig.canvas.mpl_connect('key_release_event', self.on_key_release)
@@ -124,6 +124,9 @@ class InteractivePlot:
                 self.holding_space = False
 
     def label(self, fit: GausFitResult):
+        def f(val):
+            return f'{val:.5g}'
+
         for i in range(len(fit)):
             efit = fit.centers(i)
             A = fit.amplitudes(i)
@@ -134,8 +137,8 @@ class InteractivePlot:
                 y0 = y0.n
 
             dy = (self.ax.get_ylim()[1] - self.ax.get_ylim()[0])/12
-            t = self.ax.text(efit.n, y0 + dy, fr"$\mu$={efit:.3g}" "\n" fr"$\sigma={fit.sigmas(i):.3g}$" "\n" f"A={A:.3g}", va='center',
-                             fontsize=6.5)
+            t = self.ax.text(efit.n, y0 + dy, fr"$\mu$={f(efit)}" "\n" fr"$\sigma={f(fit.sigmas(i))}$" "\n" f"A={A:.3g}", va='center',
+                             fontsize=7.5, zorder=10)
 
             self.fit_visuals.append(t)
 
@@ -177,22 +180,29 @@ class InteractivePlot:
         x = np.linspace(fits.fit_x[0], fits.fit_x[-1], 5000)
         y = fits.eval(x=x)
 
-        plt, = self.ax.plot(x, y, c='tab:orange')
+        plt, = self.ax.plot(x, y, c='tab:orange', zorder=3)
         self.fit_visuals.append(plt)
 
         self.label(fits)
 
+        msg = 'Fit params:\n'
         for i, click in enumerate(self.fit_clicks):
+            msg += f"\tmu = {fits.centers(i):.6g}\n"
+            msg += f"\tsigma = {fits.sigmas(i):.6g}\n"
+            msg += f"\tAmplitude = {fits.amplitudes(i):.6g}\n"
             click.remove()
 
             _x = fits.centers(i).nominal_value
             axvline = self.ax.axvline(_x,  ls='-' if click.dblclick else '--', lw=0.7, c='black')
             self.fit_visuals.append(axvline)
 
+        print(msg)
+
         self.update()
 
 
 if __name__ == '__main__':
+    from uncertainties import unumpy as unp
     s = 100000
 
     mus = [1, 3, 5.75, 7]
@@ -207,10 +217,9 @@ if __name__ == '__main__':
 
     y, _ = np.histogram(data, bins=bins)
 
+    y = unp.uarray(y, np.sqrt(y))
+
     i = InteractivePlot(bins, y, make_density=True)
 
-    # mpl_hist(bins, y)
-
     plt.show()
-
 
