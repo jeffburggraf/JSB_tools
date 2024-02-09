@@ -16,7 +16,6 @@ from JSB_tools import trace_prints
 #  - Redo tally_n reader. It's too complex.
 #  - Test new Sphere primitive.
 #  - Make a module for Tallys
-#
 
 
 class CylFMESH(TallyBase):

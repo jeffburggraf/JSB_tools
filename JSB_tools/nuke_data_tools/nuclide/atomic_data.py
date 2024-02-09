@@ -252,8 +252,8 @@ def atomic_mass(isotope):
 def atomic_weight(element):
     """Return atomic weight of an element in atomic mass units.
 
-    Computes an average of the atomic mass of each of element's naturally
-    occurring isotopes weighted by their relative abundance.
+    Computes an average of the atomic mass' of the element's naturally
+    occurring isotopes, weighting by their relative abundance.
 
     Parameters
     ----------

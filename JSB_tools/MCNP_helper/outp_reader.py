@@ -371,7 +371,6 @@ class F4Tally(Tally):
             else:
                 assert False, "Tally modifiers {} not yet supported!".format(self.tally_modifiers)
             if (self.tally_modifiers - {'fm'}) == set():
-                print(self.tally_modifiers)
                 if 'fm' in self.tally_modifiers:
                     index += 1
                 self.underflow = None
@@ -645,6 +644,8 @@ class OutP:
                 if m := re.match('.+i=([^ ]*)', line):
                     self.input_file_path = self.__f_path__.parent/m.groups()[0]
 
+        if not len(self.input_deck):
+            raise ValueError("No input deck found in Outp file. Possible that file is not an MCNP outp file.")
         self.inp_title = self.input_deck[0]
 
         self.cells: Dict[int, OutpCell] = {}
@@ -731,8 +732,9 @@ class OutP:
         out = {}
         matcher = re.compile('1tally +([0-9]*[1245678]) ?')
         for index, line in enumerate(self.__outp_lines__):
-            if m := matcher.match(line):
-                out[m.groups()[0]] = index
+            if line[:6] == '1tally':
+                if m := matcher.match(line):
+                    out[m.groups()[0]] = index
         return out
 
     @cached_property

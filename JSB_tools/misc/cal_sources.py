@@ -5,6 +5,7 @@ from JSB_tools.nuke_data_tools import Nuclide
 from typing import Union
 from uncertainties import ufloat
 from typing import Dict
+import numpy as np
 
 
 class CalSource:
@@ -61,12 +62,18 @@ class CalSource:
 
         """
         dt = (start_date - self.ref_date).total_seconds()
-        hl = self.nuclide.half_life
         n_nuclides_ref = self.ref_activity / self.nuclide.decay_rate
-        n_nuclides_begin = n_nuclides_ref*0.5**(dt/hl)
 
-        percent_decay = 1 - 0.5**(duration/hl)
-        return n_nuclides_begin*percent_decay
+        l = self.nuclide.decay_rate
+
+        out = n_nuclides_ref * (np.e**(-l * dt) - np.e**(-l * (dt + duration)))
+        return out
+        # hl = self.nuclide.half_life
+        # n_nuclides_ref = self.ref_activity / self.nuclide.decay_rate
+        # n_nuclides_begin = n_nuclides_ref*0.5**(dt/hl)
+        #
+        # percent_decay = 1 - 0.5**(duration/hl)
+        # return n_nuclides_begin*percent_decay
 
     def __repr__(self):
         return f'{self.name}; {self.get_activity():.3E} Bq'

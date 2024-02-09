@@ -7,6 +7,8 @@ from JSB_tools.hist import mpl_hist
 import numpy as np
 import matplotlib
 from typing import List
+from uncertainties import unumpy as unp
+from matplotlib.axes import Axes
 from matplotlib.widgets import TextBox, CheckButtons, RadioButtons
 matplotlib.use('Qt5agg')
 
@@ -51,7 +53,7 @@ class InteractivePlot:
             self.fig, (self.ax, self.button_ax) = plt.subplots(1, 2, width_ratios=[10, 1], figsize=(14, 8))
         else:
             self.fig = ax.figure
-            self.ax = ax
+            self.ax: Axes = ax
 
         self.button_ax.set_axis_off()
 
@@ -91,14 +93,16 @@ class InteractivePlot:
                 self.fit_clicks[-1].remove()
                 del self.fit_clicks[-1]
 
-            print(click)
             self.fit_clicks.append(click)
 
             self.update()
 
     def clear(self):
         for t in (self.fit_visuals + self.fit_clicks):
-            t.remove()
+            try:
+                t.remove()
+            except ValueError:
+                continue
 
         self.fit_visuals = []
 
@@ -108,8 +112,22 @@ class InteractivePlot:
         if event.key == ' ':
             self.holding_space = True
 
-        if event.key == 'escape':
+        elif event.key == 'escape':
             self.clear()
+
+        elif event.key == 'y':
+            x0, x1 = self.ax.get_xlim()
+            i0, i1 = np.searchsorted(self.bins, [x0, x1], side='right') - 1
+            _min = min(unp.nominal_values(self.y[i0: i1]))
+            _max = max(unp.nominal_values(self.y[i0: i1]))
+
+            dy = _max - _min
+
+            _min -= 0.06 * dy
+            _max += 0.1 * dy
+
+            self.ax.set_ylim(_min, _max)
+            self.update()
 
     def on_key_release(self, event):
         if event.key == ' ':
@@ -202,15 +220,17 @@ class InteractivePlot:
 
 
 if __name__ == '__main__':
-    from uncertainties import unumpy as unp
     s = 100000
 
     mus = [1, 3, 5.75, 7]
     sigmas = [0.1, 0.3,  0.45, 0.4]
     As = s * np.array([3, 5, 2.6, 7])
 
+    print('Counts: ', [f'{x:.2e}' for x in As])
+
     data = []
     bins = np.linspace(-5, max(mus) + 5, 2000)
+    data.extend(np.random.uniform(bins[0], bins[-1], 3 * s))
 
     for x, sig, a in zip(mus, sigmas, As):
         data.extend(np.random.normal(loc=x, scale=sig, size=int(a)))
@@ -219,7 +239,9 @@ if __name__ == '__main__':
 
     y = unp.uarray(y, np.sqrt(y))
 
-    i = InteractivePlot(bins, y, make_density=True)
+    y /= bins[1:] - bins[:-1]
+
+    i = InteractivePlot(bins, y, make_density=False)
 
     plt.show()
 

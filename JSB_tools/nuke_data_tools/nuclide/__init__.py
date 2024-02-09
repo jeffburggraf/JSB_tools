@@ -769,11 +769,13 @@ class Nuclide(Element):
 
     @property
     def grams_per_mole(self) -> Union[float, None]:
-        try:
-            return atomic_weight(self.name)
-        except KeyError:
-            warn('Atomic weight for {} not found'.format(self))
-            return None
+        """
+        Grams per mole of natural isotopic substance
+
+        Returns:
+
+        """
+        return self.atomic_mass('u')
 
     @staticmethod
     def isotopic_abundance(nuclide_name) -> float:
@@ -794,6 +796,10 @@ class Nuclide(Element):
             return get_abundance_dict()[symbol][int(A)]
         except KeyError:
             return 0
+
+    @staticmethod
+    def standard_atomic_weight(element_symbol):
+        return atomic_weight(element_symbol)
 
     @functools.cached_property
     def atom_density(self):

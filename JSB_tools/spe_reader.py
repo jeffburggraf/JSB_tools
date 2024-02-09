@@ -18,6 +18,8 @@ from scipy.signal import find_peaks
 from matplotlib.axes import Axes
 from JSB_tools.spectra import EfficiencyCalMixin
 from JSB_tools.spectra.time_depend import multi_guass_fit, GausFitResult
+from JSB_tools.tab_plot import TabPlot
+from lmfit.models import PolynomialModel
 
 
 def _rebin(rebin, values, bins):
@@ -165,12 +167,15 @@ class SPEFile(EfficiencyCalMixin):
     """
     time_format = '%m/%d/%Y %H:%M:%S'
 
-    def __init__(self, path, eff_path=None):
+    def __init__(self, path, eff_path=None, load_erg_cal=True):
         """
         Analyse ORTEC .Spe ASCII spectra files.
 
         Args:
-            path: Path to Spe file.
+            path:
+            eff_path:
+            load_erg_cal: If True, look for erg_cal text file in directory, and use these values instead.
+
         """
         self.path = Path(path)
         assert self.path.exists(), self.path
@@ -193,10 +198,22 @@ class SPEFile(EfficiencyCalMixin):
         self.counts.flags.writeable = False
         self.channels = np.arange(len(self.counts))
 
-        self._erg_calibration = data['_erg_calibration']
+        if load_erg_cal:
+            try:
+                with open(self.path.parent / 'erg_cal') as f:
+                    line_erg, line_shape = f.readlines()
+                self._erg_calibration = list(map(float, line_erg.split()))
+                self.shape_cal = list(map(float, line_shape.split()))
+                self.erg_units = 'keV'
+
+            except FileNotFoundError:
+                load_erg_cal = False
+
+        if not load_erg_cal:
+            self._erg_calibration = data['_erg_calibration']
         # super(SPEFile, self).__init__(data['_erg_calibration'])
-        self.erg_units = data['erg_units']
-        self.shape_cal = data['shape_cal']
+            self.erg_units = data['erg_units']
+            self.shape_cal = data['shape_cal']
 
         try:
             self.unpickle_efficiency(eff_path)
@@ -935,19 +952,184 @@ class SPEFile(EfficiencyCalMixin):
         return iplot
 
 
+class ErgCalHelper:
+    def __init__(self, cal_nuclide_name, spe: SPEFile, intensity_limit=0.05, min_peak_dist=8, channels=False):
+        def is_interfere(e, intnsty):
+            if e == erg:
+                return False
+
+            if abs(e - erg) < min_peak_dist:
+                if intnsty / intensity < 0.05:
+                    return False
+                return True
+
+        self.channels = channels
+
+        self.spe = spe
+
+        self.nuclide = Nuclide(cal_nuclide_name)
+
+        self.fits: List[GausFitResult] = []
+
+        self.fit_centers = []
+        self.adjacent_peaks = []
+        self.gamma_lines = []
+
+        gamma_ergs = [g.erg.n for g in self.nuclide.decay_gamma_lines]
+        gamma_lines = [g for g in self.nuclide.decay_gamma_lines]
+        gamma_intensities = [g.intensity.n for g in self.nuclide.decay_gamma_lines]
+
+        for gline, erg, intensity in zip(gamma_lines, gamma_ergs, gamma_intensities):
+            if intensity < intensity_limit:
+                continue
+
+            self.fit_centers.append(erg)
+            self.gamma_lines.append(gline)
+
+            adjacent_peaks = []
+
+            for ee, ii in zip(gamma_ergs, gamma_intensities):
+                if is_interfere(ee, ii):
+                    adjacent_peaks.append(ee)
+
+            center_guesses = [erg] + adjacent_peaks
+            fix_centers = [False] + [True] * len(adjacent_peaks)
+
+            if channels:
+                center_guesses = [spe.erg_2_channel(c) for c in center_guesses]
+                bins = np.arange(len(spe.erg_bins))
+            else:
+                bins = spe.erg_bins
+
+            fit = multi_guass_fit(bins, spe.counts / spe.erg_bin_widths,
+                                  center_guesses=center_guesses,
+                                  fixed_in_binQ=fix_centers,
+                                  fit_buffer_window=6 if channels else 14)
+
+            self.fits.append(fit)
+
+        self.erg_cal = [0, 0, 0]
+        self.shape_cal = [0, 0, 0]
+
+    def __len__(self):
+        return len(self.fits)
+
+    def get_counts(self):
+        return [fit.amplitudes(0) for fit in self.fits]
+
+    def plot_fits(self):
+        tab = TabPlot()
+        for i in range(len(self)):
+            fit = self.fits[i]
+            center = fit.centers(0)
+            erg = self.gamma_lines[i].erg.n
+            ax = tab.new_ax(i)
+            fit.plot(ax=ax)
+            ax.text(0.8, 0.8, f'E={erg:.2f}\nCh.={center:.2f}', transform=ax.transAxes)
+
+    def get_fit(self, indices=None, degree=1):
+        ergs = []
+        chs = []
+        fwhms = []
+        fig, fit_plt_axs, = plt.subplots(2, 2)
+        fit_plt_axs = fit_plt_axs.flatten()
+
+        fit_plt_axs[0].set_xlabel('Channel')
+        fit_plt_axs[1].set_xlabel('~ Energy [keV]')
+        fit_plt_axs[1].set_ylabel('Fwhm [keV]')
+        fit_plt_axs[0].set_ylabel('Energy [keV]')
+        fit_plt_axs[2].set_xlabel('Energy')
+        fit_plt_axs[2].set_ylabel('Energy error')
+        fit_plt_axs[3].set_axis_off()
+
+        handles, labels = [], []
+
+        for i in range(len(self)):
+            if indices is not None and i not in indices:
+                continue
+
+            fit = self.fits[i]
+            sigma = fit.sigmas(0)
+            center = fit.centers(0)
+            erg = self.gamma_lines[i].erg.n
+
+            fwhms.append(2.355 * sigma)
+            ergs.append(erg)
+            chs.append(center)
+
+            handle = fit_plt_axs[0].errorbar([center.n], [erg], xerr=[center.std_dev], ls='None', marker='o')
+
+            handles.append(handle)
+            labels.append(f'{i}')
+
+        fig.legend(handles, labels)
+
+        model = PolynomialModel(degree=degree)
+
+        y = ergs
+        x = unp.nominal_values(chs)
+        params = model.guess(data=y, x=x)
+        fit_erg = model.fit(data=y, x=x, params=params)
+
+        self.erg_cal[0] = fit_erg.params['c0'].value
+        self.erg_cal[1] = fit_erg.params['c1'].value
+
+        plt_x = np.linspace(min(x), max(x), 1000)
+        fit_plt_axs[0].plot(plt_x, fit_erg.eval(x=plt_x))
+
+        fit_plt_axs[0].text(0.1, 0.6, fr"E = ch $\times$ {fit_erg.params['c1'].value:.5e} + {fit_erg.params['c1'].value:4e}")
+
+        fit_plt_axs[2].plot(y, y - fit_erg.eval(x=x), ls='None', marker='o')
+
+        for i in range(len(ergs)):
+            erg = ergs[i]
+            fwhm = fwhms[i] * fit_erg.params['c1'].value
+            fit_plt_axs[1].errorbar([erg], [fwhm.n], yerr=[fwhm.std_dev], ls='None', marker='o')
+
+        weights = 1/np.where(unp.std_devs(fwhms) > 0, unp.std_devs(fwhms), 1)
+        x = ergs
+        # print(fit_erg.params['c1'].value)
+        y = unp.nominal_values(fwhms) * fit_erg.params['c1'].value
+        params = model.guess(y, x=x)
+        fit_fwhm = model.fit(data=y, x=x, weights=weights, params=params)
+
+        self.shape_cal[0] = fit_fwhm.params['c0'].value
+        self.shape_cal[1] = fit_fwhm.params['c1'].value
+
+    def save_cal(self, directory=None, write_shape=True):
+        if directory is None:
+            directory = self.spe.path.parent
+
+        path = directory / 'erg_cal'
+
+        def func(s):
+            return f'{s:.7E}'
+
+        with open(path, 'w') as f:
+            line = ' '.join(map(func, self.erg_cal)) + '\n'
+            f.write(line)
+            if write_shape:
+                line = ' '.join(map(func, self.shape_cal)) + '\n'
+                f.write(line)
+
+
 
 if __name__ == '__main__':
     from scipy.stats.mstats import winsorize
     from JSB_tools.MCNP_helper.outp_reader import OutP
     from JSB_tools.nuke_data_tools import Nuclide
+
+    spe = SPEFile("/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/RMET3/CalRMET3_2024/Eu152_1cm.Spe")
+
+    ii = spe.interactive_plot()
+
+    multi_guass_fit(spe.erg_bins, spe.get_counts(make_density=True), [343.96])
+
     n = Nuclide("Eu152")
     for g in n.decay_gamma_lines:
         if g.intensity > 0.01:
+            ii.ax.axvline(g.erg.n, c='black')
             print(g)
-
-    spe = SPEFile("/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/RMET3/calSpectra/20221013_RM3_Eu152_20cm.SPE")
-    #
-    spe.interactive_plot()
 
     # ax.secondary_xaxis('top', functions=(spe.channel_2_erg, lambda xs: [spe.erg_2_channel(x) for x in xs]))
     # mpl_hist(chs_bins, spe.get_counts(), ax=axs[0])

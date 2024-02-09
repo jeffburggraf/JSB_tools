@@ -291,11 +291,11 @@ class ActivationCrossSection(CrossSection1D):
         if mt_value is None:
             ith_channel = None
 
-        out = np.zeros_like(ergs)
-        ergs = 1E6 * ergs
-
         if isinstance(ergs, int):
             ergs = float(ergs)
+
+        out = np.zeros_like(ergs)
+        ergs = 1E6 * ergs
 
         for _mt in self.mt_values:
             if mt_value is not None:

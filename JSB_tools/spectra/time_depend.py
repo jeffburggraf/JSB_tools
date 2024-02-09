@@ -227,35 +227,73 @@ def erg_cut(bins, erg_binned_times, effs, emin=None, emax=None):
     return erg_binned_times[i0: i1 + 1], bins[i0: i1 + 2], effs[i0: i1 + 1] if effs is not None else None
 
 
-def find_local_max(a, i0):
+def find_local_maximum(a, i0, N=3):
     """
     Starting from a[i0], find index of nearest local maxima.
     If there are two local maxima, take the larger of the two.
     Or, if they're the same height, return the left-most index.
 
     Args:
-        a:  Array
-        i0: Initial index
+        a:
+        i0:
+        N: Considers local max only if average a N values is local max
 
-    Returns: int
+    Returns:
+        Index of local maximum
 
     """
-    is_ = []
-    a = np.array(a)
+    a = np.asarray(a)
+    # a = [np.mean(a[i - N//2: i + N//2 + 1]) for i in range(N//2, len(a) - N//2)]
+    i0 = min(max(0, i0), len(a) - 1)
 
-    for s in [-1, 1]:
-        i = i0
-        if i + s <= 0:
-            pass
-        elif i + s >= len(a):
-            pass
-        else:  # not at edge of array, increment.
-            while a[i + s] > a[i]:
-                i += s
+    out_indices = [i0, i0]
 
-        is_.append(i)
-    out = is_[np.argmax(a[is_])]
-    return out
+    def get_val(index):
+        if not 0 <= index < len(a):
+            return -np.inf
+        il, ir = max(0, index - N//2), min(len(a) - 1, index + int(np.ceil(N/2)))
+        out = sum(a[il: ir])
+        return out
+
+    val0 = get_val(i0)
+
+    for i, s in enumerate([-1, 1]):
+        val = val0
+        while (vnext := get_val(out_indices[i] + s)) >= val:
+            out_indices[i] += s
+            val = vnext
+
+    if a[out_indices[0]] > a[out_indices[1]]:
+        return out_indices[0]
+
+    return out_indices[1]
+
+
+# def find_local_max(a, i0):
+#     """
+#     Starting from a[i0], find index of nearest local maxima.
+#     If there are two local maxima, take the larger of the two.
+#     Or, if they're the same height, return the left-most index.
+#
+#     Args:
+#         a:  Array
+#         i0: Initial index
+#
+#     Returns: int
+#
+#     """
+#     is_ = []
+#     a = np.array(a)
+#
+#     for s in [-1, 1]:
+#         i = i0
+#
+#         while 0 <= i + s < len(a) and a[i + s] > a[i]:
+#             i += s
+#
+#         is_.append(i)
+#     out = is_[np.argmax(a[is_])]
+#     return out
 
 
 def get_fit_slice(bins, center_guesses, fit_buffer_window):
@@ -495,6 +533,9 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     yfull = y[:]  # y without being cut to only include peaks
 
     if fit_buffer_window is not None and not nobins:
+        i0 = min(max(0, np.searchsorted(bins, center_guesses[0], side='right') - 1), len(yfull) - 1)
+        i0 = find_local_maximum(yfull, i0)
+        center_guesses[0] = (bins[i0] + bins[i0 + 1])/2
         bins_slice, y_slice = get_fit_slice(bins=bins, center_guesses=center_guesses,
                                             fit_buffer_window=fit_buffer_window)
 
@@ -613,7 +654,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             kwargs['max'] = bins[i0 + 1]
             assert bins[i0] < center_guess <= bins[i0 + 1], (bins[i0], center_guess, bins[i0 + 1])
         else:
-            kwargs['value'] = x[find_local_max(y, i0)]
+            kwargs['value'] = x[find_local_maximum(y, i0)]
             kwargs['min'] = x[0]
             kwargs['max'] = x[-1]
 
