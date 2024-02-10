@@ -1284,9 +1284,12 @@ def calc_background(counts, num_iterations=20, clipping_window_order=2, smoothen
         return unp.uarray(result, np.abs(rel_errors*result))
 
 
-
-
 mpl_style = MPLStyle
+
+def gaussian(x, mu, sig):
+    return (
+        1.0 / (np.sqrt(2.0 * np.pi) * sig) * np.exp(-np.power((x - mu) / sig, 2.0) / 2)
+    )
 
 
 def norm2d_kernel(length_x, sigma_x, length_y=None, sigma_y=None):
