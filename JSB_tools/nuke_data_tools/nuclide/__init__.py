@@ -799,6 +799,15 @@ class Nuclide(Element):
 
     @staticmethod
     def standard_atomic_weight(element_symbol):
+        """
+        Return atomic weight of an element in atomic mass units (g/mol)
+
+        Args:
+            element_symbol:
+
+        Returns:
+
+        """
         return atomic_weight(element_symbol)
 
     @functools.cached_property
