@@ -170,7 +170,16 @@ class TabPlot:
         return sum(map(len, self.button_labels))
 
     def on_press(self, event):
+        if isinstance(event, str):
+            class E:
+                pass
+
+            s = event
+            event = E()
+            event.key = s
+
         sys.stdout.flush()
+
         if event.key in ['right', 'up']:
             index = min(len(self.button_funcs) - 1, self.index + 1)
             self.button_funcs[index](event)
@@ -449,3 +458,20 @@ class TabPlot:
         for axs in self.plt_axs:
             for ax in axs:
                 ax.legend()
+
+    def save_figs(self, directory, name_or_names):
+        if isinstance(name_or_names, list):
+            pass
+        elif isinstance(name_or_names, str):
+            name_or_names = [f'{name_or_names}_{i}' for i in range(len(self))]
+
+        for b in self.buttons:
+            b.ax.set_visible(0)
+
+        for i, name in enumerate(name_or_names):
+            button_func = self.button_funcs[i]
+            button_func()
+            self.fig.savefig(directory / name, )
+
+        for b in self.buttons:
+            b.ax.set_visible(1)

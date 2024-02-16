@@ -11,6 +11,7 @@ from uncertainties import UFloat, ufloat
 from uncertainties.core import AffineScalarFunc
 from JSB_tools import mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
 from JSB_tools.nuke_data_tools import Nuclide
+from JSB_tools.nuke_data_tools.nuclide import GammaLine
 from typing import List, Union
 import marshal
 from lmfit.models import GaussianModel
@@ -167,14 +168,13 @@ class SPEFile(EfficiencyCalMixin):
     """
     time_format = '%m/%d/%Y %H:%M:%S'
 
-    def __init__(self, path, eff_path=None, load_erg_cal=True):
+    def __init__(self, path, eff_path=None):
         """
         Analyse ORTEC .Spe ASCII spectra files.
 
         Args:
             path:
             eff_path:
-            load_erg_cal: If True, look for erg_cal text file in directory, and use these values instead.
 
         """
         self.path = Path(path)
@@ -198,57 +198,82 @@ class SPEFile(EfficiencyCalMixin):
         self.counts.flags.writeable = False
         self.channels = np.arange(len(self.counts))
 
-        if load_erg_cal:
-            try:
-                with open(self.path.parent / 'erg_cal') as f:
-                    line_erg, line_shape = f.readlines()
-                self._erg_calibration = list(map(float, line_erg.split()))
-                self.shape_cal = list(map(float, line_shape.split()))
-                self.erg_units = 'keV'
-
-            except FileNotFoundError:
-                load_erg_cal = False
-
-        if not load_erg_cal:
-            self._erg_calibration = data['_erg_calibration']
-        # super(SPEFile, self).__init__(data['_erg_calibration'])
-            self.erg_units = data['erg_units']
-            self.shape_cal = data['shape_cal']
+        self._erg_calibration = data['_erg_calibration']
+        self.erg_units = data['erg_units']
+        self.shape_cal = data['shape_cal']
 
         try:
             self.unpickle_efficiency(eff_path)
         except FileNotFoundError:
             pass
 
-    def change_erg_cal(self, c0, c1, c2=0.0):
+    @staticmethod
+    def save_erg_call_all(path, erg_cal, shape_cal=None):
+        path = Path(path)
+        assert path.is_dir()
+
+        for p in path.iterdir():
+            if p.suffix.lower() == '.spe':
+                spe = SPEFile(p)
+                spe.save_erg_cal(erg_cal, shape_cal)
+                print(f"Updated energy calibration for {p}")
+
+    def save_erg_cal(self, erg_cal, shape_cal=None):
+        def get_coeffs(a):
+            if len(a) == 2:
+                c0, c1 = a
+                c2 = 0
+            elif len(a) == 3:
+                c0, c1, c2 = a
+            else:
+                raise ValueError(f"erg_cal/shape_cal not of correct length '{a}'")
+
+            return c0, c1, c2
+
         assert self.path.suffix != '.pickle'
 
-        erg_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}\n"
-
-        with open(self.path) as f:
-            lines = f.readlines()
-            new_lines = lines.copy()
-
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            if "$ENER_FIT:" in line:
-                i += 1
-                new_lines[i] = erg_fit_line
-            elif "$MCA_CAL:" in line:
-                i += 1
-                new_lines[i] = '3\n'
-                i += 1
-                new_lines[i] = erg_fit_line
-
-            i += 1
-
-        new_text = "".join(new_lines)
+        c0, c1, c2 = get_coeffs(erg_cal)
 
         self._erg_calibration = [c0, c1, c2]
 
-        with open(self.path, 'w') as f:
-            f.write(new_text)
+        erg_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}".upper() + " keV\n"
+
+        if shape_cal is not None:
+            c0, c1, c2 = get_coeffs(erg_cal)
+            self.shape_cal = [c0, c1, c2]
+
+            shape_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}\n".upper()
+        else:
+            shape_fit_line = None
+
+        if self.path.suffix != '.pickle':
+            with open(self.path) as f:
+                lines = f.readlines()
+
+            i = 0
+
+            while i < len(lines):
+                line = lines[i]
+                if "$ENER_FIT:" in line:
+                    i += 1
+                    lines[i] = erg_fit_line
+                elif "$MCA_CAL:" in line:
+                    i += 1
+                    lines[i] = '3\n'
+                    i += 1
+                    lines[i] = erg_fit_line
+                elif shape_cal is not None and "$SHAPE_CAL" in line:
+                    i += 1
+                    lines[i] = '3\n'
+                    i += 1
+                    lines[i] = shape_fit_line
+
+                i += 1
+
+            new_text = "".join(lines)
+
+            with open(self.path, 'w') as f:
+                f.write(new_text)
 
     def set_useful_energy_range(self, erg_min=None, erg_max=None):
         if erg_min is None:
@@ -909,8 +934,8 @@ class SPEFile(EfficiencyCalMixin):
     def __len__(self):
         return len(self.counts)
 
-    def interactive_plot(self):
-        counts = self.get_counts(make_density=True)
+    def interactive_plot(self, nominal_values=True):
+        counts = self.get_counts(make_density=True, nominal_values=nominal_values)
         iplot = InteractivePlot(self.erg_bins, counts)
 
         iplot.fig.suptitle(self.path.name)
@@ -953,7 +978,41 @@ class SPEFile(EfficiencyCalMixin):
 
 
 class ErgCalHelper:
-    def __init__(self, cal_nuclide_name, spe: SPEFile, intensity_limit=0.05, min_peak_dist=8, channels=False):
+    def __init__(self, spe: SPEFile, cal_nuclide_name=None, list_of_gammas=None, intensity_limit=0.05, min_peak_dist=8):
+        """
+
+        Args:
+            cal_nuclide_name:
+            list_of_gammas:
+            spe:
+            intensity_limit:
+            min_peak_dist:
+        """
+        if list_of_gammas is None and cal_nuclide_name is None:
+            raise ValueError("Need either a list og GammaLine instances, or a calibration nuclide name")
+
+        if cal_nuclide_name is None:
+            gamma_lines = list_of_gammas
+            intensity_limit = None
+            self.nuclide = None
+        else:
+            gamma_lines = Nuclide(cal_nuclide_name).decay_gamma_lines
+            self.nuclide = Nuclide(cal_nuclide_name)
+
+        self.spe = spe
+
+        self.fits: List[GausFitResult] = []
+
+        self.fit_centers = []
+        self.adjacent_peaks = []
+        self.gamma_lines: List[GammaLine] = []
+
+        self.run_fits(gamma_lines, intensity_limit=intensity_limit, min_peak_dist=min_peak_dist)
+
+        self.erg_cal = [0, 0, 0]
+        self.shape_cal = [0, 0, 0]
+
+    def run_fits(self, gamma_lines, intensity_limit=0.05, min_peak_dist=8):
         def is_interfere(e, intnsty):
             if e == erg:
                 return False
@@ -963,24 +1022,12 @@ class ErgCalHelper:
                     return False
                 return True
 
-        self.channels = channels
-
-        self.spe = spe
-
-        self.nuclide = Nuclide(cal_nuclide_name)
-
-        self.fits: List[GausFitResult] = []
-
-        self.fit_centers = []
-        self.adjacent_peaks = []
-        self.gamma_lines = []
-
-        gamma_ergs = [g.erg.n for g in self.nuclide.decay_gamma_lines]
-        gamma_lines = [g for g in self.nuclide.decay_gamma_lines]
-        gamma_intensities = [g.intensity.n for g in self.nuclide.decay_gamma_lines]
+        gamma_ergs = [g.erg.n for g in gamma_lines]
+        gamma_lines = [g for g in gamma_lines]
+        gamma_intensities = [g.intensity.n for g in gamma_lines]
 
         for gline, erg, intensity in zip(gamma_lines, gamma_ergs, gamma_intensities):
-            if intensity < intensity_limit:
+            if intensity_limit is not None and intensity < intensity_limit:
                 continue
 
             self.fit_centers.append(erg)
@@ -995,21 +1042,34 @@ class ErgCalHelper:
             center_guesses = [erg] + adjacent_peaks
             fix_centers = [False] + [True] * len(adjacent_peaks)
 
-            if channels:
-                center_guesses = [spe.erg_2_channel(c) for c in center_guesses]
-                bins = np.arange(len(spe.erg_bins))
-            else:
-                bins = spe.erg_bins
+            # if channelsQ:
+            #     center_guesses = [spe.erg_2_channel(c) for c in center_guesses]
+            #     bins = np.arange(len(spe.erg_bins))
+            # else:
+            bins = self.spe.erg_bins
 
-            fit = multi_guass_fit(bins, spe.counts / spe.erg_bin_widths,
+            fit = multi_guass_fit(bins, self.spe.counts / self.spe.erg_bin_widths,
                                   center_guesses=center_guesses,
                                   fixed_in_binQ=fix_centers,
-                                  fit_buffer_window=6 if channels else 14)
+                                  fit_buffer_window=15)
 
             self.fits.append(fit)
 
         self.erg_cal = [0, 0, 0]
         self.shape_cal = [0, 0, 0]
+
+    def plot(self,):
+        if not sum(self.erg_cal) == 0:
+            self.spe._erg_calibration = self.erg_cal
+
+        iplot = self.spe.interactive_plot()
+        ys = self.spe.get_counts(make_density=True, nominal_values=True)
+        for g in self.gamma_lines:
+            x = g.erg.n
+            iplot.ax.axvline(x, color='black', lw=1.5, alpha=0.5)
+
+            y = ys[self.spe.__erg_index__(g.erg.n)]
+            iplot.ax.text(x, y*1.05, f'{g.parent_nuclide.name} - {g.erg.n:.2f} keV', rotation=90)
 
     def __len__(self):
         return len(self.fits)
@@ -1026,6 +1086,9 @@ class ErgCalHelper:
             ax = tab.new_ax(i)
             fit.plot(ax=ax)
             ax.text(0.8, 0.8, f'E={erg:.2f}\nCh.={center:.2f}', transform=ax.transAxes)
+
+    def get_ch(self, erg):
+        return np.searchsorted(self.spe.erg_bins, erg, side='right') - 1
 
     def get_fit(self, indices=None, degree=1):
         ergs = []
@@ -1050,14 +1113,20 @@ class ErgCalHelper:
 
             fit = self.fits[i]
             sigma = fit.sigmas(0)
-            center = fit.centers(0)
+
+            center_erg = fit.centers()[0]
+            rel_err = center_erg.std_dev/center_erg.n
+
+            center_ch = self.get_ch(center_erg.n)
+            center_ch = ufloat(center_ch, rel_err * center_ch)
+
             erg = self.gamma_lines[i].erg.n
 
             fwhms.append(2.355 * sigma)
             ergs.append(erg)
-            chs.append(center)
+            chs.append(center_ch)
 
-            handle = fit_plt_axs[0].errorbar([center.n], [erg], xerr=[center.std_dev], ls='None', marker='o')
+            handle = fit_plt_axs[0].errorbar([center_ch.n], [erg], xerr=[center_ch.std_dev], ls='None', marker='o')
 
             handles.append(handle)
             labels.append(f'{i}')
@@ -1096,23 +1165,11 @@ class ErgCalHelper:
         self.shape_cal[0] = fit_fwhm.params['c0'].value
         self.shape_cal[1] = fit_fwhm.params['c1'].value
 
-    def save_cal(self, directory=None, write_shape=True):
-        if directory is None:
-            directory = self.spe.path.parent
-
-        path = directory / 'erg_cal'
-
-        def func(s):
-            return f'{s:.7E}'
-
-        with open(path, 'w') as f:
-            line = ' '.join(map(func, self.erg_cal)) + '\n'
-            f.write(line)
-            if write_shape:
-                line = ' '.join(map(func, self.shape_cal)) + '\n'
-                f.write(line)
-
-
+    def save_cal(self, entire_directory=False):
+        if not entire_directory:
+            self.spe.save_erg_cal(self.erg_cal, self.shape_cal)
+        else:
+            self.spe.save_erg_call_all(self.spe.path.parent, self.erg_cal, self.shape_cal)
 
 if __name__ == '__main__':
     from scipy.stats.mstats import winsorize

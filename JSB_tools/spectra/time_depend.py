@@ -533,9 +533,13 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
     yfull = y[:]  # y without being cut to only include peaks
 
     if fit_buffer_window is not None and not nobins:
-        i0 = min(max(0, np.searchsorted(bins, center_guesses[0], side='right') - 1), len(yfull) - 1)
-        i0 = find_local_maximum(yfull, i0)
-        center_guesses[0] = (bins[i0] + bins[i0 + 1])/2
+        for i in range(len(center_guesses)):
+            if fixed_in_binQ is not None:
+                if fixed_in_binQ[i]:
+                    continue
+            i0 = min(max(0, np.searchsorted(bins, center_guesses[i], side='right') - 1), len(yfull) - 1)
+            i0 = find_local_maximum(yfull, i0)
+            center_guesses[i] = (bins[i0] + bins[i0 + 1])/2
         bins_slice, y_slice = get_fit_slice(bins=bins, center_guesses=center_guesses,
                                             fit_buffer_window=fit_buffer_window)
 
