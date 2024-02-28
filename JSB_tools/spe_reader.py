@@ -208,7 +208,7 @@ class SPEFile(EfficiencyCalMixin):
             pass
 
     @staticmethod
-    def save_erg_call_all(path, erg_cal, shape_cal=None):
+    def save_erg_call_all(path, erg_cal=None, shape_cal=None):
         path = Path(path)
         assert path.is_dir()
 
@@ -218,7 +218,7 @@ class SPEFile(EfficiencyCalMixin):
                 spe.save_erg_cal(erg_cal, shape_cal)
                 print(f"Updated energy calibration for {p}")
 
-    def save_erg_cal(self, erg_cal, shape_cal=None):
+    def save_erg_cal(self, erg_cal=None, shape_cal=None):
         def get_coeffs(a):
             if len(a) == 2:
                 c0, c1 = a
@@ -232,16 +232,16 @@ class SPEFile(EfficiencyCalMixin):
 
         assert self.path.suffix != '.pickle'
 
-        c0, c1, c2 = get_coeffs(erg_cal)
-
-        self._erg_calibration = [c0, c1, c2]
-
-        erg_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}".upper() + " keV\n"
+        if erg_cal is not None:
+            c0, c1, c2 = get_coeffs(erg_cal)
+            self._erg_calibration = [c0, c1, c2]
+            erg_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}".upper() + " keV\n"
+        else:
+            erg_fit_line = None
 
         if shape_cal is not None:
             c0, c1, c2 = get_coeffs(erg_cal)
             self.shape_cal = [c0, c1, c2]
-
             shape_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}\n".upper()
         else:
             shape_fit_line = None
@@ -254,19 +254,22 @@ class SPEFile(EfficiencyCalMixin):
 
             while i < len(lines):
                 line = lines[i]
-                if "$ENER_FIT:" in line:
-                    i += 1
-                    lines[i] = erg_fit_line
-                elif "$MCA_CAL:" in line:
-                    i += 1
-                    lines[i] = '3\n'
-                    i += 1
-                    lines[i] = erg_fit_line
-                elif shape_cal is not None and "$SHAPE_CAL" in line:
-                    i += 1
-                    lines[i] = '3\n'
-                    i += 1
-                    lines[i] = shape_fit_line
+                if erg_cal is not None:
+                    if "$ENER_FIT:" in line:
+                        i += 1
+                        lines[i] = erg_fit_line
+                    elif "$MCA_CAL:" in line:
+                        i += 1
+                        lines[i] = '3\n'
+                        i += 1
+                        lines[i] = erg_fit_line
+
+                if shape_cal is not None:
+                    if "$SHAPE_CAL" in line:
+                        i += 1
+                        lines[i] = '3\n'
+                        i += 1
+                        lines[i] = shape_fit_line
 
                 i += 1
 
@@ -717,7 +720,7 @@ class SPEFile(EfficiencyCalMixin):
 
     def plot_erg_spectrum(self, erg_min: float = None, erg_max: float = None, ax=None, rebin=1, eff_corr=False,
                           leg_label=None, make_rate=False, remove_baseline=False, make_density=False,
-                          scale=1, **ax_kwargs):
+                          scale=1, nominal_values=False, **ax_kwargs):
         """
         Plot energy spectrum within (optionally) a specified energy range.
         Args:
@@ -741,7 +744,7 @@ class SPEFile(EfficiencyCalMixin):
 
         counts, bins = self.get_counts(erg_min=erg_min, erg_max=erg_max, make_rate=make_rate, eff_corr=eff_corr,
                                        remove_baseline=remove_baseline, rebin=rebin, make_density=make_density,
-                                       return_bin_edges=True)
+                                       return_bin_edges=True, nominal_values=nominal_values)
 
         if not isinstance(scale, (int, float)) or scale != 1:
             counts *= scale

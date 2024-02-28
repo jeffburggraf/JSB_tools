@@ -60,6 +60,23 @@ markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
 def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=5, xfmt='.2g', yfmt='.2g'):
+    """
+    2D heatmap, similar to ROOTs TH2D
+
+    Args:
+        datax: x data values,  to be binned
+        datay: y data values,  to be binned
+        ax:
+        bins:
+        logz:
+        n_labels_x:
+        n_labels_y:
+        xfmt:
+        yfmt:
+
+    Returns:
+
+    """
     def get_min_after_zero(a):
         return min(flatZ[np.where(a > 0)])
 
@@ -589,8 +606,9 @@ def errorbar(x, y, ax=None, **kwargs):
     return ax
 
 
-def rebin(old_bin_edges, ys, new_bin_edges, N=1000):
+def rebin(old_bin_edges, new_bin_edges, ys, N=1000):
     """
+    Monte Carlo re-binning.
 
     Args:
         old_bin_edges: Bin edges corresponding to `ys`
@@ -1236,7 +1254,8 @@ def shade_plot(ax, window, color='blue', alpha=0.5, label=None):
     _ylims = ax.get_ylim()
     y1, y2 = [ax.get_ylim()[0]] * 2, [ax.get_ylim()[1]] * 2
     handle = ax.fill_between(window, y1, y2, color=color, alpha=alpha, label=label)
-    ax.set_ylim(*_ylims)
+    if 1 or ax.get_yscale() != 'log':
+        ax.set_ylim(*_ylims)
     return handle
 
 

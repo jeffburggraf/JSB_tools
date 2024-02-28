@@ -14,6 +14,7 @@ from pathlib import Path
 class Image:
     graphics_attrs = ['straight_edges', 'space_click_points', 'tab_click_points', 'dist_labels', 'linenum_labels',
                       'theta_ref_lines']
+
     def clear(self, only_last=False):
         for s in Image.graphics_attrs:
             list_ = getattr(self, s)

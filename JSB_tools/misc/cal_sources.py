@@ -6,6 +6,7 @@ from typing import Union
 from uncertainties import ufloat
 from typing import Dict
 import numpy as np
+from uncertainties import ufloat
 
 
 class CalSource:
@@ -18,7 +19,7 @@ class CalSource:
         except KeyError:
             assert False, f'No source entered for serial, "{serial}"\n. Options:\n{list(CalSource.instances.keys())}'
 
-    def __init__(self, nuclide_name, serial_num: Union[str, int], activity, ref_date: datetime, unit='uci'):
+    def __init__(self, nuclide_name, serial_num: Union[str, int], activity, ref_date: datetime, unit='uci', rel_err=None):
         unit = unit.lower().strip()
 
         if 'ci' in unit:
@@ -42,6 +43,9 @@ class CalSource:
         self.serial_num = str(serial_num).lower()
         self.ref_activity = activity * c
         self.ref_date = ref_date
+
+        if rel_err is not None:
+            self.ref_activity = ufloat(self.ref_activity, rel_err * self.ref_activity)
 
         CalSource.instances[self.serial_num] = self
 
@@ -78,22 +82,26 @@ class CalSource:
     def __repr__(self):
         return f'{self.name}; {self.get_activity():.3E} Bq'
 
-#
-# CalSource("Y88", serial_num=190607000, activity=433, ref_date=datetime(2019, 7, 1), unit='kBq')
-# CalSource("Na22", serial_num=129742, activity=1.146, ref_date=datetime(2008, 7, 1), unit='uCi')
-# CalSource("Cs137", serial_num=129792, activity=92.11, ref_date=datetime(2008, 7, 1), unit='nCi')
-# CalSource("Cd109", serial_num=129757, activity=10.40, ref_date=datetime(2008, 7, 1), unit='uCi')
-# CalSource("Mn54", serial_num="J4-348", activity=9.882, ref_date=datetime(2012, 9, 1), unit='uCi')
-# CalSource("Co57", serial_num="K4-895", activity=1.135, ref_date=datetime(2013, 7, 15), unit='uCi')
-# CalSource("Co57", serial_num="K4-896", activity=11.11, ref_date=datetime(2013, 7, 15), unit='uCi')
-# CalSource("Eu152", serial_num="129753", activity=1.060, ref_date=datetime(2008, 1, 7), unit='uCi')
 
+ARMS_sources = {
+    '1930-100-1': CalSource('Ba133', '1930-100-1', 21.11,
+                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+
+    '1930-100-4': CalSource('Co60', '1930-100-4', 21.04,
+                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+
+    '1915-86-3': CalSource('Cs137', '1915-86-3', 20.53,
+                           datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
+
+    '1915-86-1': CalSource('Cs137', '1915-86-1', 20.17,
+                           datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
+
+    '9027-89': CalSource('Eu152', '9027-89', 0.01025,
+                         datetime(2020, 5, 1), unit='uCi', rel_err=0.032/2.3),
+
+    '1727-63-1': CalSource('Eu152', '1727-63-1', 20.43,
+                           datetime(2014, 4, 1), unit='uCi',  rel_err=0.032/2.3),
+}
 
 if __name__ == '__main__':
     n = Nuclide("Y88")
-    print(n.decay_modes)
-
-    for g in n.decay_gamma_lines:
-        print(g)
-    print(CalSource.get_source(190607000).get_n_decays(1, ))
-    Nuclide('Co59').decay_rate

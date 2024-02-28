@@ -14,6 +14,7 @@ from functools import cached_property
 import ROOT
 from JSB_tools.MCNP_helper.PTRAC import ptrac2root, TTreeHelper
 from JSB_tools import TBrowser
+from openmc.data import Evaluation, Reaction
 
 cwd = Path(__file__).parent
 G_save_dir = cwd / 'user_saved_data'/'MCIonRanges'

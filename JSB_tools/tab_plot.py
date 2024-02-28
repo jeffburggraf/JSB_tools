@@ -269,23 +269,26 @@ class TabPlot:
 
     def add_aux_axis(self, ax):
         """
-        Add an axis, `ax`, to the list of axis that will switch on/off with the last axis returned by self.
+        Add an axis to the list of axis that will switch on/off with the button presses.
+        Turns on for last axis returned by last call to self.add_new_axis().
+
         Args:
             ax:
 
         Returns:
 
         """
+        if not hasattr(ax, 'set_visible'):
+            raise ValueError(f'Supplied argument cannot be used by TabPlot.add_aux_axis:\nType, "{type(ax)}", does not have "set_visible" attribute.')
+
         self.plt_axs[-1] = np.concatenate([self.plt_axs[-1], [ax]])
 
         if len(self.button_labels) == 1:
             ax.set_visible(1)
         else:
             ax.set_visible(0)
-            # [ax.set_visible(0) for ax in axs_flat]
 
     def _set_new_twinx(self):
-        # old_f = Axes.twinx
         axes_group_index = len(self.plt_axs) - 1
 
         def get_f(ax):

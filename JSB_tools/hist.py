@@ -167,8 +167,8 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     if yerr is not None:
         handle2 = ax.errorbar(bin_centers, y, yerr, ls="None", capsize=capsize, errorevery=errorevery, **mpl_kwargs)  # draw error_bars and markers.
 
-    if label is not None:
-        ax.legend()
+    # if label is not None:
+    #     ax.legend()
 
     if stats_box:
         if stats_kwargs is None:
