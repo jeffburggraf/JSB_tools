@@ -242,10 +242,7 @@ class TabPlot:
                     else:
                         [ax.set_navigate(False) for ax in axs_group]
 
-            if self.suptitles[index] is not None:
-                title = self.suptitles[index]
-            else:
-                title = self.button_labels[index]
+            title = self.suptitles[index]
 
             self.fig.suptitle(title)
 
@@ -380,6 +377,9 @@ class TabPlot:
         if figsize is not None:
             raise ValueError("figsize argument is applied in the TabPlot constructor")
 
+        if suptitle is None:
+            suptitle = button_label
+
         self.suptitles.append(suptitle)
 
         button_label = f"{button_label: <4}"
@@ -462,7 +462,15 @@ class TabPlot:
             for ax in axs:
                 ax.legend()
 
-    def save_figs(self, directory, name_or_names):
+    def save_figs(self, directory, name_or_names, bold_titles=True, no_titles=False):
+        def set_title():
+            if no_titles:
+                self.suptitles[i] = ''
+
+            else:
+                if bold_titles:
+                    self.suptitles[i] = fr'\textbf{{{self.suptitles[i]}}}'
+
         if isinstance(name_or_names, list):
             pass
         elif isinstance(name_or_names, str):
@@ -473,8 +481,9 @@ class TabPlot:
 
         for i, name in enumerate(name_or_names):
             button_func = self.button_funcs[i]
+            set_title()
             button_func()
             self.fig.savefig(directory / name, )
 
-        for b in self.buttons:
+        for i, b in enumerate(self.buttons):
             b.ax.set_visible(1)

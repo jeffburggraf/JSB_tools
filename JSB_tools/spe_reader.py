@@ -207,6 +207,24 @@ class SPEFile(EfficiencyCalMixin):
         except FileNotFoundError:
             pass
 
+    def get_sigma(self, erg):
+        """
+        Gets sigma from linear Eq. for FWHM: a + bx + cx^2
+        Args:
+            erg:
+            a: linear y intercept for FWHM
+            b: Scaling constant for FWHM
+
+        Returns:
+
+        """
+
+        a, b, c = self.shape_cal
+        if c == 0:
+            return (1 / 2.35482) * (a + b * erg)
+        else:
+            return (1 / 2.35482) * (a + b * erg + c * erg ** 2)
+
     @staticmethod
     def save_erg_call_all(path, erg_cal=None, shape_cal=None):
         path = Path(path)
@@ -240,7 +258,7 @@ class SPEFile(EfficiencyCalMixin):
             erg_fit_line = None
 
         if shape_cal is not None:
-            c0, c1, c2 = get_coeffs(erg_cal)
+            c0, c1, c2 = get_coeffs(shape_cal)
             self.shape_cal = [c0, c1, c2]
             shape_fit_line = f"{c0:.5e} {c1:.5e} {c2:.5e}\n".upper()
         else:
