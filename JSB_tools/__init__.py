@@ -25,7 +25,7 @@ import pickle
 from atexit import register
 from scipy.interpolate import interp1d
 from uncertainties import unumpy as unp
-from uncertainties import UFloat, ufloat
+from uncertainties.core import UFloat, ufloat, AffineScalarFunc
 from matplotlib.cm import ScalarMappable
 from matplotlib.figure import Figure
 import time
@@ -42,6 +42,7 @@ from JSB_tools.hist import mpl_hist, mpl_hist_from_data
 from JSB_tools.common import ProgressReport, MPLStyle, ROOT_loop
 import matplotlib
 from uncertainties.umath import sqrt as usqrt
+import re
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from mpl_toolkits.mplot3d import Axes3D
@@ -57,6 +58,32 @@ except ModuleNotFoundError:
 
 
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+def latex_form(val, n_digits=2):
+    """
+    Get latex form of number, as in 3.02 \times 10^{12}
+    Args:
+        val:
+        n_digits:
+
+    Returns:
+
+    """
+    s = f'{val:.{n_digits}e}'
+    if not isinstance(val, AffineScalarFunc):
+        m = re.match('([0-9.]+)[eE]([-+0-9]+)', s)
+    else:
+        m = re.match(r'(\(?[(0-9./+-]+\)?)[eE]([-+0-9]+)', s)
+
+    base = m.groups()[0]
+    exp = int(m.groups()[1])
+
+    if isinstance(val, AffineScalarFunc):
+        base = base.replace('+/-', r'\pm')
+        base = base.replace('-/+', r'\mp')
+
+    return fr"${base}\times 10^{{{exp}}}$"
 
 
 def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=5, xfmt='.2g', yfmt='.2g'):
