@@ -51,6 +51,7 @@ from scipy.integrate import trapezoid
 from numbers import Number
 from matplotlib.widgets import AxesWidget, RadioButtons, cbook
 try:
+    raise ModuleNotFoundError
     import ROOT as _ROOT
     root_exists = True
 except ModuleNotFoundError:
