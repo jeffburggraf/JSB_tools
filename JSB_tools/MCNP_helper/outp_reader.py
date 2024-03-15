@@ -8,6 +8,7 @@ import uncertainties.unumpy as unp
 from matplotlib import pyplot as plt
 from pathlib import Path
 from typing import List, Dict, Set, Iterable, Sized, Union, Type, Optional
+from typing import List, Dict, Set, Iterable, Sized, Union, Type, Optional
 from numbers import Number
 import warnings
 try:
@@ -44,8 +45,9 @@ class F8Tally:
     mev2j = 1.602E-13
 
     def __init__(self, tally_number, outp, units='MeV'):
-        if units != 'MeV':
-            erg_scale = {'keV': 1E3, 'eV': 1E6}[units]
+        units = units.lower()
+        if units != 'mev':
+            erg_scale = {'kev': 1E3, 'ev': 1E6}[units]
         else:
             erg_scale = 1
 
@@ -53,9 +55,9 @@ class F8Tally:
         self.tally_number = str(tally_number)
         index = outp.__find_tally_indicies__[self.tally_number]
 
-        self.pulse_heights = []  # counts
+        self.counts = []  # counts
         self.erg_bins = [0]
-        self.cells = []  # either None's or cell numbers in same shape as self.pulse_heights
+        self.cells = []  # either None's or cell numbers in same shape as self.counts
         read_flag = False
         cell_num = None
 
@@ -81,7 +83,7 @@ class F8Tally:
                     err = val * rel_err
                     val = ufloat(val, err)
                     self.cells.append(cell_num)
-                    self.pulse_heights.append(val)
+                    self.counts.append(val)
                     self.erg_bins = None
 
                 elif re.match(" +([0-9.E+-]+) +([0-9.E+-]+) +([0-9.E+-]+)", line):
@@ -89,7 +91,7 @@ class F8Tally:
                     err = val * rel_err
                     val = ufloat(val, err)
 
-                    self.pulse_heights.append(val)
+                    self.counts.append(val)
                     self.cells.append(cell_num)
                     self.erg_bins.append(erg_scale * erg)
 
@@ -106,7 +108,7 @@ class F8Tally:
 
             index += 1
 
-        self.pulse_heights = unp.uarray([float(x.n) for x in self.pulse_heights], [x.std_dev for x in self.pulse_heights])
+        self.counts = unp.uarray([float(x.n) for x in self.counts], [x.std_dev for x in self.counts])
         self.cells = np.array(self.cells)
 
         if self.erg_bins is not None:
@@ -127,7 +129,7 @@ class F8Tally:
         if ax is None:
             fig, ax = plt.subplots()
 
-        ax.errorbar(self.energies, unp.nominal_values(self.pulse_heights), unp.std_devs(self.pulse_heights))
+        ax.errorbar(self.energies, unp.nominal_values(self.counts), unp.std_devs(self.counts))
         return ax
 
 
@@ -666,7 +668,7 @@ class OutP:
                 else:
                     break
                 index += 1
-        cell_match = re.compile(r'([0-9]+).*(?:name: (.+))')
+        cell_match = re.compile(r'([0-9]+).*(?:name: ?(.+))')
         for card in self.input_deck:  # get cell names
             if re.match(r'^\s*$', card):
                 break
@@ -768,6 +770,9 @@ class OutP:
 
     def get_f6_tally(self, tally_number_or_name):
         return F6Tally(tally_number_or_name, self)
+
+    def get_f8_tally(self, tally_number, erg_units='Mev'):
+        return F8Tally(tally_number, self, units=erg_units)
 
     def get_globals(self):
         pickle_path = Path(self.input_file_path).with_suffix('.pickle')

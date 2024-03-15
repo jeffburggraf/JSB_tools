@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from JSB_tools.MCNP_helper.geometry import MCNPNumberMapping, get_comment
 from typing import Dict, Union
-from JSB_tools.nuke_data_tools import Nuclide
 from JSB_tools.MCNP_helper.atomic_data import atomic_weight, ATOMIC_NUMBER, atomic_mass, ATOMIC_SYMBOL
 try:
     import openmc.material
+    from JSB_tools.nuke_data_tools import Nuclide
 except ModuleNotFoundError:
     from JSB_tools import no_openmc_warn
     no_openmc_warn()
