@@ -4,17 +4,17 @@ channels:
 dependencies:
 #  - root    # Problem on Windows
 #  - openmc  # Problem on Windows
-  - python=3.9
-  - numpy=1.23.3
+  - numpy
   - numdifftools  # for lmfit internal
   - scipy
   - uncertainties
   - matplotlib
   - sortedcontainers
   - pandas
-  - plotly
   - lmfit
+  - bs4
   - pip
+  - numba
   - pip:
     - filetime
     - sortednp

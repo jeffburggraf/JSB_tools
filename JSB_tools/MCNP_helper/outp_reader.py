@@ -17,6 +17,7 @@ try:
 except ModuleNotFoundError:
     from JSB_tools import no_openmc_warn
     no_openmc_warn()
+import hashlib
 import platform
 import subprocess
 from functools import cached_property
@@ -56,7 +57,9 @@ class F8Tally:
         index = outp.__find_tally_indicies__[self.tally_number]
 
         self.counts = []  # counts
-        self.erg_bins = [0]
+        erg_bins = None  # used as a flag
+        self.underflow = 0
+
         self.cells = []  # either None's or cell numbers in same shape as self.counts
         read_flag = False
         cell_num = None
@@ -84,16 +87,22 @@ class F8Tally:
                     val = ufloat(val, err)
                     self.cells.append(cell_num)
                     self.counts.append(val)
-                    self.erg_bins = None
 
                 elif re.match(" +([0-9.E+-]+) +([0-9.E+-]+) +([0-9.E+-]+)", line):
                     erg, val, rel_err = map(float, line.split())
                     err = val * rel_err
                     val = ufloat(val, err)
 
-                    self.counts.append(val)
+                    scaled_erg = erg_scale * erg  # erg in correct units
+
                     self.cells.append(cell_num)
-                    self.erg_bins.append(erg_scale * erg)
+
+                    if erg_bins is None:  # first row
+                        self.underflow = val
+                        erg_bins = [scaled_erg]  # starting bin
+                    else:
+                        erg_bins.append(scaled_erg)
+                        self.counts.append(val)
 
                     index += 1
                     line = outp.__outp_lines__[index]
@@ -111,8 +120,23 @@ class F8Tally:
         self.counts = unp.uarray([float(x.n) for x in self.counts], [x.std_dev for x in self.counts])
         self.cells = np.array(self.cells)
 
-        if self.erg_bins is not None:
-            self.erg_bins = np.array(self.erg_bins)
+        if erg_bins is not None:
+            self.erg_bins = np.array(erg_bins)
+        else:
+            self.erg_bins = None
+
+    def select_erg_range(self, emin=None, emax=None):
+        if emin is not None:
+            i0 = np.searchsorted(self.erg_bins, emin, side='right') - 1
+        else:
+            i0 = 0
+
+        if emax is not None:
+            i1 = np.searchsorted(self.erg_bins, emax, side='right') - 1
+        else:
+            i1 = len(self.energies)
+
+        self.erg_bins = self.erg_bins[i0: i1 + 1]
 
     @property
     def energies(self):
@@ -129,8 +153,25 @@ class F8Tally:
         if ax is None:
             fig, ax = plt.subplots()
 
-        ax.errorbar(self.energies, unp.nominal_values(self.counts), unp.std_devs(self.counts))
+        mpl_hist(self.erg_bins, self.counts, ax=ax)
         return ax
+
+    @staticmethod
+    def get_bins_card(emin, emax, nbins):
+        """
+        Return the string for creating uniform bins from emin to emax.
+        Args:
+            emin:
+            emax:
+            nbins:
+
+        Returns:
+
+        """
+        if emin == 0:
+            emin = 1E-5
+
+        return f'{emin} {nbins - 1}i {emax}'
 
 
 class F6Tally:
@@ -627,6 +668,9 @@ class OutP:
     def __init__(self, file_path):
         self.__f_path__ = Path(file_path)
         with open(file_path) as f:
+            self.hash = self.get_hash(file_path)
+            f.seek(0)
+
             self.__outp_lines__ = f.readlines()
         if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0], re.IGNORECASE):
             warn('\nThe file\n"{}"\ndoes not appear to be an MCNP output file!\n'.format(file_path))
@@ -676,12 +720,23 @@ class OutP:
                 cell_num = int(m.groups()[0])
                 self.cells[cell_num].name = m.groups()[1]
 
+    @staticmethod
+    def get_hash(path):
+        with open(path, 'rb') as f:
+            out = hashlib.md5(f.read()).hexdigest()
+
+            return out
+
     def pickle(self, path=None):
         if path is None:
             path = self.__f_path__.with_suffix('.pickle')
 
         with open(path, 'wb') as f:
             pickle.dump(self, f)
+
+    def pickle_out_of_date(self):
+        text_path = self.__f_path__
+        return OutP.get_hash(text_path) != self.hash
 
     @classmethod
     def from_pickle(cls, path):

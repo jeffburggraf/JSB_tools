@@ -71,22 +71,22 @@ class CalSource:
 
         out = n_nuclides_ref * (np.e**(-l * dt) - np.e**(-l * (dt + duration)))
         return out
-        # hl = self.nuclide.half_life
-        # n_nuclides_ref = self.ref_activity / self.nuclide.decay_rate
-        # n_nuclides_begin = n_nuclides_ref*0.5**(dt/hl)
-        #
-        # percent_decay = 1 - 0.5**(duration/hl)
-        # return n_nuclides_begin*percent_decay
 
     def __repr__(self):
-        return f'{self.name}; {self.get_activity():.3E} Bq'
+        return f'{self.name} ({self.serial_num}); {self.get_activity():.3E} Bq'
 
 
 ARMS_sources = {
     '1930-100-1': CalSource('Ba133', '1930-100-1', 21.11,
                             datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
 
+    '1930-100-2': CalSource('Ba133', '1930-100-2', 20.52,
+                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+
     '1930-100-4': CalSource('Co60', '1930-100-4', 21.04,
+                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+
+    '1930-100-5': CalSource('Co60', '1930-100-5', 19.75,
                             datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
 
     '1915-86-3': CalSource('Cs137', '1915-86-3', 20.53,
@@ -94,6 +94,9 @@ ARMS_sources = {
 
     '1915-86-1': CalSource('Cs137', '1915-86-1', 20.17,
                            datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
+
+    '1294-91-2': CalSource('Cs137', '1294-91-2', 10.73,
+                           datetime(2008, 6, 1), unit='uCi', rel_err=0.02),  # no confirmation of uncertainty of activity
 
     '9027-89': CalSource('Eu152', '9027-89', 0.01025,
                          datetime(2020, 5, 1), unit='uCi', rel_err=0.032/2.3),

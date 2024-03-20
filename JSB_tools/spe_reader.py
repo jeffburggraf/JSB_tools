@@ -6,11 +6,11 @@ from pathlib import Path
 from datetime import datetime
 from matplotlib import pyplot as plt
 import numpy as np
+import shutil
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
 from uncertainties.core import AffineScalarFunc
 from JSB_tools import mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
-from JSB_tools.nuke_data_tools import Nuclide
 from JSB_tools.nuke_data_tools.nuclide import GammaLine
 from typing import List, Union
 import marshal
@@ -32,6 +32,14 @@ def _rebin(rebin, values, bins):
         out = values
 
     return out, bins
+
+
+def _backup_file(path: Path):
+    path = Path(path)
+    directory = path.parent / 'backup'
+    directory.mkdir(exist_ok=True)
+    newpath = directory / path.name
+    shutil.copy(path, newpath)
 
 
 def save_spe(spe: SPEFile, path):
@@ -227,14 +235,33 @@ class SPEFile(EfficiencyCalMixin):
 
     @staticmethod
     def save_erg_call_all(path, erg_cal=None, shape_cal=None):
+        """
+
+        Args:
+            path:
+            erg_cal:
+            shape_cal:
+
+        Returns:
+
+        """
         path = Path(path)
         assert path.is_dir()
+        msg = ''
+        if erg_cal is not None:
+            msg += 'erg'
+        if shape_cal is not None:
+            if len(msg):
+                msg += ' & shape'
+            else:
+                msg += 'shape'
 
         for p in path.iterdir():
             if p.suffix.lower() == '.spe':
                 spe = SPEFile(p)
                 spe.save_erg_cal(erg_cal, shape_cal)
-                print(f"Updated energy calibration for {p}")
+
+                print(f"Updated {msg} calibration for {p}")
 
     def save_erg_cal(self, erg_cal=None, shape_cal=None):
         def get_coeffs(a):
@@ -264,6 +291,7 @@ class SPEFile(EfficiencyCalMixin):
         else:
             shape_fit_line = None
 
+        found_shape_cal = False
         if self.path.suffix != '.pickle':
             with open(self.path) as f:
                 lines = f.readlines()
@@ -284,6 +312,7 @@ class SPEFile(EfficiencyCalMixin):
 
                 if shape_cal is not None:
                     if "$SHAPE_CAL" in line:
+                        found_shape_cal = True
                         i += 1
                         lines[i] = '3\n'
                         i += 1
@@ -291,7 +320,16 @@ class SPEFile(EfficiencyCalMixin):
 
                 i += 1
 
+            if (not found_shape_cal) and (shape_cal is not None):
+                shape_lines = ["$SHAPE_CAL:\n", '3\n', shape_fit_line]
+                if '$ENDRECORD:' in lines[-1]:
+                    lines = lines[:-1] + shape_lines + ["$ENDRECORD:"]
+                else:
+                    lines = lines + shape_lines
+
             new_text = "".join(lines)
+
+            _backup_file(self.path)
 
             with open(self.path, 'w') as f:
                 f.write(new_text)
@@ -487,7 +525,8 @@ class SPEFile(EfficiencyCalMixin):
         return l.SPE
 
     def channel_2_erg(self, chs) -> np.ndarray:
-        return np.sum([coeff * chs ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
+        x = chs - 0.5  # makes spectra agree with PeakEasy
+        return np.sum([coeff * x ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
 
     def erg_2_fwhm(self, erg):
         """
@@ -1043,9 +1082,13 @@ class ErgCalHelper:
                     return False
                 return True
 
-        gamma_ergs = [g.erg.n for g in gamma_lines]
-        gamma_lines = [g for g in gamma_lines]
-        gamma_intensities = [g.intensity.n for g in gamma_lines]
+        if isinstance(gamma_lines[0], GammaLine):
+            gamma_lines = [g for g in gamma_lines]
+            gamma_intensities = [g.intensity.n for g in gamma_lines]
+            gamma_ergs = [g.erg.n for g in gamma_lines]
+        else:
+            gamma_ergs = gamma_lines
+            gamma_intensities = gamma_lines = [None]*len(gamma_ergs)
 
         for gline, erg, intensity in zip(gamma_lines, gamma_ergs, gamma_intensities):
             if intensity_limit is not None and intensity < intensity_limit:
@@ -1141,6 +1184,7 @@ class ErgCalHelper:
             center_ch = self.get_ch(center_erg.n)
             center_ch = ufloat(center_ch, rel_err * center_ch)
 
+
             erg = self.gamma_lines[i].erg.n
 
             fwhms.append(2.355 * sigma)
@@ -1197,24 +1241,14 @@ if __name__ == '__main__':
     from JSB_tools.MCNP_helper.outp_reader import OutP
     from JSB_tools.nuke_data_tools import Nuclide
 
-    spe = SPEFile("/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/RMET3/CalRMET3_2024/Eu152_1cm.Spe")
 
-    ii = spe.interactive_plot()
+    spe = SPEFile("/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/cal_2024/BG_long.Spe")
 
-    multi_guass_fit(spe.erg_bins, spe.get_counts(make_density=True), [343.96])
+    peaks = [237.2, 350.4, 608.68, 2614.5]
 
-    n = Nuclide("Eu152")
-    for g in n.decay_gamma_lines:
-        if g.intensity > 0.01:
-            ii.ax.axvline(g.erg.n, c='black')
-            print(g)
+    cal = ErgCalHelper(spe, list_of_gammas=peaks)
 
-    # ax.secondary_xaxis('top', functions=(spe.channel_2_erg, lambda xs: [spe.erg_2_channel(x) for x in xs]))
-    # mpl_hist(chs_bins, spe.get_counts(), ax=axs[0])
+    cal.get_fit()
 
-    # axs[0].set_xtixks(pos=ch)
-
-    # i = spe.interactive_plot()
-    #
-    # [(121.78, 121.98), (344.28, 343.94), (1408.01, 1406.64)]
+    spe.interactive_plot()
     plt.show()

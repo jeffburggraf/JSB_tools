@@ -523,7 +523,7 @@ class PolyFitODR(ODRBase):
         self.__odr__.run()
         self._powers = np.asarray(order)
 
-    def save(self, fname):
+    def save(self, fname, extra__=None):
         super(PolyFitODR, self).save(fname=fname, extra__={"_powers": self._powers})
 
     @property
@@ -563,124 +563,6 @@ class MaximumLikelyHoodBase:
         self.xerr = xerr
 
 
-class ExponentialMLL:
-    def __init__(self, times, max_time=None, weights=None):
-        if weights is None:
-            weights = np.ones_like(times)
-        self.times = times
-
-        # if times_noise is None:
-        #     assert weights_noise is None
-        #     times_noise = weights_noise = np.array([])
-        if weights is None:
-            weights = np.ones_like(weights)
-
-        if max_time is None:
-            max_time = max(times)
-
-        self.max_time = max_time
-        self.weights = weights
-
-    @property
-    def hl(self):
-        return np.log(2)/self.params.valuesdict()['_lambda']
-
-    @staticmethod
-    def likelihood(params, x, _weights=None, max_time=None):
-        a = max_time
-        parvals = params.valuesdict()
-        times = x
-        _lambda = parvals['_lambda']
-        # noise = parvals['noise']
-
-        # probs = (noise + _lambda*np.e**-(times*_lambda))/(1 - np.e**(-(a*_lambda)) + a*noise)
-        probs = ( _lambda*np.e**-(times*_lambda))
-        print('probs :', probs)
-        print("times: ",times)
-        print("params", params, _lambda)
-        print()
-        llh = np.sum(_weights*np.log(probs))
-        print(llh)
-        # print(llh)
-        return -llh
-
-    def estimate(self, lambda_guess=None, noise_guess=None):
-        if lambda_guess is None:
-            lambda_guess = np.sum(self.weights)/sum(self.weights*self.times)
-            print('Lambda guess', lambda_guess)
-        if noise_guess is None:
-            noise_guess = 1E-10
-        self.params = Parameters()
-        self.params.add('_lambda', lambda_guess,min=0, max=max(self.times))
-        # self.params.add('noise', noise_guess, min=0, max=sum(self.times))
-        m = minimize(self.likelihood, self.params, args=(self.times,),
-                     kws={'_weights': self.weights, 'time_cut_max': self.max_time}, method='cobyla')
-        print(m.params)
-
-
-
-
 if __name__ == '__main__':
-    from TH1 import TH1F
-    hl = 40
-    n = 0
-    data_true = np.random.exponential(hl/np.log(2), 500)+20
-    noise = np.random.uniform(0, max(data_true), int(max(data_true)*n))
-    h_data = TH1.TH1F.from_raw_data(data_true)
-
-    h_noise = TH1.TH1F.from_raw_data(noise, bins=h_data.__bin_left_edges__)
-    h_tot = h_data + h_noise
-    h_tot.plot(leg_label="total")
-    h_noise.plot(leg_label="noise")
-    h_data.plot(leg_label="Signal")
-    plt.legend()
-    times_meas = data_true
-    print("lambda true: ", np.log(2)/hl)
-
-    m = ExponentialMLL(h_tot.bin_centers, weights=h_tot.nominal_bin_values)
-    m.estimate()
-
-
-    plt.show()
-
     pass
-    # from JSB_tools.nuke_data_tools.gamma_spec import PrepareGammaSpec
-    # def ch_2_erg(ch):
-    #     return 0.08874085 + ch*0.55699971
-    #
-    # def erg_2_ch(erg):
-    #     return (erg-0.08874085)/0.55699971
-    # n_chanels = 4000
-    # N = 20000
-    #
-    # c = PrepareGammaSpec(n_chanels)
-    #
-    # ergs = np.array([59.9, 88.4, 122, 166, 392, 514, 661, 898, 1173, 1332, 1835])
-    # effs = np.array([0.06, 0.1, 0.144, 0.157, 0.1, 0.07, 0.05, 0.04, 0.03, 0.027, 0.018])
-    # channels = np.arange(n_chanels)
-    #
-    # counts = np.zeros(n_chanels)
-    # counts += np.random.poisson(10, len(counts))
-    # fake_ergs = [20, 230, 450, 500, 700, 1230, 1600]
-    # true_counts = [N]*len(fake_ergs)
-    # channel_guesses = []
-    # for erg in fake_ergs:
-    #     index_center = erg_2_ch(erg)
-    #     channel_guesses.append(index_center)
-    #
-    #     for i in np.random.normal(index_center, 10, int(N*np.interp(erg, ergs, effs))):
-    #         i = int(i)
-    #         counts[i] += 1
-    #
-    # plt.plot(channels, counts)
-    # c.add_peaks_4_calibration(counts, channel_guesses, fake_ergs, true_counts, fit_width=50, plot=False)
-    # c.compute_calibration()
-    # # c.plot_erg_spectrum()
-    # c.erg_calibration.plot_fit()
-    # c.eff_fit.plot_fit()
-    # c.save_calibration('die')
-    # c2= PrepareGammaSpec.load_calibration('die')
-    # c2.eff_fit.plot_fit()
-    # c2.erg_calibration.plot_fit()
-    # plt.show()
-    # # plt.show()
+

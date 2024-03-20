@@ -169,6 +169,38 @@ class Material:
     def clear():
         Material.all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
+    @classmethod
+    def from_text(cls, text: str, density, mat_number=None, mat_name=None, mat_kwargs=None, is_mcnp=True):
+        """
+        Get material from text, such as:
+
+            "1000   0.6
+             6000   0.4 "
+
+        Args:
+            text:
+            density:
+            mat_number:
+            mat_name:
+            mat_kwargs:
+            is_mcnp:
+
+        Returns:
+
+        """
+        out = cls(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs, is_mcnp=is_mcnp)
+
+        for line in text.split('\n'):
+            vals = line.split()
+            if len(vals) < 2:
+                continue
+            zaid = int(vals[0])
+            frac = float(vals[1])
+
+            out.add_zaid(zaid, frac, is_weight_fraction= frac < 0)
+
+        return out
+
     @staticmethod
     def get_all_material_cards():
         cards = []
@@ -224,7 +256,7 @@ class Material:
         mat = str(mat)
         taken_numbers = []
         for name in [p.name for p in dedx_path.iterdir() if p.name[0] == '_']:
-            if m := re.match("_([0-9]+)_([0-9]+)\.txt", name):
+            if m := re.match(r"_([0-9]+)_([0-9]+)\.txt", name):
                 _mat, _num = (m.groups()[0], m.groups()[1])
                 if _mat == mat:
                     taken_numbers.append(int(_num))

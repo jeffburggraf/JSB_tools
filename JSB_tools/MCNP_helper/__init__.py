@@ -106,24 +106,14 @@ class RecFMESH(TallyBase):
                  origin=(0, 0, 0),
                  xbins: Union[int, tuple] = 10,
                  ybins: Union[int, tuple] = 10, axs_hat=(0, 0, 1),
-                 zbins=1,
+                 zbins: Union[int, tuple] =1,
                   tally_number=None, fmesh_name=None, ref=None):
         """
 
 
         Args:
             particle:
-            rmaxs:
-            axis_lengths: Distance along axis specified by `axs`
-            origin: max theta in revolutions
-            rbins: Number of radial bins.
-            axis_bins: Number of bins along the axis
-            axs_hat:
-            radius_hat:
-            tally_number:
-            fmesh_name:
-            theta_bins: Number of bins in theta. Pretty much always should be 1.
-            theta_maxs:
+
             ref: REF keyword for mesh weight windows
         """
         super(RecFMESH, self).__init__(4, tally_number=tally_number, tally_name=fmesh_name)
@@ -154,7 +144,7 @@ class RecFMESH(TallyBase):
             return " ".join(map(str, a))
         optional = {}  # for any optional kwargs. None implemented yet...
         optional = ' '.join(f'{k}={v}' for k, v in optional.items())
-        out = f'FMESH{self.fmesh_number}:{self.particle} GEOM=REC ORIGIN={f(self.origin)} AXS={f(self.axs_hat)} ' \
+        out = f'FMESH{self.fmesh_number}:{self.particle} GEOM=REC ORIGIN={f(self.origin)}' \
               f' {optional} $ {self.__name__}\n' \
               f'     IMESH {f(self.x_poses)}  IINTS {f(self.xbins)}\n' \
               f'     JMESH {f(self.y_poses)}  JINTS {f(self.ybins)}\n' \

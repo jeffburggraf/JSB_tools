@@ -77,7 +77,7 @@ class InteractivePlot:
 
         self.sigma_textbox = TextBox(sigma_t_ax, r'$\sigma_{0}$')
         self.window_textbox = TextBox(window_t_ax, 'Fit\nwindow', initial='3')
-        self.sigma_share_check_button = CheckButtons(sigma_check_ax, ['Share $\sigma$'])
+        self.sigma_share_check_button = CheckButtons(sigma_check_ax, [r'Share $\sigma$'])
 
         self.bg_radio_button = RadioButtons(bg_check_ax, ['Const', 'Lin', 'None'], )
         self.fig.text(0.93, 0.515, 'Background\nterm', ha='center')

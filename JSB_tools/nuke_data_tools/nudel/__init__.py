@@ -97,7 +97,7 @@ class Level:
         out = str(q)
 
         if not errors:
-            m = re.match("(.+)\([0-9]+\)(.*)", str(q))
+            m = re.match(r"(.+)\([0-9]+\)(.*)", str(q))
             if m:
                 out = m.groups()[0] + m.groups()[1]
 

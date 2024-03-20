@@ -8,10 +8,6 @@ import stat
 from atexit import register, unregister
 from uncertainties import UFloat
 from numbers import Number
-try:
-    from JSB_tools.TH1 import TH1F
-except (ModuleNotFoundError, AssertionError):
-    pass
 import pickle
 from JSB_tools.MCNP_helper.geometry.geom_core import get_comment, Cell, MCNPNumberMapping, PHITSOuterVoid
 import numpy as np
@@ -129,13 +125,6 @@ class MCNPSICard:
                                                      'Values returned from function')
 
         return cls(variable_values, variable_probs, si_card_number=si_card_number, discrete=discrete)
-
-    @classmethod
-    def from_TH1F(cls, hist: TH1F, si_card_number=None):
-        assert isinstance(hist, TH1F), '`hist` must be TH1F instance.'
-        variable_values = hist.__bin_left_edges__
-        variable_probs = [0] + [x.n for x in hist.bin_values]
-        return cls(variable_values, variable_probs, si_card_number=si_card_number, discrete=False)
 
     @classmethod
     def function_of_si(cls, si_independent, function, si_card_number=None, discrete=False):
@@ -304,6 +293,36 @@ class F4Tally(TallyBase, TallyErgBinsMixin):
         if len(self.__modifiers__):
             out += '\n' + '\n'.join(self.__modifiers__)
         return out
+
+
+class F8Tally:
+    #     todo: Finish this
+    @staticmethod
+    def get_bins_card(emin, emax, nbins=None, binwidth=None, epsilon_bin=1E-5):
+        """
+        Return the string for creating uniform bins from emin to emax.
+        Args:
+            emin:
+            emax:
+            nbins:
+            binwidth
+
+        Returns:
+
+        """
+        assert emin > 0
+
+        if binwidth is not None:
+            assert nbins is None
+            nbins = int((emax - emin)/binwidth)
+        else:
+            assert nbins is not None
+            nbins = int(nbins)
+
+        if emin == 0:
+            return f'0 {epsilon_bin:.5g} {nbins - 1}i {emax:.5g}'
+        else:
+            return f'0 {emin:.5g} {nbins - 1}i {emax:.5g}'
 
 
 class InputDeck:

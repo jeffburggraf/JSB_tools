@@ -323,7 +323,7 @@ if __name__ == '__main__':
     data = {}
 
     for mt, v in REACTION_NAME.items():
-        m = re.match('\((.),(.+)\)', v)
+        m = re.match(r'\((.),(.+)\)', v)
         # print(f'MT={mt} {v}')
         # data[mt] = {'level': 0, 'outn': None, 'outz': None}
 
