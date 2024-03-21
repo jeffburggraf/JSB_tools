@@ -634,7 +634,84 @@ def errorbar(x, y, ax=None, **kwargs):
     return ax
 
 
-def rebin(old_bin_edges, new_bin_edges, ys, N=1000):
+def rebin(old_bins, old_ys, new_bins, is_density=False, return_under_over_flow=False):
+    """
+    Rebin function (March 2024)
+
+    Args:
+        old_bins:
+        old_ys:
+        new_bins:
+        is_density: If old_ys is a density (i.e. not counts), then set this to True
+        return_under_over_flow: Return underflow/overflow (values lying outside new_bins)
+
+    Returns:
+
+    """
+    if isinstance(old_ys[0], UFloat):
+        old_ys = unp.nominal_values(old_ys)
+
+    if is_density:
+        new_bins = np.asarray(new_bins, float)
+        old_bins = np.asarray(old_bins, float)
+        old_ys = np.asarray(old_ys, float)
+
+    def distrib(val, low0, high0, low1, high1):
+        l = max(low0, low1)
+        r = min(high0, high1)
+        if r - l <= 0:
+            return 0
+
+        if is_density:
+            val *= (high0 - low0)
+
+        return val * (r-l)/(high0 - low0)
+
+    yout = np.zeros(len(new_bins) - 1, dtype=float)
+
+    G_inew = 0
+
+    over_flow = under_flow = 0
+    if new_bins[0] > old_bins[0]:
+        under_flow = distrib(old_ys[0], old_bins[0], old_bins[1], old_bins[0], new_bins[0])
+
+    if new_bins[-1] < old_bins[-1]:
+        over_flow = distrib(old_ys[-1], old_bins[-2], old_bins[-1], new_bins[-1], old_bins[-1])
+
+    for iold in range(len(old_ys)):  # loop through given bin values and distribute into new bins.
+        old_left = old_bins[iold]
+        old_right = old_bins[iold + 1]
+
+        try:
+            while (new_right := new_bins[G_inew + 1]) < old_left:
+                G_inew += 1
+                continue
+        except IndexError:  # Have reached end of new_bins
+            break
+
+        inew = G_inew
+
+        while (new_left := new_bins[inew]) < old_right:
+            try:
+                new_right = new_bins[inew + 1]
+            except IndexError:  # Have reached end of new_bins
+                break
+
+            yout[inew] += distrib(old_ys[iold], old_left, old_right, new_left, new_right)
+            inew += 1
+
+    if is_density:
+        yout /= (new_bins[1:] - new_bins[:-1])
+
+    yout = np.asarray(yout)
+
+    if return_under_over_flow:
+        return yout, under_flow, over_flow
+    else:
+        return yout
+
+
+def MCrebin(old_bin_edges, new_bin_edges, ys, N=1000):
     """
     Monte Carlo re-binning.
 

@@ -315,6 +315,25 @@ def get_fit_slice(bins, center_guesses, fit_buffer_window):
     return (I0, I1 + 2), (I0, I1 + 1)
 
 
+class Step(Model):
+    """
+    A step background func for Gamma peaks
+    """
+    def __init__(self, center, independent_vars=['x'], prefix='', nan_policy='raise',
+                 **kwargs):
+        kwargs.update({'prefix': prefix, 'nan_policy': nan_policy,
+                       'independent_vars': independent_vars})
+        self.center = center
+        super().__init__(self.step, **kwargs)
+
+        self._set_paramhints_prefix()
+
+    def step(self, x, dy, step_sigma):
+        factor = 2/np.sqrt(step_sigma)
+        return dy/(1 + np.e**(factor * (x - self.center)))
+        # return np.where(x > self.center, right, left)
+
+
 def linear(x, slope, bg):
     """a line used for fitting background. """
     return slope * (x - x[len(x) // 2]) + bg
@@ -456,7 +475,7 @@ class GausFitResult(ModelResult):
 def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, make_density=False, yerr=None,
                     share_sigma=True, sigma_guesses: Union[list, float] = None, fix_sigmas: bool = False,
                     fix_centers: Union[bool, List[bool]] = False, fix_bg: float = None, poissonian_errs = False,
-                    fit_buffer_window: Union[int, None] = 5, nobins=False, bg: Literal['const', 'lin'] = 'lin',
+                    fit_buffer_window: Union[int, None] = 5, nobins=False, bg: Literal['const', 'lin', 'step'] = 'lin',
                     **kwargs) -> GausFitResult:
     """
     Perform multi-gaussian fit to data.
@@ -523,7 +542,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
             Maybe only calculate for current view?
             Figure out why it's slow. Maybe profiler?
     """
-    assert bg in ['lin', 'const']
+    assert bg in ['lin', 'const', 'step']
     if nobins:
         assert len(y) == len(bins)
         assert fixed_in_binQ is None
@@ -677,20 +696,43 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
         sub_model = GaussianModel(prefix=prefix)
         sub_params = sub_model.make_params()
 
+        # if bg == 'step':
+        #     step_model = Step(center_guess, prefix=prefix)
+        #
+        # else:
+        #     step_model = None
+
         if model is None:
-            model = Model(linear) + sub_model
+            model = sub_model
+
+            model += Model(linear)
 
             params = model.make_params()
+
             if bg == 'lin':
                 params['slope'].set(value=slope_guess, max=max_slope, min=-max_slope)
-            else:
+            elif bg == 'const' or bg == 'step':
                 params['slope'].set(value=0, vary=False)
+
             params['bg'].set(value=bg_guess, vary=fix_bg is None)
+
+
         else:
             model += sub_model
             params.update(sub_params)
 
+        # params[f'{prefix}left'].set(value=bg_guess)
+        # params[f'{prefix}right'].set(value=bg_guess)
         set_sigma(params[f'{prefix}sigma'])
+
+        if bg == 'step':
+            step_model = Step(center_guess, prefix=prefix)
+            model += step_model
+            params.update(step_model.make_params())
+
+            params[f'{prefix}dy'].set(value=1, min=0)
+            expr = f'{prefix}sigma'
+            params[f'{prefix}step_sigma'].set(expr=expr)
 
         set_center(params[f'{prefix}center'])
 
@@ -698,7 +740,7 @@ def multi_guass_fit(bins, y, center_guesses, fixed_in_binQ: List[bool] = None, m
 
         params[f'{prefix}amplitude'].set(value=amp_guess(y[i0], params[f'{prefix}sigma'].value), min=0)
 
-    fit_result = model.fit(data=y, params=params, weights=weights, x=x)
+    fit_result = model.fit(data=y, params=params, weights=weights, x=x, method='least_squares')
 
     fit_result.userkws['b_width'] = None if nobins else b_width
     if not nobins:
@@ -1756,20 +1798,30 @@ def trest_gassian(peaks, rel_amplitudes, N, slope_ratio=3, xmin=0, xmax=100, sig
 
 if __name__ == '__main__':
 
-    bins = np.arange(0, 20, 0.5)
+    bins = np.arange(0, 23, 0.5)
     xs = [5, 16]
-    vals = np.concatenate([np.random.normal(loc=xs[0], scale=1, size=10000),
-                          np.random.normal(loc=xs[1], scale=2, size=10000)])
+    vals = np.concatenate([np.random.normal(loc=xs[0], scale=0.4, size=10000),
+                          np.random.normal(loc=xs[1], scale=0.4, size=10000)])
 
+    vals = np.concatenate([vals, np.random.uniform(0, xs[1], size=30000)])
 
     y, _  = np.histogram(vals, bins=bins)
-    fit = multi_guass_fit(bins, y, center_guesses=xs, share_sigma=False)
+    fit = multi_guass_fit(bins, y, center_guesses=xs, share_sigma=False, bg='step')
 
-    for i in range(2):
-        print(fit.sigmas(i))
+    x = 0.5 * (bins[1:] + bins[:-1])
+    fig, ax = plt.subplots()
+    mpl_hist(bins, y, label='data', ax=ax)
+    # ax.plot(x, y)
+    _x = np.linspace(min(x), max(x), 1000)
 
-    fit.plot_fit(
+    ax.plot(_x, fit.eval(x=_x), label='fit')
+    ax.legend()
 
-    )
+    # for i in range(2):
+    #     print(fit.sigmas(i))
+    #
+    # fit.plot_fit(
+    #
+    # )
     plt.show()
 

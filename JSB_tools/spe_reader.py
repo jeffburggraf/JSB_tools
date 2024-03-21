@@ -10,7 +10,7 @@ import shutil
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
 from uncertainties.core import AffineScalarFunc
-from JSB_tools import mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot
+from JSB_tools import mpl_hist, calc_background, human_friendly_time, rolling_median, shade_plot, rebin
 from JSB_tools.nuke_data_tools.nuclide import GammaLine
 from typing import List, Union
 import marshal
@@ -344,6 +344,7 @@ class SPEFile(EfficiencyCalMixin):
             i1 = len(self.energies)
         else:
             i1 = self.__erg_index__(erg_max) + 1
+
         self.counts = self.counts[i0: i1]
         self.counts.flags.writeable = False
 
@@ -353,6 +354,22 @@ class SPEFile(EfficiencyCalMixin):
 
         if self._effs is not None:
             self._effs = self.effs[i0: i1]
+
+    def rebin(self, new_bins):
+        """
+        Rebins self.counts into `new_bins`.
+
+        Args:
+            new_bins:
+
+        Returns:
+
+        """
+        new_counts = rebin(self.erg_bins, self.counts, new_bins)
+        self.counts = new_counts
+        self._erg_bins = new_bins
+        self._energies = 0.5 * (new_bins[1:] + new_bins[:-1])
+        return new_counts
 
     @property
     def pretty_realtime(self):
@@ -525,8 +542,8 @@ class SPEFile(EfficiencyCalMixin):
         return l.SPE
 
     def channel_2_erg(self, chs) -> np.ndarray:
-        x = chs - 0.5  # makes spectra agree with PeakEasy
-        return np.sum([coeff * x ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
+        # x = chs - 0.5  # makes spectra agree with PeakEasy
+        return np.sum([coeff * chs ** i for i, coeff in enumerate(self.erg_calibration)], axis=0)
 
     def erg_2_fwhm(self, erg):
         """
@@ -582,6 +599,10 @@ class SPEFile(EfficiencyCalMixin):
         return np.array([b1-b0 for b0, b1 in zip(bins[:-1], bins[1:])])
 
     @property
+    def chs_bins(self):
+        return np.arange(len(self) + 1) - 0.5  # channel "bins" such that first bin is centered around channel=0
+
+    @property
     def erg_bins(self):
         """
         Bin left edges for use in histograms.
@@ -591,9 +612,8 @@ class SPEFile(EfficiencyCalMixin):
         if self._erg_bins is not None:
             return self._erg_bins
         else:
-            chs = np.concatenate([self.channels, [self.channels[-1]+1]])
-            out = self.channel_2_erg(chs)
-            # out = self.channel_2_erg(chs)
+            chs_bins = self.chs_bins
+            out = self.channel_2_erg(chs_bins)
             self._erg_bins = out
             return out
 
@@ -806,7 +826,8 @@ class SPEFile(EfficiencyCalMixin):
         if not isinstance(scale, (int, float)) or scale != 1:
             counts *= scale
 
-        mpl_hist(bins, counts, ax=ax, label=leg_label, **ax_kwargs)
+        label=ax_kwargs.pop('label', leg_label)
+        mpl_hist(bins, counts, ax=ax, label=label, **ax_kwargs)
         ylabel = 'Counts'
         if make_rate:
             ylabel += '/s'
@@ -994,9 +1015,13 @@ class SPEFile(EfficiencyCalMixin):
     def __len__(self):
         return len(self.counts)
 
-    def interactive_plot(self, nominal_values=True):
+    def interactive_plot(self, nominal_values=True, channels=False, debug=False):
+        if channels:
+            bins = self.chs_bins
+        else:
+            bins = self.erg_bins
         counts = self.get_counts(make_density=True, nominal_values=nominal_values)
-        iplot = InteractivePlot(self.erg_bins, counts)
+        iplot = InteractivePlot(bins, counts, debug=debug)
 
         iplot.fig.suptitle(self.path.name)
 
@@ -1038,7 +1063,7 @@ class SPEFile(EfficiencyCalMixin):
 
 
 class ErgCalHelper:
-    def __init__(self, spe: SPEFile, cal_nuclide_name=None, list_of_gammas=None, intensity_limit=0.05, min_peak_dist=8):
+    def __init__(self, spe: SPEFile, cal_nuclide_name=None, list_of_gammas=None, list_of_ergs=None, intensity_limit=0.05, min_peak_dist=8):
         """
 
         Args:
@@ -1048,8 +1073,16 @@ class ErgCalHelper:
             intensity_limit:
             min_peak_dist:
         """
-        if list_of_gammas is None and cal_nuclide_name is None:
-            raise ValueError("Need either a list og GammaLine instances, or a calibration nuclide name")
+        if list_of_gammas is None and cal_nuclide_name is None and list_of_ergs is None:
+            raise ValueError("Need either a list of GammaLine instances, a calibration nuclide name, or list of energies")
+
+        if list_of_gammas is None and list_of_ergs is not None:
+            list_of_gammas = []
+            for erg in list_of_ergs:
+                g = GammaLine.__new__(GammaLine)
+                g.erg = ufloat(erg, 0)
+                g.intensity = ufloat(1, 0)
+                list_of_gammas.append(g)
 
         if cal_nuclide_name is None:
             gamma_lines = list_of_gammas
@@ -1149,7 +1182,8 @@ class ErgCalHelper:
             erg = self.gamma_lines[i].erg.n
             ax = tab.new_ax(i)
             fit.plot(ax=ax)
-            ax.text(0.8, 0.8, f'E={erg:.2f}\nCh.={center:.2f}', transform=ax.transAxes)
+            ax.text(0.8, 0.8, f'E={erg:.2f}\nCh.={center:.2f}\n'
+                              f'fwhm={fit.sigmas(0):.2g}', transform=ax.transAxes)
 
     def get_ch(self, erg):
         return np.searchsorted(self.spe.erg_bins, erg, side='right') - 1
@@ -1183,7 +1217,6 @@ class ErgCalHelper:
 
             center_ch = self.get_ch(center_erg.n)
             center_ch = ufloat(center_ch, rel_err * center_ch)
-
 
             erg = self.gamma_lines[i].erg.n
 
@@ -1227,6 +1260,9 @@ class ErgCalHelper:
         params = model.guess(y, x=x)
         fit_fwhm = model.fit(data=y, x=x, weights=weights, params=params)
 
+        # plt_x = np.linspace(min(x), max(x), 1000)
+        fit_plt_axs[1].plot(plt_x, fit_fwhm.eval(x=plt_x))
+
         self.shape_cal[0] = fit_fwhm.params['c0'].value
         self.shape_cal[1] = fit_fwhm.params['c1'].value
 
@@ -1246,6 +1282,9 @@ if __name__ == '__main__':
 
     peaks = [237.2, 350.4, 608.68, 2614.5]
 
+    spe.plot_erg_spectrum()
+    spe.erg_bins
+    spe.energies
     cal = ErgCalHelper(spe, list_of_gammas=peaks)
 
     cal.get_fit()

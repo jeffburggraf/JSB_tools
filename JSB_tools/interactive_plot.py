@@ -36,8 +36,10 @@ class Click:
 class InteractivePlot:
     color_cycle = ['blue', 'red', 'green', 'black', 'gray']
 
-    def __init__(self, bins, y, fit_window=3, ax=None, button_ax=None, make_density=False):
+    def __init__(self, bins, y, fit_window=3, ax=None, button_ax=None, make_density=False, debug=False):
         self.bins = bins
+        self.debug = debug
+
         if make_density:
             bw = bins[1:] - bins[:-1]
             self.y = y / bw
@@ -215,6 +217,10 @@ class InteractivePlot:
             self.fit_visuals.append(axvline)
 
         print(msg)
+
+        if self.debug:
+            print(fits.params)
+            print(fits.fit_report())
 
         self.update()
 
