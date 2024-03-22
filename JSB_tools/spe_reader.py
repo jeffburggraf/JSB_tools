@@ -845,9 +845,9 @@ class SPEFile(EfficiencyCalMixin):
     def nominal_counts(self) -> np.ndarray:
         return unp.nominal_values(self.counts)
 
-    def get_baseline_ROOT(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
-        return calc_background(self.counts, num_iterations=num_iterations, clipping_window_order=clipping_window_order,
-                               smoothening_order=smoothening_order)
+    # def get_baseline_ROOT(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
+    #     return calc_background(self.counts, num_iterations=num_iterations, clipping_window_order=clipping_window_order,
+    #                            smoothening_order=smoothening_order)
 
     def get_baseline_median(self, erg_min: float = None, erg_max: float = None, window_kev=30):
         """
@@ -1015,12 +1015,12 @@ class SPEFile(EfficiencyCalMixin):
     def __len__(self):
         return len(self.counts)
 
-    def interactive_plot(self, nominal_values=True, channels=False, debug=False):
+    def interactive_plot(self, nominal_values=True, channels=False, debug=False, scale=1):
         if channels:
             bins = self.chs_bins
         else:
             bins = self.erg_bins
-        counts = self.get_counts(make_density=True, nominal_values=nominal_values)
+        counts = self.get_counts(make_density=True, nominal_values=nominal_values) * scale
         iplot = InteractivePlot(bins, counts, debug=debug)
 
         iplot.fig.suptitle(self.path.name)

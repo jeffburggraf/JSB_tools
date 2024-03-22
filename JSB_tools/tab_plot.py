@@ -342,7 +342,7 @@ class TabPlot:
         return ax_new
 
     def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
-               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, *args, **kwargs) -> Union[np.ndarray, Axes]:
+               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, *args, **kwargs) -> Union[List[Axes], Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:

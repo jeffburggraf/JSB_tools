@@ -10,6 +10,7 @@ from typing import List
 from uncertainties import unumpy as unp
 from matplotlib.axes import Axes
 from matplotlib.widgets import TextBox, CheckButtons, RadioButtons
+from typing import Union
 matplotlib.use('Qt5agg')
 
 
@@ -131,17 +132,20 @@ class InteractivePlot:
             self.ax.set_ylim(_min, _max)
             self.update()
 
-    def on_key_release(self, event):
+    def on_key_release(self, event) -> Union[None, GausFitResult]:
+        out = None
         if event.key == ' ':
             if self.holding_space:
                 try:
-                    self.fit()
+                    out = self.fit()
                 except Exception as e:
                     warnings.warn(f"Exception: {e}")
                     raise
 
                 self.fit_clicks = []
                 self.holding_space = False
+
+        return out
 
     def label(self, fit: GausFitResult):
         def f(val):
@@ -223,6 +227,8 @@ class InteractivePlot:
             print(fits.fit_report())
 
         self.update()
+
+        return fits
 
 
 if __name__ == '__main__':

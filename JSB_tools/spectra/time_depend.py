@@ -380,7 +380,6 @@ class GausFitResult(ModelResult):
     def centers(self, i=None):
         if i is None:
             return [self.centers(i) for i in range(len(self))]
-        print(self.params)
         param = self.params[f'_{i}_center']
         return self._get_param_value(param)
 

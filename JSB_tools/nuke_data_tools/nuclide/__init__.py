@@ -356,7 +356,7 @@ class Nuclide(Element):
         """
         return LevelScheme(f"{self.atomic_symbol}{self.A}")
 
-    def get_gammas(self, decay_rate_ratio_thresh=10, n_generations=1, **kwargs):
+    def get_gammas(self, decay_rate_ratio_thresh=10, n_gen=1, **kwargs):
         """
         Include daughter decays, assuming equilibrium is achieved.
         Args:
@@ -364,7 +364,7 @@ class Nuclide(Element):
                 If daughter decays less than this times as fast, then don't include. Set to None to include all
                 If None, no restriction on gammas
 
-            n_generations:
+            n_gen:
 
             **kwargs: Internal use only. Do not use.
 
@@ -376,7 +376,7 @@ class Nuclide(Element):
         cum_branching_ratio = kwargs.get('cum_branching_ratio', 1)
         cum_modes = kwargs.get('cum_modes', [])
 
-        if n_generations == 0:
+        if n_gen == 0:
             return []
 
         for decay_type, decay_modes in self.decay_modes.items():
@@ -402,7 +402,7 @@ class Nuclide(Element):
 
                     out.append(new_g)
 
-                daughter.get_gammas(decay_rate_ratio_thresh=decay_rate_ratio_thresh, n_generations=n_generations - 1,
+                daughter.get_gammas(decay_rate_ratio_thresh=decay_rate_ratio_thresh, n_generations=n_gen - 1,
                                     out=out, parent_decay_rate=parent_decay_rate, cum_branching_ratio=new_branching_ratio, cum_modes=cum_modes)
 
         return out
