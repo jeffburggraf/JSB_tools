@@ -726,8 +726,11 @@ class InputDeck:
 
 def __clean__(paths, warn_message):
     import re
+    import platform
+    import os
     from pathlib import Path
     from tkinter import messagebox, Tk
+    from send2trash import send2trash
     cwd = Path(__file__).parent
 
     try:
@@ -749,12 +752,24 @@ def __clean__(paths, warn_message):
                    r"(plot[m-z]\.ps)")
 
     for p in paths:
-        for f_path in Path(p).iterdir():
+        sim_directory = cwd / p
+        for f_path in Path(sim_directory).iterdir():
             if m.match(f_path.name):
-                Path(f_path).unlink()
+                trash_name = str(f_path.relative_to(f_path.parents[2]))
+
+                if platform.system() == 'Windows':
+                    trash_name = trash_name.replace('\\', '..')
+                else:
+                    trash_name = trash_name.replace('/', '..')
+
+                new_path = f_path.parent / trash_name
+                os.rename(f_path, new_path)
+                send2trash(new_path)
 
 
 if __name__ == "__main__":
     f = F4Tally(10, 'p')
     f.set_erg_bins(erg_bins_array=[1,2,3])
     print(f.tally_card)
+    p = Path('/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/sims/Co60-10cm/outp')
+    p.relative_to(p.parent)

@@ -178,7 +178,8 @@ class Image:
             if len(self.points) == 2:
                 norm = np.linalg.norm(self.points[1] - self.points[0])
 
-                dx, dy = np.array(self.img.shape) * 0.02
+                print(self.img.shape)
+                dx, dy = np.array(self.img.shape[:2]) * 0.02
 
                 if self.snapQ:
                     if self.perform_snap():

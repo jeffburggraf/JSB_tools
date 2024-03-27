@@ -17,6 +17,8 @@ from uncertainties import UFloat, ufloat
 from uncertainties.core import Variable
 from scipy.integrate import odeint
 from typing import Callable
+from pendulum import Date, Interval
+import pendulum
 try:
     from openmc.data.endf import Evaluation
     from openmc.data import Reaction, Decay, Product
@@ -1941,6 +1943,138 @@ class DecayNuclide:
             plt.legend()
 
         return out
+
+
+_unit_scales = {'n': 1E-9, 'u': 1E-6, 'm': 1E-3, '': 1, 'k': 1E3, 'M': 1E6, 'G': 1E9}
+
+
+def get_scale_unit(unit):
+    m = re.match("([numkM]?)(.+)", unit)
+
+    scale_str = m.groups()[0]
+    unit = m.groups()[1].lower()
+
+    try:
+        scale = _unit_scales[scale_str]
+    except KeyError:
+        raise ValueError(f"Invalid unit scale, '{scale_str}' ")
+
+    return scale, unit
+
+
+def get_seconds(dt):
+    if isinstance(dt, (float, int)):
+        out = dt
+
+    elif isinstance(dt, Date):  # assume dt from then to now
+        now = pendulum.now()
+        out = (pendulum.date(now.year, now.month, now.day) - dt).total_seconds()
+
+    elif isinstance(dt, Interval):
+        out = dt.total_seconds()
+
+    else:
+        raise ValueError('Invalid type, "{type(dt)}"')
+
+    return out
+
+
+class Sample:
+    """
+    Class for calculating quantities of samples.
+
+    e.g., going to ug of Cf-252 to uCi, etc.
+
+    """
+    valid_units = ['nCi', 'uCi', 'mCi', 'Ci','Bq', 'kBq', 'MBq', 'ng', 'ug', 'mg', 'g']
+
+    def __init__(self, symbols: Union[str, List[str]], init_amount, atom_fractions=None,
+                 init_amount_units=Literal['nCi', 'uCi', 'mCi', 'Ci', 'Bq', 'kBq', 'MBq', 'ng', 'ug', 'mg', 'g']):
+        if isinstance(symbols, str):
+            if Nuclide.NUCLIDE_NAME_MATCH.match(symbols):
+                self.nuclides: List[Nuclide] = [Nuclide(symbols)]
+                self.atom_fractions = [1]
+
+            else:
+                if not symbols in ATOMIC_SYMBOL.keys():
+                    raise ValueError(f'Invalid nuclide: "{symbols}"')
+
+                self.atom_fractions = []
+                self.nuclides: List[Nuclide] = []
+                for A, frac in Nuclide.isotopic_breakdown(symbols):
+                    self.atom_fractions.append(frac)
+                    self.nuclides.append(Nuclide(f'{symbols}{A}'))
+
+        else:
+            self.atom_fractions = atom_fractions
+            self.nuclides: List[Nuclide] = [Nuclide(s) for s in symbols]
+
+        self.atom_fractions = np.array(self.atom_fractions) / sum(self.atom_fractions)
+
+        assert init_amount_units in self.valid_units
+
+        scale, unit = get_scale_unit(init_amount_units)
+
+        if unit == 'g':
+            self.mass = init_amount * scale
+            self.n_atoms = self.mass/self.grams_per_mole * AVOGADRO
+
+        else:
+            if not len(self.nuclides) == 1:
+                raise ValueError("Cannot specify amount for a group of different nuclides")
+
+            if unit.lower() == 'ci':
+                assert self.nuclide.decay_rate > 0
+                scale *= 3.7E10
+                decays_per_second = init_amount * scale
+                self.n_atoms = decays_per_second / self.nuclide.decay_rate
+
+            elif unit.lower() == 'bq':
+                self.n_atoms = scale * init_amount / self.nuclide.decay_rate
+
+    def get_decay_rate(self, unit='Bq', dt: Union[float, int, Interval, Date] = 0):
+        scale, unit = get_scale_unit(unit)
+
+        norm = 1
+
+        if unit == 'ci':
+            norm /= 3.7E10
+
+        norm /= scale
+
+        if dt != 0:
+            dt = get_seconds(dt)
+
+            norm *= 0.5**(dt/self.nuclide.half_life)
+
+        return norm * self.n_atoms * self.nuclide.decay_rate
+
+    def get_mass(self, unit='g', dt: Union[float, int, Interval, Date] = 0):
+        scale, unit = get_scale_unit(unit)
+
+        norm = 1
+
+        norm /= scale
+
+        moles = self.n_atoms / AVOGADRO
+
+        mass = moles * self.grams_per_mole
+
+        if dt != 0:
+            dt = get_seconds(dt)
+            norm *= 0.5**(dt/self.nuclide.half_life)
+
+        return norm * mass
+
+    @property
+    def nuclide(self):
+        assert len(self.nuclides) == 1
+        return self.nuclides[0]
+
+    @property
+    def grams_per_mole(self,):
+        return sum(f * n.grams_per_mole for f, n in zip(self.atom_fractions, self.nuclides))
+
 
 
 if __name__ == '__main__':

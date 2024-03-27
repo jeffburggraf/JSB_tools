@@ -523,3 +523,5 @@ def zam(name):
 
     metastable = int(state[2:]) if state else 0
     return (ATOMIC_NUMBER[symbol], int(A), metastable)
+
+
