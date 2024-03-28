@@ -1988,8 +1988,9 @@ class Sample:
     """
     valid_units = ['nCi', 'uCi', 'mCi', 'Ci','Bq', 'kBq', 'MBq', 'ng', 'ug', 'mg', 'g']
 
-    def __init__(self, symbols: Union[str, List[str]], init_amount, atom_fractions=None,
-                 init_amount_units=Literal['nCi', 'uCi', 'mCi', 'Ci', 'Bq', 'kBq', 'MBq', 'ng', 'ug', 'mg', 'g']):
+    def __init__(self, symbols: Union[str, List[str]], init_amount,
+                 units=Literal['nCi', 'uCi', 'mCi', 'Ci', 'Bq', 'kBq', 'MBq', 'ng', 'ug', 'mg', 'g'],
+                 atom_fractions=None):
         if isinstance(symbols, str):
             if Nuclide.NUCLIDE_NAME_MATCH.match(symbols):
                 self.nuclides: List[Nuclide] = [Nuclide(symbols)]
@@ -2011,13 +2012,13 @@ class Sample:
 
         self.atom_fractions = np.array(self.atom_fractions) / sum(self.atom_fractions)
 
-        assert init_amount_units in self.valid_units
+        assert units in self.valid_units
 
-        scale, unit = get_scale_unit(init_amount_units)
+        scale, unit = get_scale_unit(units)
 
         if unit == 'g':
-            self.mass = init_amount * scale
-            self.n_atoms = self.mass/self.grams_per_mole * AVOGADRO
+            mass = init_amount * scale
+            self.n_atoms = mass/self.grams_per_mole * AVOGADRO
 
         else:
             if not len(self.nuclides) == 1:
@@ -2032,7 +2033,21 @@ class Sample:
             elif unit.lower() == 'bq':
                 self.n_atoms = scale * init_amount / self.nuclide.decay_rate
 
-    def get_decay_rate(self, unit='Bq', dt: Union[float, int, Interval, Date] = 0):
+    def get_decay_rate(self, unit='Bq', dt: Union[float, int, Interval, Date] = 0, return_type=float):
+        """
+
+                Args:
+                    unit:
+                    dt: Decay sample according to delta time.
+                        If Date: Assume a date is past, and decay until now
+                        if float: assume a number of seconds
+
+                    return_type: If a float, returns a number. If a string, returns a formatted string including units.
+
+                Returns:
+                    str or float, depending on return_type
+
+                """
         scale, unit = get_scale_unit(unit)
 
         norm = 1
@@ -2047,9 +2062,30 @@ class Sample:
 
             norm *= 0.5**(dt/self.nuclide.half_life)
 
-        return norm * self.n_atoms * self.nuclide.decay_rate
+        out = norm * self.n_atoms * self.nuclide.decay_rate
 
-    def get_mass(self, unit='g', dt: Union[float, int, Interval, Date] = 0):
+        if return_type is float:
+            return out
+        elif return_type is str:
+            return f"{out:.3g} {unit}"
+        else:
+            raise ValueError("Invalid return type. ")
+
+    def get_mass(self, unit='g', dt: Union[float, int, Interval, Date] = 0, return_type=float):
+        """
+
+        Args:
+            unit:
+            dt: Decay sample according to delta time.
+                If Date: Assume a date is past, and decay until now
+                if float: assume a number of seconds
+
+            return_type: If a float, returns a number. If a string, returns a formatted string including units.
+
+        Returns:
+            str or float, depending on return_type
+
+        """
         scale, unit = get_scale_unit(unit)
 
         norm = 1
@@ -2064,7 +2100,17 @@ class Sample:
             dt = get_seconds(dt)
             norm *= 0.5**(dt/self.nuclide.half_life)
 
-        return norm * mass
+        out = norm * mass
+        if return_type is float:
+            return out
+        elif return_type is str:
+            return f"{out:.3g} {unit}"
+        else:
+            raise ValueError("Invalid return type. ")
+
+    @property
+    def mass(self):
+        return self.get_mass()
 
     @property
     def nuclide(self):
@@ -2078,10 +2124,7 @@ class Sample:
 
 
 if __name__ == '__main__':
-    n = Nuclide('Cs137')
-    oiut = n.get_gammas()
-    print()
-    # a = ActivationReactionContainer.load('Ar40', 'neutron', 'endf')
-    pass
-    # print(Nuclide('U235').atomic_mass('u'))
-    # print(_out('U235_m1').rest_energy())
+    dt = pendulum.Date(2003, 9, 24)
+    s = Sample('Cf252', 0.546, units='ug')
+    # s = Sample('Cf252', 5.3, units='mCi')
+    print(s.get_decay_rate(unit='mCi', dt=dt))

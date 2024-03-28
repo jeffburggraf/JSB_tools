@@ -92,6 +92,9 @@ ARMS_sources = {
     '1915-86-3': CalSource('Cs137', '1915-86-3', 20.53,
                            datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
 
+    '1930-6-3': CalSource('Cs137', '1930-6-3', 20.75,
+                           datetime(2017, 3, 1), unit='uCi', rel_err=0.032/2.3),
+
     '1915-86-1': CalSource('Cs137', '1915-86-1', 20.17,
                            datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
 
@@ -104,6 +107,7 @@ ARMS_sources = {
     '1727-63-1': CalSource('Eu152', '1727-63-1', 20.43,
                            datetime(2014, 4, 1), unit='uCi',  rel_err=0.032/2.3),
 }
+
 
 if __name__ == '__main__':
     n = Nuclide("Y88")
