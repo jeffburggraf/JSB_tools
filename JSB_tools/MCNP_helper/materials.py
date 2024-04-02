@@ -519,6 +519,7 @@ class Material:
         assert len(self._zaids) > 0, 'No materials added! Use Material.add_zaid'
         comment = get_comment('density = {}'.format(self.density), self.name)
         outs = ['M{}  {}'.format(self.mat_number, comment)]
+
         for n, zaid, xs_lib in zip(self._zaid_proportions, self._zaids, self._xs_libraries):
             zaid_str = f'{zaid}{xs_lib}'
             outs.append('     {} {}'.format(zaid_str, '-{}'.format(n) if self.is_weight_fraction else n))
@@ -628,10 +629,6 @@ class StainlessSteel(Material):
 
         for zaid, frac in zaids_fracs[number][-1]:
             self.add_zaid(zaid, frac, elemental_zaid=elemental_zaid)
-        # self.add_element_natural('Fe', 0.659)
-        # self.add_element_natural('Cr', 0.18)
-        # self.add_element_natural('Mn', 0.08)
-        # self.add_element_natural('Ni', 0.04)
 
 
 class Aluminum(Material):
@@ -729,6 +726,36 @@ class Copper(Material):
         self.add_zaid(29065, 0.3085)
 
 
+class StilBeneD12(Material):
+    def __init__(self, density=1.24, mat_number: int = None, mat_name: str = "Deuterated stilbene",
+                 mat_kwargs: Dict[str, str] = None, xs_library=''):
+        super(StilBeneD12, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_zaid(6000, 14, xs_library=xs_library)
+        self.add_zaid(1002, 12, xs_library=xs_library)
+
+
+class StilBene(Material):
+    def __init__(self, density=1.16, mat_number: int = None, mat_name: str = "Stilbene",
+                 mat_kwargs: Dict[str, str] = None, xs_library=''):
+        super(StilBene, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_zaid(6000, 14, xs_library=xs_library)
+        self.add_zaid(1001, 12, xs_library=xs_library)
+
+
+class EJ200(Material):
+    def __init__(self, density=1.023, mat_number: int = None, mat_name: str = "EJ200",
+                 mat_kwargs: Dict[str, str] = None, xs_library=''):
+        super(EJ200, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_zaid(6000, 4.69, xs_library=xs_library)
+        self.add_zaid(1001, 5.17, xs_library=xs_library)
+
+"""
+1001 -0.004530 1001 0.084739 1001 0.006090
+8016  -0.512600 8016 0.604079 8016 0.043412
+11023 -0.015270 11023 0.012523 11023 0.000900
+13027 -0.035550 13027 0.024842 13027 0.001785
+14000 -0.360360 14000 0.241921 14000 0.017386
+20000 -0.057910 20000 0.027244 20000 0.001958"""
 if __name__ == "__main__":
     print(StainlessSteel())
     # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)

@@ -233,6 +233,28 @@ class SPEFile(EfficiencyCalMixin):
         else:
             return (1 / 2.35482) * (a + b * erg + c * erg ** 2)
 
+    def get_fwhm(self, erg):
+        """
+        Gets sigma from linear Eq. for FWHM: a + bx + cx^2
+        Args:
+            erg:
+            a: linear y intercept for FWHM
+            b: Scaling constant for FWHM
+
+        Returns:
+
+        """
+        if len(self.shape_cal) == 2:
+            a, b = self.shape_cal
+            c = 0
+        else:
+            a, b, c = self.shape_cal
+
+        if c == 0:
+            return (a + b * erg)
+        else:
+            return (a + b * erg + c * erg ** 2)
+
     @staticmethod
     def save_erg_call_all(path, erg_cal=None, shape_cal=None):
         """
@@ -1061,216 +1083,6 @@ class SPEFile(EfficiencyCalMixin):
 
         return iplot
 
-
-class ErgCalHelper:
-    def __init__(self, spe: SPEFile, cal_nuclide_name=None, list_of_gammas=None, list_of_ergs=None, intensity_limit=0.05, min_peak_dist=8):
-        """
-
-        Args:
-            cal_nuclide_name:
-            list_of_gammas:
-            spe:
-            intensity_limit:
-            min_peak_dist:
-        """
-        if list_of_gammas is None and cal_nuclide_name is None and list_of_ergs is None:
-            raise ValueError("Need either a list of GammaLine instances, a calibration nuclide name, or list of energies")
-
-        if list_of_gammas is None and list_of_ergs is not None:
-            list_of_gammas = []
-            for erg in list_of_ergs:
-                g = GammaLine.__new__(GammaLine)
-                g.erg = ufloat(erg, 0)
-                g.intensity = ufloat(1, 0)
-                list_of_gammas.append(g)
-
-        if cal_nuclide_name is None:
-            gamma_lines = list_of_gammas
-            intensity_limit = None
-            self.nuclide = None
-        else:
-            gamma_lines = Nuclide(cal_nuclide_name).decay_gamma_lines
-            self.nuclide = Nuclide(cal_nuclide_name)
-
-        self.spe = spe
-
-        self.fits: List[GausFitResult] = []
-
-        self.fit_centers = []
-        self.adjacent_peaks = []
-        self.gamma_lines: List[GammaLine] = []
-
-        self.run_fits(gamma_lines, intensity_limit=intensity_limit, min_peak_dist=min_peak_dist)
-
-        self.erg_cal = [0, 0, 0]
-        self.shape_cal = [0, 0, 0]
-
-    def run_fits(self, gamma_lines, intensity_limit=0.05, min_peak_dist=8):
-        def is_interfere(e, intnsty):
-            if e == erg:
-                return False
-
-            if abs(e - erg) < min_peak_dist:
-                if intnsty / intensity < 0.05:
-                    return False
-                return True
-
-        if isinstance(gamma_lines[0], GammaLine):
-            gamma_lines = [g for g in gamma_lines]
-            gamma_intensities = [g.intensity.n for g in gamma_lines]
-            gamma_ergs = [g.erg.n for g in gamma_lines]
-        else:
-            gamma_ergs = gamma_lines
-            gamma_intensities = gamma_lines = [None]*len(gamma_ergs)
-
-        for gline, erg, intensity in zip(gamma_lines, gamma_ergs, gamma_intensities):
-            if intensity_limit is not None and intensity < intensity_limit:
-                continue
-
-            self.fit_centers.append(erg)
-            self.gamma_lines.append(gline)
-
-            adjacent_peaks = []
-
-            for ee, ii in zip(gamma_ergs, gamma_intensities):
-                if is_interfere(ee, ii):
-                    adjacent_peaks.append(ee)
-
-            center_guesses = [erg] + adjacent_peaks
-            fix_centers = [False] + [True] * len(adjacent_peaks)
-
-            # if channelsQ:
-            #     center_guesses = [spe.erg_2_channel(c) for c in center_guesses]
-            #     bins = np.arange(len(spe.erg_bins))
-            # else:
-            bins = self.spe.erg_bins
-
-            fit = multi_guass_fit(bins, self.spe.counts / self.spe.erg_bin_widths,
-                                  center_guesses=center_guesses,
-                                  fixed_in_binQ=fix_centers,
-                                  fit_buffer_window=15)
-
-            self.fits.append(fit)
-
-        self.erg_cal = [0, 0, 0]
-        self.shape_cal = [0, 0, 0]
-
-    def plot(self,):
-        if not sum(self.erg_cal) == 0:
-            self.spe._erg_calibration = self.erg_cal
-
-        iplot = self.spe.interactive_plot()
-        ys = self.spe.get_counts(make_density=True, nominal_values=True)
-        for g in self.gamma_lines:
-            x = g.erg.n
-            iplot.ax.axvline(x, color='black', lw=1.5, alpha=0.5)
-
-            y = ys[self.spe.__erg_index__(g.erg.n)]
-            iplot.ax.text(x, y*1.05, f'{g.parent_nuclide.name} - {g.erg.n:.2f} keV', rotation=90)
-
-    def __len__(self):
-        return len(self.fits)
-
-    def get_counts(self):
-        return [fit.amplitudes(0) for fit in self.fits]
-
-    def plot_fits(self):
-        tab = TabPlot()
-        for i in range(len(self)):
-            fit = self.fits[i]
-            center = fit.centers(0)
-            erg = self.gamma_lines[i].erg.n
-            ax = tab.new_ax(i)
-            fit.plot(ax=ax)
-            ax.text(0.8, 0.8, f'E={erg:.2f}\nCh.={center:.2f}\n'
-                              f'fwhm={fit.sigmas(0):.2g}', transform=ax.transAxes)
-
-    def get_ch(self, erg):
-        return np.searchsorted(self.spe.erg_bins, erg, side='right') - 1
-
-    def get_fit(self, indices=None, degree=1):
-        ergs = []
-        chs = []
-        fwhms = []
-        fig, fit_plt_axs, = plt.subplots(2, 2)
-        fit_plt_axs = fit_plt_axs.flatten()
-
-        fit_plt_axs[0].set_xlabel('Channel')
-        fit_plt_axs[1].set_xlabel('~ Energy [keV]')
-        fit_plt_axs[1].set_ylabel('Fwhm [keV]')
-        fit_plt_axs[0].set_ylabel('Energy [keV]')
-        fit_plt_axs[2].set_xlabel('Energy')
-        fit_plt_axs[2].set_ylabel('Energy error')
-        fit_plt_axs[3].set_axis_off()
-
-        handles, labels = [], []
-
-        for i in range(len(self)):
-            if indices is not None and i not in indices:
-                continue
-
-            fit = self.fits[i]
-            sigma = fit.sigmas(0)
-
-            center_erg = fit.centers()[0]
-            rel_err = center_erg.std_dev/center_erg.n
-
-            center_ch = self.get_ch(center_erg.n)
-            center_ch = ufloat(center_ch, rel_err * center_ch)
-
-            erg = self.gamma_lines[i].erg.n
-
-            fwhms.append(2.355 * sigma)
-            ergs.append(erg)
-            chs.append(center_ch)
-
-            handle = fit_plt_axs[0].errorbar([center_ch.n], [erg], xerr=[center_ch.std_dev], ls='None', marker='o')
-
-            handles.append(handle)
-            labels.append(f'{i}')
-
-        fig.legend(handles, labels)
-
-        model = PolynomialModel(degree=degree)
-
-        y = ergs
-        x = unp.nominal_values(chs)
-        params = model.guess(data=y, x=x)
-        fit_erg = model.fit(data=y, x=x, params=params)
-
-        self.erg_cal[0] = fit_erg.params['c0'].value
-        self.erg_cal[1] = fit_erg.params['c1'].value
-
-        plt_x = np.linspace(min(x), max(x), 1000)
-        fit_plt_axs[0].plot(plt_x, fit_erg.eval(x=plt_x))
-
-        fit_plt_axs[0].text(0.1, 0.6, fr"E = ch $\times$ {fit_erg.params['c1'].value:.5e} + {fit_erg.params['c1'].value:4e}")
-
-        fit_plt_axs[2].plot(y, y - fit_erg.eval(x=x), ls='None', marker='o')
-
-        for i in range(len(ergs)):
-            erg = ergs[i]
-            fwhm = fwhms[i] * fit_erg.params['c1'].value
-            fit_plt_axs[1].errorbar([erg], [fwhm.n], yerr=[fwhm.std_dev], ls='None', marker='o')
-
-        weights = 1/np.where(unp.std_devs(fwhms) > 0, unp.std_devs(fwhms), 1)
-        x = ergs
-        # print(fit_erg.params['c1'].value)
-        y = unp.nominal_values(fwhms) * fit_erg.params['c1'].value
-        params = model.guess(y, x=x)
-        fit_fwhm = model.fit(data=y, x=x, weights=weights, params=params)
-
-        # plt_x = np.linspace(min(x), max(x), 1000)
-        fit_plt_axs[1].plot(plt_x, fit_fwhm.eval(x=plt_x))
-
-        self.shape_cal[0] = fit_fwhm.params['c0'].value
-        self.shape_cal[1] = fit_fwhm.params['c1'].value
-
-    def save_cal(self, entire_directory=False):
-        if not entire_directory:
-            self.spe.save_erg_cal(self.erg_cal, self.shape_cal)
-        else:
-            self.spe.save_erg_call_all(self.spe.path.parent, self.erg_cal, self.shape_cal)
 
 if __name__ == '__main__':
     from scipy.stats.mstats import winsorize

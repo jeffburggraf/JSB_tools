@@ -105,16 +105,23 @@ class RecFMESH(TallyBase):
                  z_poses,
                  origin=(0, 0, 0),
                  xbins: Union[int, tuple] = 10,
-                 ybins: Union[int, tuple] = 10, axs_hat=(0, 0, 1),
+                 ybins: Union[int, tuple] = 10,
                  zbins: Union[int, tuple] =1,
-                  tally_number=None, fmesh_name=None, ref=None):
+                 tally_number=None, fmesh_name=None, ref=None):
         """
-
 
         Args:
             particle:
-
-            ref: REF keyword for mesh weight windows
+            x_poses:  Absolute x coordinate positions of bin boundaries (not relative to origin)
+            y_poses: " "
+            z_poses: " "
+            origin: Origin
+            xbins: Number of fine x bins in each course range
+            ybins:
+            zbins:
+            tally_number:
+            fmesh_name:
+            ref:
         """
         super(RecFMESH, self).__init__(4, tally_number=tally_number, tally_name=fmesh_name)
 

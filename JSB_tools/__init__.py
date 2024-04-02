@@ -61,6 +61,74 @@ except ModuleNotFoundError:
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
+def auto_yscale(ax, margin=0.1, labels2avoid=None):
+    """
+    Adds a callback for `ax` which causes pressing the y key to automatically scale the y axis.
+
+    Args:
+        ax:
+        margin:
+        labels2avoid: Labels of lines which will be ignored in the calculation of the ranges.
+            The labels come from 'label' keyword in plotting functions, e.g., plt.plot(x, y, label='line1')
+
+    Returns:
+
+    """
+    def get_bottom_top(line):
+        xd = line.get_xdata()
+        yd = line.get_ydata()
+        low, high = ax.get_xlim()
+        y_displayed = np.array(yd)[((xd > low) & (xd < high))]
+
+        if ax.get_yscale() == 'log':
+            y_displayed = y_displayed[y_displayed > 0]
+
+        if not len(y_displayed):  # line outside of view, dont consider
+            return np.inf, -np.inf
+
+        dy = np.max(y_displayed) - np.min(y_displayed)
+        bot = np.min(y_displayed) - margin * dy
+
+        if bot < 0 and ax.get_yscale() == 'log':
+            bot = np.min(y_displayed)
+        top = np.max(y_displayed) + margin * dy
+
+        return bot, top
+
+    def autoscale_y():
+        lines = ax.get_lines()
+        bot, top = np.inf, -np.inf
+
+        if not len(lines):
+            return
+
+        for line in lines:
+            line: Line2D
+            if labels2avoid is not None and line.get_label() in labels2avoid:
+                continue
+
+            new_bot, new_top = get_bottom_top(line)
+
+            if new_bot < bot:
+                bot = new_bot
+            if new_top > top:
+                top = new_top
+
+        if not np.isfinite(bot):
+            bot = None
+        if not np.isfinite(top):
+            top = None
+
+        ax.set_ylim(bot, top)
+        ax.figure.canvas.draw_idle()
+
+    def on_key_press(event):
+        if event.key == 'y':
+            autoscale_y()
+
+    ax.figure.canvas.mpl_connect('key_press_event', on_key_press)
+
+
 def latex_form(val, n_digits=2):
     """
     Get latex form of number, as in 3.02 \times 10^{12}

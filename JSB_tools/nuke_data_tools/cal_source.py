@@ -98,6 +98,15 @@ ARMS_sources = {
     '1915-86-1': CalSource('Cs137', '1915-86-1', 20.17,
                            datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
 
+    '1727-63-3': CalSource('Cs137', '1727-63-3', 18.80,
+                           datetime(2014, 4, 1), unit='uCi', rel_err=0.032/2.3),
+
+    '1727-63-4': CalSource('Cs137', '1727-63-4', 18.45,
+                           datetime(2014, 4, 1), unit='uCi', rel_err=0.032/2.3),
+
+    '1727-63-2': CalSource('Cs137', '1727-63-2', 18.88,
+                               datetime(2014, 4, 1), unit='uCi', rel_err=0.032/2.3),
+
     '1294-91-2': CalSource('Cs137', '1294-91-2', 10.73,
                            datetime(2008, 6, 1), unit='uCi', rel_err=0.02),  # no confirmation of uncertainty of activity
 

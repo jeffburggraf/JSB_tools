@@ -397,6 +397,15 @@ class GausFitResult(ModelResult):
         param = self.params[f'_{i}_sigma']
         return self._get_param_value(param)
 
+    def fwhms(self, i=None):
+        if i is None:
+            return [2.355 * self.sigmas(i) for i in range(len(self))]
+
+        param = self.params[f'_{i}_sigma']
+        out = 2.355 * self._get_param_value(param)
+        # print(f"FWHM: {out}")
+        return out
+
     def bg(self):
         return self._get_param_value(self.params['bg'])
 

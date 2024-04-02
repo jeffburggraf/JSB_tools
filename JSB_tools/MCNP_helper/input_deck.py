@@ -62,6 +62,32 @@ def _split_line(line):
     return fixed
 
 
+number_match = re.compile(r"([+-]?([0-9]*)\.([0-9]+))( |$|\n)")
+
+
+def truncate_long_decimals(line, precision=6):
+    def replace_func(match):
+        num = match.groups()[0]
+        left_digits = match.groups()[1].lstrip('0')  # digits before the decimal
+        right_digits = match.groups()[2].rstrip('0')  # digits after the decimal
+        l = len(left_digits) + len(right_digits)
+
+        if l > precision:
+            end = match.groups()[-1]
+            num = float(num)
+            new_val1 = f'{num:.{precision}g}'
+            new_val2 = f'{num:.{precision}e}'
+            if len(new_val1) < len(new_val2):
+                return new_val1 + end
+            else:
+                return new_val2 + end
+        else:
+            return match.group()
+
+    out = number_match.sub(replace_func, line)
+    return out
+
+
 class MCNPSICard:
     used_numbers = set()
 
@@ -377,7 +403,7 @@ class InputDeck:
         if self.is_mcnp:
             assert len(self.inp_lines) >= 2, "MCNP input deck has less than two lines. Something is wrong."
 
-            # heck for double blank line EOF (as per MCNP input format). Set self.MCNP_EOF.
+            # check for double blank line EOF (as per MCNP input format). Set self.MCNP_EOF.
             for index, (line1, line2) in enumerate(zip(self.inp_lines[:-1], self.inp_lines[1:])):
                 if len(line1.split()) == len(line2.split()) == 0:
                     self.MCNP_EOF = index
@@ -406,9 +432,13 @@ class InputDeck:
         new_inp_lines = self.__new_inp_lines__[1:]
         self.__new_inp_lines__ = []
         for line in new_inp_lines[:self.MCNP_EOF]:
-            split_lines = line.split('\n')
-            # In case evaluated code returns multiple lines, append on a line by line basis
-            self.__new_inp_lines__.extend('\n'.join([_split_line(l) for l in split_lines]))
+            if len(line.strip()):
+                # new_inp_lines can contain elements with have multiple lines (this is caused when evaluated python code with multiple lines is added
+                split_lines = line.split('\n')  # split lines in case this is the case
+                new_lines = [_split_line(line) + '\n' for line in split_lines if len(line)]
+            else:
+                new_lines = [line]
+            self.__new_inp_lines__.extend(new_lines)
 
         self.__new_inp_lines__.extend(new_inp_lines[self.MCNP_EOF:])
         self.__new_inp_lines__.insert(0, title_line)
@@ -462,13 +492,18 @@ class InputDeck:
         exp_to_process = None
 
         for s in old_line:
-            if exp_to_process is None:
+            if exp_to_process is None:  # check for an "@" symbol. If found, begin filling `exp_to_process`
                 if s == "@":
-                    exp_to_process = ""
+                    exp_to_process = ""  # Don't append current char to `new_line`
                 else:
-                    new_line += s
+                    new_line += s  # Do append current char to `new_line`
             else:
-                if s == "@":
+                if s != "@":
+                    # continue building `exp_to_process`
+                    assert isinstance(exp_to_process, str)
+                    exp_to_process += s
+                else:
+                    # `exp_to_process` is finished
                     if len(exp_to_process) == 0:
                         warnings.warn("Empty embedded code in line {0} in file {1} ".format(line_number, f_name))
                     else:
@@ -486,9 +521,7 @@ class InputDeck:
                             new_line += "{0}".format(evaluated)
 
                     exp_to_process = None
-                else:
-                    assert isinstance(exp_to_process, str)
-                    exp_to_process += s
+
         if exp_to_process is not None:
             exception_msg += (_exception("Missing @"))
 
@@ -539,7 +572,7 @@ class InputDeck:
         return new_file_full_path
 
     def write_inp_in_scope(self, dict_of_globals: Union[dict, List[dict]], new_file_name=None,
-                           script_name="cmd", overwrite_globals=None, **mcnp_or_phits_kwargs) -> Path:
+                           script_name="cmd", overwrite_globals=None, max_precision=8, **mcnp_or_phits_kwargs) -> Path:
         """
         Creates and fills an input deck according to a dictionary of values. Usually, just use globals().
 
@@ -550,7 +583,11 @@ class InputDeck:
             new_file_name: name of generated input file
             script_name: Name of script to obe created that runs (all) simulation(s) automatically.
             overwrite_globals: dictionary of variable names and values that will take precedence over globals()
+
+            max_precision: Max number of decimal digits, beyond which the values will be simplified to `max_precision` and replaced in input deck.
+
             **mcnp_or_phits_kwargs: Command line args for MCNP or PHITS
+
 
         Returns: new_file_name
 
@@ -581,6 +618,10 @@ class InputDeck:
         for line_num, line in enumerate(lines):
             line_num += 1
             new_line, ex_msg = self.__process_line__(line, line_num, dict_of_globals)
+
+            if max_precision is not None:
+                new_line = truncate_long_decimals(new_line, max_precision)
+
             exception_msgs += ex_msg
             self.__new_inp_lines__.append(new_line)
 
@@ -596,6 +637,7 @@ class InputDeck:
             if self.sch_cmd:
                 self.__append_cmd_to_run_script__(script_name, new_file_full_path, mcnp_or_phits_kwargs,
                                                   csh_cmd=True)
+
         self.__write_file__(new_file_full_path)
 
         self.__pickle_globals__(new_file_full_path, dict_of_globals)
@@ -768,8 +810,9 @@ def __clean__(paths, warn_message):
 
 
 if __name__ == "__main__":
-    f = F4Tally(10, 'p')
-    f.set_erg_bins(erg_bins_array=[1,2,3])
-    print(f.tally_card)
-    p = Path('/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/sims/Co60-10cm/outp')
-    p.relative_to(p.parent)
+    pass
+    # f = F4Tally(10, 'p')
+    # f.set_erg_bins(erg_bins_array=[1,2,3])
+    # print(f.tally_card)
+    # p = Path('/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/sims/Co60-10cm/outp')
+    # p.relative_to(p.parent)
