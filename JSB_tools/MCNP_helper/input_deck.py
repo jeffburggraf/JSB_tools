@@ -797,16 +797,30 @@ def __clean__(paths, warn_message):
         sim_directory = cwd / p
         for f_path in Path(sim_directory).iterdir():
             if m.match(f_path.name):
-                trash_name = str(f_path.relative_to(f_path.parents[2]))
+                trash_name = f'{f_path.name}-{f_path.parent.relative_to(f_path.parents[2])}'
 
                 if platform.system() == 'Windows':
-                    trash_name = trash_name.replace('\\', '..')
+                    trash_name = trash_name.replace('\\', '.')
                 else:
-                    trash_name = trash_name.replace('/', '..')
+                    trash_name = trash_name.replace('/', '.')
 
                 new_path = f_path.parent / trash_name
+
+                # print(new_path)
+
                 os.rename(f_path, new_path)
                 send2trash(new_path)
+
+            #     trash_name = str(f_path.relative_to(f_path.parents[2]))
+            #
+            #     if platform.system() == 'Windows':
+            #         trash_name = trash_name.replace('\\', '..')
+            #     else:
+            #         trash_name = trash_name.replace('/', '..')
+            #
+            #     new_path = f_path.parent / trash_name
+            #     os.rename(f_path, new_path)
+            #     send2trash(new_path)
 
 
 if __name__ == "__main__":
