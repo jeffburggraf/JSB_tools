@@ -6,6 +6,8 @@ import platform
 import os
 import stat
 from atexit import register, unregister
+
+import pendulum
 from uncertainties import UFloat
 from numbers import Number
 import pickle
@@ -368,6 +370,8 @@ class InputDeck:
 
         self.__num_writes__ = 0
 
+        self.hpc_messages = []
+
         self.__auto_directory__ = False
         self.__auto_file_names__ = False
 
@@ -572,7 +576,8 @@ class InputDeck:
         return new_file_full_path
 
     def write_inp_in_scope(self, dict_of_globals: Union[dict, List[dict]], new_file_name=None,
-                           script_name="cmd", overwrite_globals=None, max_precision=8, **mcnp_or_phits_kwargs) -> Path:
+                           script_name="cmd", overwrite_globals=None, max_precision=8,
+                           hpc_simname=None, hpc_ctime=10, hpc_ncpus=20, hpc_notifications=False, hpc_cluster='lemhi', **mcnp_or_phits_kwargs) -> Path:
         """
         Creates and fills an input deck according to a dictionary of values. Usually, just use globals().
 
@@ -585,6 +590,13 @@ class InputDeck:
             overwrite_globals: dictionary of variable names and values that will take precedence over globals()
 
             max_precision: Max number of decimal digits, beyond which the values will be simplified to `max_precision` and replaced in input deck.
+
+            hpc_simname: Top-level simulation name for INL's HPC system
+            hpc_ctime: computer time (IN MINUTES!!)
+            hpc_ncpus: # of CPUs to use on HPC
+            hpc_cluster: 'sawtooth' or 'lemhi
+            hpc_kwargs: `select`, `mpiprocs`,
+            hpc_notifications: If True, will receive HPC notifications
 
             **mcnp_or_phits_kwargs: Command line args for MCNP or PHITS
 
@@ -643,12 +655,32 @@ class InputDeck:
         self.__pickle_globals__(new_file_full_path, dict_of_globals)
 
         self.__new_inp_lines__ = []
+
+        if hpc_simname is not None:
+            hpc_ctime *= 60  # minutes to seconds
+
+            sim_sub_name = new_file_full_path.parent.name
+            hpc = self.get_hpc_script(local_dir=new_file_full_path.parent, remote_sim_main_name=hpc_simname, remote_sim_sub_name=sim_sub_name,
+                                ctime=hpc_ctime, ncpus=hpc_ncpus, cluster=hpc_cluster, email_notifications=hpc_notifications)
+
+            hpc_run_all_cmd = f'cd {hpc.directory}\nqsub job.pbs\n\n'
+
+            f_path = (self.inp_root_directory / 'hpc').with_suffix('.sh')
+
+            with open(f_path, "w" if self.__num_writes__ == 1 else "a") as f:
+                f.write(hpc_run_all_cmd)
+
+            if self.__num_writes__ == 1:
+                hpc_msg = "To move these simulations to HPC:\n"\
+                          f"\t{HPCScript.gen_scp_folder2remote(f'{new_file_full_path.parents[1]}/*', 
+                                                               f'~/mcnp_sims/{hpc_simname}')}"
+                self.hpc_messages.append(hpc_msg)
+
         return new_file_full_path
 
     def __write_file__(self, new_file_full_path):
         assert len(self.__new_inp_lines__) > 0, "Must call 'write_inp_in_scope' before '__write_file__'"
-        # new_inp_directory = new_file_full_path.parent
-        # new_inp_name = new_file_full_path.name
+
         if self.cycle_rnd_seed is not False:
             if self.is_mcnp:
                 self.cycle_random_number_mcnp()
@@ -668,13 +700,14 @@ class InputDeck:
         else:
             f_path = (self.inp_root_directory / script_name).with_suffix('.sh')
 
-        # new_file_full_path = new_file_full_path.relative_to(self.inp_root_directory)
         if mcnp_or_phits_kwargs is None:
             script_kwargs = ""
         else:
             assert isinstance(mcnp_or_phits_kwargs, dict)
             script_kwargs = " ".join(["{0}={1}".format(key, value) for key, value in mcnp_or_phits_kwargs.items()])
+
         new_file_name = new_file_full_path.name
+
         if csh_cmd:
             cd_path = new_file_full_path.parent.relative_to(self.inp_root_directory)
         else:
@@ -684,6 +717,7 @@ class InputDeck:
 
         run_cmd = "{0};mcnp6 i={1} {2}".format(cd_cmd, new_file_name, script_kwargs) if self.is_mcnp else \
             "{0};phits.sh {1} {2}".format(cd_cmd, new_file_name, script_kwargs)
+
         if csh_cmd:
             new_cmd = "{0} < /dev/null > ! log_{1}.txt &\n"\
                 .format(run_cmd, new_file_full_path.name)
@@ -694,10 +728,12 @@ class InputDeck:
             elif self.platform == "Linux":
                 new_cmd = "gnome-terminal -x sh -c '{0} 2>&1 | tee -a -i log_{1}.txt;'\n".format(run_cmd,
                                                                                                  new_file_full_path.name)
+
             elif self.platform == "Windows":
                 warnings.warn("Currently no implementation of the creation of a .bat file to automatically run the "
                               "simulations on Windows. ")
                 return
+
             else:
                 warnings.warn("Run script not generated. Platform not supported.")
                 return
@@ -706,7 +742,7 @@ class InputDeck:
             if self.__num_writes__ == 0:
                 if csh_cmd:
                     f.write('#!/bin/csh -f\n')
-            f.write(new_cmd)
+            f.write(new_cmd + '\n')
 
         if self.__num_writes__ == 0:
             if self.platform in ["Linux", "Darwin"]:
@@ -729,7 +765,8 @@ class InputDeck:
 
             print('Run the following commands in terminal to automatically run the simulation(s) just prepared:\n')
             print('cd {0}\n./cmd.sh'.format(self.inp_root_directory))
-            print('*or if using csh: ./cmd.csh   \n')
+            if len(self.hpc_messages):
+                print('\n' + '\n'.join(self.hpc_messages) + '\n')
 
             if self.is_mcnp:
                 print('Created "Clean.py". Running this script will remove all outp, mctal, ptrac, ect.')
@@ -764,6 +801,18 @@ class InputDeck:
                          sch_cmd=False):
         return InputDeck(inp_file_path=inp_file_path, new_file_dir=new_file_dir, cycle_rnd_seed=cycle_rnd_seed, gen_run_script=gen_run_script,
                          is_mcnp=False, __internal__=True, sch_cmd=sch_cmd)
+
+    @staticmethod
+    def get_hpc_script(local_dir: Path, remote_sim_main_name, remote_sim_sub_name, ctime, cluster='lemhi',
+                       email_notifications=False, ncpus=20):
+        hpc = HPCScript(remote_sim_main_name, remote_sim_sub_name, ctime, cluster=cluster, ncpus=ncpus, email_notifications=email_notifications)
+
+        local_dir.mkdir(exist_ok=True)
+
+        with open(local_dir / 'job.pbs', 'w') as f:
+            f.write(hpc.get_pbs(remote_sim_sub_name))
+
+        return hpc
 
 
 def __clean__(paths, warn_message):
@@ -806,25 +855,100 @@ def __clean__(paths, warn_message):
 
                 new_path = f_path.parent / trash_name
 
-                # print(new_path)
-
                 os.rename(f_path, new_path)
                 send2trash(new_path)
 
-            #     trash_name = str(f_path.relative_to(f_path.parents[2]))
-            #
-            #     if platform.system() == 'Windows':
-            #         trash_name = trash_name.replace('\\', '..')
-            #     else:
-            #         trash_name = trash_name.replace('/', '..')
-            #
-            #     new_path = f_path.parent / trash_name
-            #     os.rename(f_path, new_path)
-            #     send2trash(new_path)
+
+class HPCScript:
+    def __init__(self, sim_name, sim_sub_path, walltime, cluster='lemhi',
+                 mpiprocs=20, ncpus=20, select=10, email_notifications=False):
+        """
+
+        Args:
+            sim_path:
+            ctime:
+            cluster:
+            mpiprocs:
+            ncpus:
+            select:
+        """
+        # walltime = 1.05 * ctime / ncpus
+
+        self.pbs_lines = [self.get_header(sim_name, walltime=walltime, ncpus=ncpus, mpiprocs=mpiprocs, select=select, email_notifications=email_notifications)]
+
+        module_line = 'module load use.exp_ctl MCNP6/' + \
+                      {'lemhi': '2.0-intel-19.1.3',
+                       'sawtooth': '3.0-intel'}[cluster]
+
+        self.pbs_lines.append(module_line)
+        self.directory = Path(f'$HOME/mcnp_sims/{sim_name}/{sim_sub_path}')
+
+        self.pbs_lines.append(f'mkdir $HOME/mcnp_sims/{sim_name}\n'
+                              f'mkdir $HOME/mcnp_sims/{sim_name}/{sim_sub_path}\n'
+                              f'cd $HOME/mcnp_sims/{sim_name}/{sim_sub_path}')
+
+    @staticmethod
+    def gen_scp_file2remote(file_paths: list, src_directory="~", cluster='lemhi1'):
+        files = ','.join(map(str, file_paths))
+
+        out = f"scp {{{files}}} burgjs@{cluster}.hpc.inl.gov:{src_directory}"
+        return out
+
+    def get_pbs(self, inp_name):
+        self.pbs_lines += [f'export TMPDIR={self.directory}',
+                           f'mpirun mcnp6.mpi i={inp_name} n={inp_name}.out']
+        return '\n'.join(self.pbs_lines)
+
+    @staticmethod
+    def gen_scp_folder2remote(folder: Union[str, Path], src_directory="~", cluster='lemhi1'):
+        out = f"rsync -r {folder} burgjs@{cluster}.hpc.inl.gov:{src_directory}"
+        return out
+
+    @staticmethod
+    def get_header(job_name, walltime: Union[str, int], email_notifications=False,
+                   mpiprocs=20, ncpus=20, select=10):
+
+        if isinstance(walltime, (int, float)):  # assume seconds
+            dt = pendulum.duration(seconds=walltime)
+            if dt.total_seconds() < 5:
+                walltime = '00:00:05'
+            else:
+                walltime = f'{dt.hours:0>2}:{dt.minutes:0>2}:{dt.seconds % 60:0>2}'
+
+        elif isinstance(walltime, str):
+            pass
+        else:
+            raise ValueError(f"Invalid argument, `walltime`: '{walltime}'")
+
+        out = "#!/bin/bash\n" \
+              f"#PBS -l select={select}:ncpus={ncpus}:mpiprocs={mpiprocs}\n" \
+              f"#PBS -N {job_name}\n" \
+              f"#PBS -l walltime={walltime}\n" \
+              "#PBS -k doe\n" \
+              "#PBS -j oe\n" \
+              "#PBS -P nnp\n" \
+
+        if email_notifications:
+            out += "#PBS -M jeffrey.burggraf@inl.gov\n#PBS -m bae\n"
+
+        out += '#\n'
+
+        out += "export DATAPATH=/hpc-common/data/mcnp/mcnpdata-2.0/MCNP_DATA\n" \
+               'echo "DATAPATH=$DATAPATH"\n'
+
+        return out
+
+
+
 
 
 if __name__ == "__main__":
     pass
+
+    files = ['/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/sims/Co60-10cm']
+
+    print(HPCScript.gen_scp_folder2remote('/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/sims/Co60-50cm'))
+
     # f = F4Tally(10, 'p')
     # f.set_erg_bins(erg_bins_array=[1,2,3])
     # print(f.tally_card)
