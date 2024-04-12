@@ -664,6 +664,27 @@ def load_globals(pickle_path):
     return out
 
 
+def read_input_file_lines(all_lines):
+    out = {'input_deck': [], 'input_file_name': None}
+    begin_flag = False
+    for line in all_lines:
+        if m := re.match("^ {0,9}[0-9]+- {7}(.*)", line):
+            if not begin_flag:
+                begin_flag = True
+
+            card = m.group(1).rstrip().lower()
+            out['input_deck'].append(card)
+        else:
+            if begin_flag and re.match(r"^ *\*+ *$", line):
+                break
+
+        if out['input_file_name'] is None:
+            if m := re.match('.+i=([^ ]*)', line):
+                out['input_file_name'] = m.groups()[0].strip()
+
+    return out
+
+
 class OutP:
     def __init__(self, file_path):
         self.__f_path__ = Path(file_path)
@@ -675,23 +696,24 @@ class OutP:
         if not re.match(' +.+Version *= *MCNP', self.__outp_lines__[0], re.IGNORECASE):
             warn('\nThe file\n"{}"\ndoes not appear to be an MCNP output file!\n'.format(file_path))
 
-        self.input_deck = []
-        self.nps = None
-        self.input_file_path = None
-        for line in self.__outp_lines__:
-            _m = re.match("^ {0,9}[0-9]+- {7}(.*)", line)
-            if _m:
-                card = _m.group(1).rstrip().lower()
-                self.input_deck.append(card)
-            _m_nps = re.match(r" *dump no\. +[0-9].+nps = +([0-9]+)", line)
-            if _m_nps:
-                self.nps = int(_m_nps.group(1))
-            if self.input_file_path is None:
-                if m := re.match('.+i=([^ ]*)', line):
-                    self.input_file_path = self.__f_path__.parent/m.groups()[0]
+        inp_data = read_input_file_lines(self.__outp_lines__)
+
+        self.input_deck = inp_data['input_deck']
+
+        self.nps = self.ctime = None
+
+        self.input_file_path = self.__f_path__.parent / inp_data['input_file_name']
+
+        nps_match = re.compile(" +dump no. *[0-9]+.+nps ?= *([0-9]+).+ctm ?= *([0-9.]+)")  # matched dump line containing NPS and CTIME info
+        for line in self.__outp_lines__[::-1]:
+            if m := nps_match.match(line):
+                self.nps = int(m.groups()[0])
+                self.ctime = float(m.groups()[1])
+                break
 
         if not len(self.input_deck):
             raise ValueError("No input deck found in Outp file. Possible that file is not an MCNP outp file.")
+
         self.inp_title = self.input_deck[0]
 
         self.cells: Dict[int, OutpCell] = {}

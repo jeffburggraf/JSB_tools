@@ -44,7 +44,7 @@ class CalSource:
         self.ref_date = ref_date
 
         if rel_err is not None:
-            self.ref_activity = ufloat(self.ref_activity, rel_err * self.ref_activity)
+            self.ref_activity = ufloat(self.ref_activity, rel_err * self.ref_activity, tag='ref activity')
 
         CalSource.instances[self.serial_num] = self
 
@@ -76,46 +76,55 @@ class CalSource:
         return f'{self.name} ({self.serial_num}); {self.get_activity():.3E} Bq'
 
 
-ARMS_sources = {
-    '1930-100-1': CalSource('Ba133', '1930-100-1', 21.11,
-                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+std_3_pct_err = 0.03/2.57583   # converting 3% at 99% interval to sigma
 
-    '1930-100-2': CalSource('Ba133', '1930-100-2', 20.52,
-                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+ALL_SOURCES = {
+    'ARMS': {
+        '1930-100-1': CalSource('Ba133', '1930-100-1', 21.11,
+                                datetime(2017, 6, 15), unit='uCi', rel_err=std_3_pct_err),
 
-    '1930-100-4': CalSource('Co60', '1930-100-4', 21.04,
-                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+        '1930-100-2': CalSource('Ba133', '1930-100-2', 20.52,
+                                datetime(2017, 6, 15), unit='uCi', rel_err=std_3_pct_err),
 
-    '1930-100-5': CalSource('Co60', '1930-100-5', 19.75,
-                            datetime(2017, 6, 15), unit='uCi', rel_err=0.032/2.3),
+        '1930-100-4': CalSource('Co60', '1930-100-4', 21.04,
+                                datetime(2017, 6, 15), unit='uCi', rel_err=std_3_pct_err),
 
-    '1915-86-3': CalSource('Cs137', '1915-86-3', 20.53,
-                           datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
+        '1930-100-5': CalSource('Co60', '1930-100-5', 19.75,
+                                datetime(2017, 6, 15), unit='uCi', rel_err=std_3_pct_err),
 
-    '1930-6-3': CalSource('Cs137', '1930-6-3', 20.75,
-                           datetime(2017, 3, 1), unit='uCi', rel_err=0.032/2.3),
+        '1915-86-3': CalSource('Cs137', '1915-86-3', 20.53,
+                               datetime(2017, 2, 15), unit='uCi', rel_err=std_3_pct_err),
 
-    '1915-86-1': CalSource('Cs137', '1915-86-1', 20.17,
-                           datetime(2017, 2, 15), unit='uCi', rel_err=0.032/2.3),
+        '1930-6-3': CalSource('Cs137', '1930-6-3', 20.75,
+                              datetime(2017, 3, 1), unit='uCi', rel_err=std_3_pct_err),
 
-    '1727-63-3': CalSource('Cs137', '1727-63-3', 18.80,
-                           datetime(2014, 4, 1), unit='uCi', rel_err=0.032/2.3),
+        '1915-86-1': CalSource('Cs137', '1915-86-1', 20.17,
+                               datetime(2017, 2, 15), unit='uCi', rel_err=std_3_pct_err),
 
-    '1727-63-4': CalSource('Cs137', '1727-63-4', 18.45,
-                           datetime(2014, 4, 1), unit='uCi', rel_err=0.032/2.3),
+        '1727-63-3': CalSource('Cs137', '1727-63-3', 18.80,
+                               datetime(2014, 4, 1), unit='uCi', rel_err=std_3_pct_err),
 
-    '1727-63-2': CalSource('Cs137', '1727-63-2', 18.88,
-                               datetime(2014, 4, 1), unit='uCi', rel_err=0.032/2.3),
+        '1727-63-4': CalSource('Cs137', '1727-63-4', 18.45,
+                               datetime(2014, 4, 1), unit='uCi', rel_err=std_3_pct_err),
 
-    '1294-91-2': CalSource('Cs137', '1294-91-2', 10.73,
-                           datetime(2008, 6, 1), unit='uCi', rel_err=0.02),  # no confirmation of uncertainty of activity
+        '1727-63-2': CalSource('Cs137', '1727-63-2', 18.88,
+                               datetime(2014, 4, 1), unit='uCi', rel_err=std_3_pct_err),
 
-    '9027-89': CalSource('Eu152', '9027-89', 0.01025,
-                         datetime(2020, 5, 1), unit='uCi', rel_err=0.032/2.3),
+        '1294-91-2': CalSource('Cs137', '1294-91-2', 10.73,
+                               datetime(2008, 6, 1), unit='uCi', rel_err=0.02),  # no confirmation of uncertainty of activity
 
-    '1727-63-1': CalSource('Eu152', '1727-63-1', 20.43,
-                           datetime(2014, 4, 1), unit='uCi',  rel_err=0.032/2.3),
+        '9027-89': CalSource('Eu152', '9027-89', 0.01025,
+                             datetime(2020, 5, 1), unit='uCi', rel_err=std_3_pct_err),
+
+        '1727-63-1': CalSource('Eu152', '1727-63-1', 20.43,
+                               datetime(2014, 4, 1), unit='uCi', rel_err=std_3_pct_err)
+    }
 }
+
+
+def get_src_cal(serial, facility='ARMS') -> CalSource:
+    cal = ALL_SOURCES[facility][serial]
+    return cal
 
 
 if __name__ == '__main__':

@@ -245,9 +245,9 @@ class ErgCal(InteractivePlot):
                     new_shape_cal = new_shape_cal + [0.0]
 
                 print("Current energy cal.:")
-                print('\t' + ' '.join([f'{x.n:.5e}' for x in new_erg_cal]))
+                print('\t' + ' '.join([f'{x.n if isinstance(x, UFloat) else x:.5e}' for x in new_erg_cal]))
                 print("Current shape cal.:")
-                print('\t' + ' '.join([f'{x.n:.5e}' for x in new_shape_cal]))
+                print('\t' + ' '.join([f'{x.n if isinstance(x, UFloat) else x:.5e}' for x in new_shape_cal]))
 
     def _plot_fit(self, erg_fit, shape_fit):
         def plot(x, y, yerr, fit, name):
@@ -416,7 +416,7 @@ if __name__ == '__main__':
     a = axs.errorbar(x, y, yerr=y)
     print()
 
-    erg = ErgCal('/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/cal_2024/Co60_50cm.Spe')
+    erg = ErgCal('/detectorModels/GRETA0/cal/Co60_50cm.Spe')
 
     #  4.16926e+00 5.10001e-04
     plt.show()

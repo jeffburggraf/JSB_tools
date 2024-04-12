@@ -341,6 +341,33 @@ class TabPlot:
 
         return ax_new
 
+    def remove_last_button(self):
+        """
+        Undo the previous button/axis that were added via self.new_ax(...)
+
+        Returns:
+
+        """
+        del self.suptitles[-1]
+        del self.button_labels[-1]
+
+        if not hasattr(self.plt_axs[-1], '__iter__'):
+            self.plt_axs[-1].set_visible(0)
+        else:
+            for ax in self.plt_axs[-1]:
+                ax.set_visible(0)
+
+        del self.plt_axs[-1]
+
+        del self._axis_shapes[-1]
+
+        self.button_axs[-1][-1].set_visible(0)
+        del self.button_axs[-1][-1]
+
+        del self.buttons[-1]
+
+        del self.button_funcs[-1]
+
     def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
                subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, *args, **kwargs) -> Union[List[Axes], Axes]:
         """

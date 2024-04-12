@@ -61,7 +61,7 @@ except ModuleNotFoundError:
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
-def auto_yscale(ax, margin=0.1, labels2avoid=None):
+def auto_yscale(ax, margin=0.1, labels2avoid=None, xmax=None, xmin=None):
     """
     Adds a callback for `ax` which causes pressing the y key to automatically scale the y axis.
 
@@ -71,12 +71,27 @@ def auto_yscale(ax, margin=0.1, labels2avoid=None):
         labels2avoid: Labels of lines which will be ignored in the calculation of the ranges.
             The labels come from 'label' keyword in plotting functions, e.g., plt.plot(x, y, label='line1')
 
+        xmin: corresponding Y values below xmin are ignored in scaling
+        xmax: corresponding Y values above xmax are ignored in scaling
+
     Returns:
 
     """
     def get_bottom_top(line):
         xd = line.get_xdata()
         yd = line.get_ydata()
+
+        i0 = 0
+        i1 = len(xd)
+
+        if xmin is not None:
+            i0 = np.searchsorted(xd, xmin)
+        if xmax is not None:
+            i1 = np.searchsorted(xd, xmax)
+
+        yd = yd[i0: i1]
+        xd = xd[i0: i1]
+
         low, high = ax.get_xlim()
         y_displayed = np.array(yd)[((xd > low) & (xd < high))]
 

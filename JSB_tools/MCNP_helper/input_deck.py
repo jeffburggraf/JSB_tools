@@ -577,7 +577,7 @@ class InputDeck:
 
     def write_inp_in_scope(self, dict_of_globals: Union[dict, List[dict]], new_file_name=None,
                            script_name="cmd", overwrite_globals=None, max_precision=8,
-                           hpc_simname=None, hpc_ctime=10, hpc_ncpus=20, hpc_notifications=False, hpc_cluster='lemhi', **mcnp_or_phits_kwargs) -> Path:
+                           hpc_simname=None, hpc_ctime=10, hpc_ncpus=20, hpc_notifications=False, hpc_cluster='sawtooth', **mcnp_or_phits_kwargs) -> Path:
         """
         Creates and fills an input deck according to a dictionary of values. Usually, just use globals().
 
@@ -661,19 +661,28 @@ class InputDeck:
 
             sim_sub_name = new_file_full_path.parent.name
             hpc = self.get_hpc_script(local_dir=new_file_full_path.parent, remote_sim_main_name=hpc_simname, remote_sim_sub_name=sim_sub_name,
-                                ctime=hpc_ctime, ncpus=hpc_ncpus, cluster=hpc_cluster, email_notifications=hpc_notifications)
+                                      ctime=hpc_ctime, ncpus=hpc_ncpus, cluster=hpc_cluster, email_notifications=hpc_notifications)
 
             hpc_run_all_cmd = f'cd {hpc.directory}\nqsub job.pbs\n\n'
 
-            f_path = (self.inp_root_directory / 'hpc').with_suffix('.sh')
+            f_path = (self.inp_root_directory / 'run').with_suffix('.sh')
 
             with open(f_path, "w" if self.__num_writes__ == 1 else "a") as f:
                 f.write(hpc_run_all_cmd)
 
             if self.__num_writes__ == 1:
-                hpc_msg = "To move these simulations to HPC:\n"\
-                          f"\t{HPCScript.gen_scp_folder2remote(f'{new_file_full_path.parents[1]}/*', 
+                hpc_msg = 'To do X, Type the following command in your local shell:\n'
+                hpc_msg += "... move sim files to HPC:\n"\
+                           f"\t{HPCScript.gen_scp_folder2remote(f'{new_file_full_path.parents[1]}/*', 
                                                                f'~/mcnp_sims/{hpc_simname}')}"
+
+                hpc_msg += ('\n\n... move sim files back to local machine:\n'
+                            f'\trsync -chavzP --stats burgjs@{hpc_cluster}1.hpc.inl.gov:~/mcnp_sims/{hpc_simname}/ {self.inp_root_directory} ')
+
+                hpc_msg += ('\n\nTo run on HPC, type the following commands into the HPC shell:\n'
+                            f'\tcd ~/mcnp_sims/{hpc_simname}\n'
+                            '\tchmod +x run.sh\n'
+                            '\t./run.sh\n\n')
                 self.hpc_messages.append(hpc_msg)
 
         return new_file_full_path
@@ -803,7 +812,7 @@ class InputDeck:
                          is_mcnp=False, __internal__=True, sch_cmd=sch_cmd)
 
     @staticmethod
-    def get_hpc_script(local_dir: Path, remote_sim_main_name, remote_sim_sub_name, ctime, cluster='lemhi',
+    def get_hpc_script(local_dir: Path, remote_sim_main_name, remote_sim_sub_name, ctime, cluster='sawtooth',
                        email_notifications=False, ncpus=20):
         hpc = HPCScript(remote_sim_main_name, remote_sim_sub_name, ctime, cluster=cluster, ncpus=ncpus, email_notifications=email_notifications)
 
@@ -860,7 +869,7 @@ def __clean__(paths, warn_message):
 
 
 class HPCScript:
-    def __init__(self, sim_name, sim_sub_path, walltime, cluster='lemhi',
+    def __init__(self, sim_name, sim_sub_path, walltime, cluster='sawtooth',
                  mpiprocs=20, ncpus=20, select=10, email_notifications=False):
         """
 
@@ -874,38 +883,40 @@ class HPCScript:
         """
         # walltime = 1.05 * ctime / ncpus
 
-        self.pbs_lines = [self.get_header(sim_name, walltime=walltime, ncpus=ncpus, mpiprocs=mpiprocs, select=select, email_notifications=email_notifications)]
+        self.pbs_lines = [self.get_header(f'{sim_name}_{sim_sub_path}', walltime=walltime, ncpus=ncpus, mpiprocs=mpiprocs, select=select, email_notifications=email_notifications)]
 
         module_line = 'module load use.exp_ctl MCNP6/' + \
                       {'lemhi': '2.0-intel-19.1.3',
                        'sawtooth': '3.0-intel'}[cluster]
 
-        self.pbs_lines.append(module_line)
+        self.pbs_lines.append(f'{module_line}\n')
         self.directory = Path(f'$HOME/mcnp_sims/{sim_name}/{sim_sub_path}')
 
-        self.pbs_lines.append(f'mkdir $HOME/mcnp_sims/{sim_name}\n'
-                              f'mkdir $HOME/mcnp_sims/{sim_name}/{sim_sub_path}\n'
-                              f'cd $HOME/mcnp_sims/{sim_name}/{sim_sub_path}')
+        tmp_dir = self.directory / "TMPDIR"
+        self.pbs_lines.append(f'mkdir -p $HOME/mcnp_sims/{sim_name}\n'
+                              f'mkdir -p $HOME/mcnp_sims/{sim_name}/{sim_sub_path}\n\n'
+                              f'cd $HOME/mcnp_sims/{sim_name}/{sim_sub_path}\n'
+                              f'export TMPDIR={tmp_dir}  # Directory used for MPI related files\n'
+                              f'mkdir -p {tmp_dir.name}\n')
 
     @staticmethod
-    def gen_scp_file2remote(file_paths: list, src_directory="~", cluster='lemhi1'):
+    def gen_scp_file2remote(file_paths: list, src_directory="~", cluster='sawtooth'):
         files = ','.join(map(str, file_paths))
 
-        out = f"scp {{{files}}} burgjs@{cluster}.hpc.inl.gov:{src_directory}"
+        out = f"scp {{{files}}} burgjs@{cluster}1.hpc.inl.gov:{src_directory}"
         return out
 
     def get_pbs(self, inp_name):
-        self.pbs_lines += [f'export TMPDIR={self.directory}',
-                           f'mpirun mcnp6.mpi i={inp_name} n={inp_name}.out']
+        self.pbs_lines += [f'mpirun mcnp6.mpi i={inp_name}']
         return '\n'.join(self.pbs_lines)
 
     @staticmethod
-    def gen_scp_folder2remote(folder: Union[str, Path], src_directory="~", cluster='lemhi1'):
-        out = f"rsync -r {folder} burgjs@{cluster}.hpc.inl.gov:{src_directory}"
+    def gen_scp_folder2remote(folder: Union[str, Path], src_directory="~", cluster='sawtooth'):
+        out = f"rsync -r {folder} burgjs@{cluster}1.hpc.inl.gov:{src_directory}"
         return out
 
     @staticmethod
-    def get_header(job_name, walltime: Union[str, int], email_notifications=False,
+    def get_header(job_name, walltime: Union[str, int], mcnp_version=3, email_notifications=False,
                    mpiprocs=20, ncpus=20, select=10):
 
         if isinstance(walltime, (int, float)):  # assume seconds
@@ -932,8 +943,14 @@ class HPCScript:
             out += "#PBS -M jeffrey.burggraf@inl.gov\n#PBS -m bae\n"
 
         out += '#\n'
+        if mcnp_version == 3:
+            data_p = 'mcnpdata-3.0/'
+        elif mcnp_version == 2:
+            data_p = 'mcnpdata-2.0/MCNP_DATA/'
+        else:
+            raise ValueError(f"Bad MCNP verion, '{mcnp_version}'")
 
-        out += "export DATAPATH=/hpc-common/data/mcnp/mcnpdata-2.0/MCNP_DATA\n" \
+        out += f"export DATAPATH=/hpc-common/data/mcnp/{data_p}\n" \
                'echo "DATAPATH=$DATAPATH"\n'
 
         return out

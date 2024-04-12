@@ -1090,7 +1090,7 @@ if __name__ == '__main__':
     from JSB_tools.nuke_data_tools import Nuclide
 
 
-    spe = SPEFile("/Users/burgjs/PycharmProjects/miscMCNP/detectorModels/GRETA0/cal_2024/BG_long.Spe")
+    spe = SPEFile("/detectorModels/GRETA0/cal/BG_long.Spe")
 
     peaks = [237.2, 350.4, 608.68, 2614.5]
 
