@@ -242,9 +242,12 @@ class TabPlot:
                     else:
                         [ax.set_navigate(False) for ax in axs_group]
 
-            title = self.suptitles[index]
+            title = self.suptitles[index]  # todo: make supltitle worjk with plot changes and axes grids
 
-            self.fig.suptitle(title)
+            if len(self.plt_axs[index]) == 1:
+                self.plt_axs[index][0].set_title(title)
+            else:
+                self.fig.suptitle(title)
 
             for ax in self.global_axs:
                 if ax.data_coordsx:
@@ -474,10 +477,10 @@ class TabPlot:
 
         if self._vis_flag:
             self._vis_flag = False
-            if suptitle is not None:
-                self.fig.suptitle(suptitle)
-            else:
-                self.fig.suptitle(button_label)
+            # if suptitle is not None:
+            #     self.fig.suptitle(suptitle)
+            # else:
+            #     self.fig.suptitle(button_label)
         else:
             [ax.set_visible(0) for ax in axs_flat]
 

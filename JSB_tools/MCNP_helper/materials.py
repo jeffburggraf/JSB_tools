@@ -511,6 +511,17 @@ class Material:
 
         self._xs_libraries.append(xs_library)
 
+    def remove_zaid(self, zaid):
+        for i in range(len(self._zaids)):
+            if self._zaids[i] == zaid:
+                break
+        else:
+            return
+
+        del self._zaids[i]
+        del self._zaid_proportions[i]
+        del self._xs_libraries[i]
+
     @property
     def mat_card(self, mat_kwargs=None) -> str:
         if mat_kwargs is not None:

@@ -3,15 +3,62 @@ from openmc.data import Evaluation, Reaction, IncidentNeutron, IncidentPhoton, R
 import numpy as np
 import matplotlib.pyplot as plt
 import re
+import matplotlib
+matplotlib.use('Qt5Agg')
 from JSB_tools.tab_plot import TabPlot
 from JSB_tools.nuke_data_tools import Nuclide
 
+n = 'U231'
+d = {}
+for k, v in Nuclide(n).get_incident_neutron_daughters(data_source='endf').items():
+    d[k] = {'endf': v.xs}
 
-n = Nuclide('Co60')
-n.decay_gamma_lines
-p = '/Users/burgjs/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/TENDL-n/n-In113.tendl'
-projectile='neutron'
-nuclide='In113'
+for k, v in Nuclide(n).get_incident_neutron_daughters(data_source='tendl').items():
+    # if k in d
+    try:
+        d[k]['tendl'] = v.xs
+    except KeyError:
+        d[k] = {'tendl': v.xs}
+
+# d = {k: v for k, v in d.items() if len(v) == 2}
+
+tab = TabPlot()
+# tab.fig.set_title()
+x = np.linspace(0.01, 10, 1000)
+tab.fig.suptitle(f"Neutrons on {n}")
+
+for k, d_ in d.items():
+    if len(d_) <2:
+        continue
+
+    try:
+        ax = tab.new_ax(k)
+    except OverflowError:
+        tab = TabPlot()
+        ax = tab.new_ax(k)
+
+    for data, xs in d_.items():
+        y = xs(x)
+        if all(y == 0):
+            tab.remove_last_button()
+            break
+        ax.plot(x, xs(x), label=data)
+    else:
+        ax.legend()
+        ax.set_xlabel('Energy [MeV]')
+        ax.set_ylabel('xs [b]')
+plt.show()
+print()
+    # xs = v.xs()
+# p = '/Users/burgjs/PycharmProjects/JSB_tools/JSB_tools/nuke_data_tools/nuclide/endf_files/ENDF-B-VIII.0_neutrons/n-092_U_238.endf'
+# ev = Evaluation(p)
+# mts = [x[1] for x in ev.reaction_list if x[0] == 3]
+#
+# for mt in mts:
+#     r = Reaction.from_endf(ev, mt)
+#     for prod in r.products:
+#         print()
+#     print()
 
 # NUCLIDE_NAME_MATCH = re.compile(
 #         "^(?P<s>[A-z]{1,3})(?P<A>[0-9]{1,3})(?:_?(?P<m_e>[me])(?P<iso>[0-9]+))?$")

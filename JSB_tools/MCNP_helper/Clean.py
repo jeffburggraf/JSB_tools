@@ -31,7 +31,7 @@ if '-outp' == sys.argv[1]:
 else:
     safe_files = []
 
-m = re.compile(r"(ptra[a-z]$)|(runtp[a-z]$)|(runtp[a-z]\.h5$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
+m = re.compile(r"(ptra[a-z]$)|(ptra[a-z].h5$)|(runtp[a-z]$)|(runtp[a-z]\.h5$)|(mcta[a-z]$)|(out[a-z]$)|(comou[a-z]$)|(meshta[a-z]$)|(mdat[a-z]$)|"
                r"(plot[m-z]\.ps)")
 
 paths = list(cwd.iterdir())

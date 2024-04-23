@@ -2143,6 +2143,9 @@ class FileManager:
     def all_files(self) -> Dict[Path, Dict[str, str]]:
         return {k: v for k, v in self.file_lookup_data.items()}
 
+    def __iter__(self) -> dict:
+        return iter(self.all_files.items())
+
     def unpickle_data(self, **lookup_kwargs):
         """
         Unpickle and return the file who's keys/values match exactly
