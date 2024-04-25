@@ -8,7 +8,7 @@ matplotlib.use('Qt5Agg')
 from JSB_tools.tab_plot import TabPlot
 from JSB_tools.nuke_data_tools import Nuclide
 
-n = 'U231'
+n = 'Co59'
 d = {}
 for k, v in Nuclide(n).get_incident_neutron_daughters(data_source='endf').items():
     d[k] = {'endf': v.xs}
@@ -20,15 +20,14 @@ for k, v in Nuclide(n).get_incident_neutron_daughters(data_source='tendl').items
     except KeyError:
         d[k] = {'tendl': v.xs}
 
-# d = {k: v for k, v in d.items() if len(v) == 2}
 
 tab = TabPlot()
-# tab.fig.set_title()
+
 x = np.linspace(0.01, 10, 1000)
 tab.fig.suptitle(f"Neutrons on {n}")
 
 for k, d_ in d.items():
-    if len(d_) <2:
+    if len(d_) < 2:
         continue
 
     try:

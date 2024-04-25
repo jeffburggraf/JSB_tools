@@ -170,7 +170,8 @@ def latex_form(val, n_digits=2):
     return fr"${base}\times 10^{{{exp}}}$"
 
 
-def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=5, xfmt='.2g', yfmt='.2g'):
+def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=5, xfmt='.2g', yfmt='.2g',
+           cmap=plt.cm.get_cmap("jet"), interpolation="none", imshow_kwargs=None):
     """
     2D heatmap, similar to ROOTs TH2D
 
@@ -202,6 +203,7 @@ def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=
     flatZ = Z.flatten()
     abs_flatZ = np.abs(flatZ)
     if logz:
+        Z[np.where(Z <= 0)] = np.nan
         if min(flatZ) < 0:
             linthresh = np.percentile(abs_flatZ, 1)
             if linthresh == 0:
@@ -220,18 +222,34 @@ def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=
     else:
         norm = None
 
-    im = ax.imshow(Z, origin='lower', norm=norm)
+    if imshow_kwargs is None:
+        imshow_kwargs = {}
+
+    im = ax.imshow(Z, origin='lower', norm=norm, cmap=cmap, interpolation=interpolation, **imshow_kwargs)
+
     cbar = fig.colorbar(im, ax=ax)
 
-    y_labels = list(map(lambda x: float(f'{x:{yfmt}}'), np.linspace(0, ybins[-1], n_labels_x)))
-    x_labels = list(map(lambda x: float(f'{x: {xfmt}}'), np.linspace(0, xbins[-1], n_labels_y)))
+    xs, ys = 0.5 * (xbins[1:] + xbins[:-1]), 0.5 * (ybins[1:] + ybins[:-1])
 
-    ax.set_yticks(np.linspace(0, len(ybins) - 1, len(y_labels)), labels=y_labels)
-    ax.set_xticks(np.linspace(0, len(xbins) - 1, len(x_labels)), labels=x_labels)
+    def index2data(index, bins):
+        return np.interp(index, np.arange(len(bins)), bins)
 
-    ax.format_coord = lambda x, y: f'x={x * x_labels[-1]/(len(xbins) -1):g}, y={y * y_labels[-1]/(len(ybins) -1):g}'
+    def get_labels(n_labels, bin_centers, fmt):
+        poss = np.linspace(0, len(bin_centers), n_labels)
+        labels = index2data(poss, bin_centers)
 
-    return {'ax': ax, 'cbar': cbar, 'im': im, 'xbins': xbins, 'ybins': ybins}
+        labels = [fmt(x) for x in labels]
+        return poss, labels
+
+    posx, labelx = get_labels(n_labels_x, xs, lambda x: float(f'{x:{xfmt}}'))
+    posy, labely = get_labels(n_labels_y, ys, lambda x: float(f'{x:{yfmt}}'))
+
+    ax.set_xticks(posx, labels=labelx)
+    ax.set_yticks(posy, labels=labely)
+
+    ax.format_coord = lambda x, y: f'x={index2data(x, xs):g}, y={index2data(y, ys):g}'
+
+    return {'ax': ax, 'ax_cbar': cbar.ax, 'cbar': cbar, 'xbins': xbins, 'ybins': ybins}
 
 
 def binned_down_sample(bins, y, yerr, n):
@@ -2239,30 +2257,16 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    # import numpy as np
-    # from matplotlib import pyplot as plt
-    #
-    # x = np.linspace(0, np.pi * 2, 1000)
-    #
-    # f = TabPlot()
-    # axs = []
-    # for i in range(1, 5):
-    #     ax = f.new_ax(i)
-    #     axs.append(ax)
-    #
-    #     ax.plot(x, np.sin(x * i), label='label 1')
-    #     ax.plot(x, np.sin(x * i) ** 2, label='label 2')
-    #     ax.plot(x, np.sin(x * i) ** 3, label=f'label 3')
-    #     ax.legend()
-    #     ax.set_title(str(i))
-    #
-    #     if i == 4:
-    #         bins = np.concatenate([x, [x[-1] + x[1] - x[0]]])
-    #         y = np.sin(x * i) ** 2
-    #         mpl_hist(bins, y, yerr=y, ax=ax)
-    plt.show()
-    # d = {1: {1: {2: [3], 3:5}, 3: {1: [2,1,4]}}}
-    # for h in flatten_dict_values(d):
-    #     print(h)
+    N=int(1E8)
+    bw = 0.1
+    datax = np.random.normal(2.5, size=N)
+    datay = np.random.normal(4.5, size=N)
+    
+    bins = np.arange(-2, 15, bw), np.arange(-3, 18, bw)
 
+    print(bins)
+
+    hist2D(datax, datay, bins=bins)
+
+    plt.show()
 
