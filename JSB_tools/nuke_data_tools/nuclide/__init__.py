@@ -1893,7 +1893,7 @@ class DecayNuclide:
             if isinstance(driving_term, (int, float, UFloat)):
                 if isinstance(driving_term, UFloat):
                     rel_err = driving_term.std_dev
-                    warn('Errors not current propagated through solution! todo')
+                    warn('Errors not currently propagated through solution! todo')
 
                 driving[0] = driving_term
 
