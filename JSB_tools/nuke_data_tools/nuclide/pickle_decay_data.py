@@ -74,6 +74,8 @@ def get_hl_from_ednf_file(path_to_file):
 
 def set_nuclide_attributes(_self: nuclide_module.Nuclide, ev: Evaluation, open_mc_decay: Decay):
     _self.half_life = open_mc_decay.half_life
+    _self.half_life.tag = f'half_life_{_self.name}'
+
     _self.mean_energies = open_mc_decay.average_energies
     _self.spin = open_mc_decay.nuclide["spin"]
 
@@ -104,13 +106,8 @@ def set_nuclide_attributes(_self: nuclide_module.Nuclide, ev: Evaluation, open_m
 
 def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_process=None):
     """
-    Pickles nuclide properties into ../data/nuclides/x.pickle
-    Writes   __fast__gamma_dict__.marshal, which can be used to quickly look up decays by decay energy.
-    data structure of __fast__gamma_dict__:
-        {
-         g_erg_1: ([name1, name2, ...], [intensity1, intensity2, ...], [half_life1, half_life2, ...]),
-         g_erg_2: (...)
-         }
+    Pickles nuclide properties into ../pickled_data/nuclides/XXAAA.pickle
+
     Args:
         pickle_nuclides: If false, don't save to pickle files.
         pickle_spectra:
@@ -193,9 +190,9 @@ def pickle_decay_data(pickle_nuclides=True, pickle_spectra=True, nuclides_to_pro
 
         set_nuclide_attributes(parent_nuclide, openmc_evaluation, openmc_decay)
 
-        if pickle_spectra:
-            for spectra_mode, spec_data in openmc_decay.spectra.items():
-                spectra = nuclide_module._DiscreteSpectrum(parent_nuclide, spec_data)
+        for spectra_mode, spec_data in openmc_decay.spectra.items():
+            spectra = nuclide_module._DiscreteSpectrum(parent_nuclide, spec_data)
+            if pickle_spectra:
                 spectra.__pickle__()
 
     if pickle_nuclides:
@@ -250,3 +247,5 @@ def pickle_levels(): # todo: Improve this. All of it.
 if __name__ == '__main__':
     # pickle_levels()
     pickle_decay_data(True, True, nuclides_to_process=None)
+
+    # n =

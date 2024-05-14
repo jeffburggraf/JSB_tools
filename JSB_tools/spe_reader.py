@@ -215,6 +215,9 @@ class SPEFile(EfficiencyCalMixin):
         except FileNotFoundError:
             pass
 
+    def __repr__(self):
+        return f"< SpeFile: {self.path.relative_to(self.path.parents[1])} >"
+
     def get_sigma(self, erg):
         """
         Gets sigma from linear Eq. for FWHM: a + bx + cx^2

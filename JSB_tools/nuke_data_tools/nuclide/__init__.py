@@ -14,7 +14,7 @@ from JSB_tools.nuke_data_tools.nudel import LevelScheme
 import functools
 import uncertainties.unumpy as unp
 from uncertainties import UFloat, ufloat
-from uncertainties.core import Variable
+from uncertainties.core import Variable, AffineScalarFunc
 from scipy.integrate import odeint
 from typing import Callable
 from pendulum import Date, Interval
@@ -257,6 +257,8 @@ class Nuclide(Element):
         else:
             self = Nuclide.all_instances[symbol]
             self.is_valid = True
+
+            # self.half_life.tag = f'half_life_{self.name}'
 
             return self
 
@@ -1393,9 +1395,20 @@ class _DiscreteSpectrum:
         try:
             self.__discrete_entries__ = spectra_data["discrete"]
             for emission_data in self.__discrete_entries__:
-                emission_data['intensity'] = discrete_normalization * emission_data['intensity']
-                emission_data['energy'] = emission_data['energy'] * 1E-3
+                intensity = discrete_normalization * emission_data['intensity']
+                energy = emission_data['energy'] * 1E-3
+
+                if isinstance(energy, AffineScalarFunc):
+                    energy = ufloat(energy.n, energy.std_dev, f'γEnergy{energy.n:.2f}keV')
+
+                if isinstance(intensity, AffineScalarFunc):
+                    intensity = ufloat(intensity.n, intensity.std_dev, tag=f"γIntensity_{energy.n:.2f}keV")
+
                 emission_data['from_mode'] = tuple(emission_data['from_mode'])
+
+                emission_data['intensity'] = intensity
+                emission_data['energy'] = energy
+
         except KeyError:
             self.__discrete_entries__ = []
 
