@@ -49,14 +49,23 @@ def fwhm_lin_fit(ergs, fwhms, errs, deg=1):
 
 
 class PltGammaLine:
-    def __init__(self, erg, intensity, nuclide=None):
+    def __init__(self, erg, intensity, nuclide=None, source=None):
         self.erg = erg
         self.intensity = intensity
         self.nuclide_name = nuclide.strip() if nuclide is not None else nuclide
 
         self.axvline: Union[None, Line2D] = None
 
+        self.source = source
+
         self.annotation_text = None
+
+    def label_name(self):
+        out = f"{self.nuclide_name}"
+        if self.source is not None:
+            out += f" ({self.source})"
+
+        return out
 
     def __repr__(self):
         return f'{self.nuclide_name} @ {self.erg} keV'
@@ -75,7 +84,7 @@ with open(cwd / 'Background.csv') as f:
         except ValueError:
             intensity = 1
 
-        gline = PltGammaLine(erg, intensity, nuclide)
+        gline = PltGammaLine(erg, intensity, nuclide, source="BG")
         GAMMA_LINES['background'].append(gline)
 
 
@@ -110,8 +119,10 @@ def print_location(event):
 
 
 def plt_init(spe: SPEFile, ax_erg, ax_shape):
-    ax_erg.plot(spe.channels, spe.energies, color='red', lw=1)
-    ax_shape.plot(spe.energies, spe.get_fwhm(spe.energies), color='red', lw=1)
+    ax_erg.plot(spe.channels, spe.energies, color='red', lw=1, label="Prior fit")
+    ax_shape.plot(spe.energies, spe.get_fwhm(spe.energies), color='red', lw=1, label="Prior fit")
+    ax_shape.legend()
+    ax_erg.legend()
 
 class ErgCal(InteractivePlot):
     """
@@ -229,7 +240,7 @@ class ErgCal(InteractivePlot):
             self.fit_erg_errs.append(fit_erg_error)
             self.fit_fwhms_errs.append(fit_fwhm_err)
 
-            print(f"Added fit @ {self.selected_gline.erg:.1f} keV\n")
+            print(f"Added fit @ {self.selected_gline.erg:.1f} keV len= {len(self.fit_chs)}\n")
             deg = 1  # todo: make button
 
             if len(self.fit_chs) > 1:
@@ -327,7 +338,7 @@ class ErgCal(InteractivePlot):
         x = self.mouse_over_gline.erg
         y = self.ax.get_ylim()[-1]
 
-        self.mouse_over_gline.annotation_text = self.ax.annotate(self.mouse_over_gline.nuclide_name, (x, y))
+        self.mouse_over_gline.annotation_text = self.ax.annotate(self.mouse_over_gline.label_name(), (x, y))
 
         self.update()
 
@@ -367,7 +378,6 @@ class ErgCal(InteractivePlot):
 
         if val is not None:
             self.annotate()
-        pass
 
     def hover(self, event):
         if self.mouse_over_gline is not None:

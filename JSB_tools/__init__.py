@@ -739,12 +739,40 @@ def rebin(old_bins, old_ys, new_bins, is_density=False, return_under_over_flow=F
     """
     Rebin function (March 2024)
 
+    Optimization Notes:
+        Runs @ 30 times per second for the rebinning of a ~15,000 bin array.
+
     Args:
         old_bins:
         old_ys:
         new_bins:
         is_density: If old_ys is a density (i.e. not counts), then set this to True
         return_under_over_flow: Return underflow/overflow (values lying outside new_bins)
+
+    Examples:
+        old_bins = np.linspace(0, 10, 10000)
+        new_bins = np.linspace(0, 10, 13450)
+
+        N=int(2E7)
+
+        data = np.random.normal(5, size=N)
+        y_old, _ = np.histogram(data, bins=old_bins)
+
+        print("Begin rebin")
+        t0 = time.time()
+        y_new = rebin(old_bins, y_old, new_bins)
+        print(f"End rebin: dt = {time.time() - t0}")
+
+        b_widths_old = old_bins[1:] - old_bins[:-1]
+        b_widths_new = new_bins[1:] - new_bins[:-1]
+
+        fig, ax = plt.subplots()
+        mpl_hist(old_bins, y_old/b_widths_old, label="Original bins", ax=ax)
+        mpl_hist(new_bins, y_new/b_widths_new, label="Rebinned", ax=ax)
+
+        ax.set_ylabel("Density")
+
+        plt.show()
 
     Returns:
 
@@ -2257,16 +2285,29 @@ def interp1d_errors(x: Sequence[float], y: Sequence[UFloat], x_new: Sequence[flo
 
 
 if __name__ == '__main__':
-    N=int(1E8)
-    bw = 0.1
-    datax = np.random.normal(2.5, size=N)
-    datay = np.random.normal(4.5, size=N)
-    
-    bins = np.arange(-2, 15, bw), np.arange(-3, 18, bw)
+    import numba
 
-    print(bins)
+    old_bins = np.linspace(0, 10, 10000)
+    new_bins = np.linspace(0, 10, 13450)
 
-    hist2D(datax, datay, bins=bins)
+    N=int(2E7)
+
+    data = np.random.normal(5, size=N)
+    y_old, _ = np.histogram(data, bins=old_bins)
+
+    print("Begin rebin")
+    t0 = time.time()
+    y_new = rebin(old_bins, y_old, new_bins)
+    print(f"End rebin: dt = {time.time() - t0}")
+
+    b_widths_old = old_bins[1:] - old_bins[:-1]
+    b_widths_new = new_bins[1:] - new_bins[:-1]
+
+    fig, ax = plt.subplots()
+    mpl_hist(old_bins, y_old/b_widths_old, label="Original bins", ax=ax)
+    mpl_hist(new_bins, y_new/b_widths_new, label="Rebinned", ax=ax)
+
+    ax.set_ylabel("Density")
 
     plt.show()
 

@@ -390,8 +390,8 @@ class SPEFile(EfficiencyCalMixin):
         Returns:
 
         """
-        new_counts = rebin(self.erg_bins, self.counts, new_bins)
-        self.counts = new_counts
+        new_counts = rebin(self.erg_bins, self.nominal_counts, new_bins)
+        self.counts = unp.uarray(new_counts, np.sqrt(new_counts))
         self._erg_bins = new_bins
         self._energies = 0.5 * (new_bins[1:] + new_bins[:-1])
         return new_counts
