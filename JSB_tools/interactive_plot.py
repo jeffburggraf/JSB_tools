@@ -166,6 +166,9 @@ class InteractivePlot:
 
             self.fit_visuals.append(t)
 
+    def set_fit_window(self, val):
+        self.window_textbox.set_val(f"{val}")
+
     @property
     def fit_click_centers(self):
         return [c.x for c in self.fit_clicks]

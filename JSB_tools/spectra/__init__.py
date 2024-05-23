@@ -529,7 +529,7 @@ class ListSpectra(EfficiencyCalMixin):
 
             eff_corr: If True, account for efficiency
 
-            scale: User supplied float or array of floats (len(bins) - 1) used to scale rates.
+            scale: User supplied float or array of floats (len(bins) - 1) used to scale gamma_rates.
                 If a Callable, the bins wil be passed to the supplied function which must return array of normalization
                 values of same length as bins.
 

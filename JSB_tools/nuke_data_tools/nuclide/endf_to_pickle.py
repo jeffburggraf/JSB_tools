@@ -350,6 +350,6 @@ if NO_PICKLE_DEBUG:
     pickle.dump = marshal.dump = dump_do_nothing
 
 if __name__ == '__main__':
-    pass
-    pickle_activation_data(libraries='tendl', parallel=True)
+    pickle_fission_product_yields(['sf'])
+    # pickle_activation_data(libraries='tendl', parallel=True)
 

@@ -375,7 +375,7 @@ class SPEFile(EfficiencyCalMixin):
 
         self._energies = self.energies[i0: i1]
         self.channels = self.channels[i0: i1]
-        self._erg_bins = None
+        self._erg_bins = self.erg_bins[i0: i1 + 1]
 
         if self._effs is not None:
             self._effs = self.effs[i0: i1]

@@ -486,7 +486,7 @@ class MaestroListFile(ListSpectra):
     #             half `signal_window_kev`)
     #         make_rate: Makes units in Hz instead of counts.
     #         eff_corr: If True, account for efficiency
-    #         scale: User supplied float or array of floats (len(bins) - 1) used to scale rates.
+    #         scale: User supplied float or array of floats (len(bins) - 1) used to scale gamma_rates.
     #             If a Callable, the bins wil be passed to the supplied function which must return array of normalization
     #             values of same length as bins.
     #         nominal_values: If False, return unp.uarray (i.e. include Poissonian errors).

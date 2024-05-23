@@ -3,12 +3,13 @@ import warnings
 import numpy as np
 from JSB_tools.spe_reader import SPEFile, InteractivePlot
 from JSB_tools.nuke_data_tools import Nuclide
+from JSB_tools import BijectiveMap
 from pathlib import Path
 from matplotlib import pyplot as plt
 import matplotlib
 from matplotlib.lines import Line2D
 from typing import Union, List
-from matplotlib.widgets import TextBox
+from matplotlib.widgets import TextBox, CheckButtons
 from uncertainties import UFloat
 from lmfit.models import PolynomialModel
 from uncertainties import ufloat
@@ -49,7 +50,49 @@ def fwhm_lin_fit(ergs, fwhms, errs, deg=1):
 
 
 class PltGammaLine:
-    def __init__(self, erg, intensity, nuclide=None, source=None):
+    ALL_LINES = {}
+
+    @staticmethod
+    def load_lines():
+        PltGammaLine.ALL_LINES['BG'] = []
+        with open(cwd / 'Background.csv') as f:
+            [f.readline() for i in range(3)]
+
+            while line := f.readline():
+                erg, intensity, nuclide, _ = line.split(',')
+                erg = float(erg)
+                try:
+                    intensity = float(intensity)
+                except ValueError:
+                    intensity = 1
+
+                gline = PltGammaLine(erg, intensity, nuclide, source="BG", color="green")
+                PltGammaLine.ALL_LINES['BG'].append(gline)
+
+        PltGammaLine.ALL_LINES['Check sources'] = []
+        for nuclide_name in check_sources:
+            nuclide = Nuclide(nuclide_name)
+            for gline in nuclide.get_gammas():
+                gline = PltGammaLine(gline.erg.n, gline.intensity.n, nuclide.name)
+                PltGammaLine.ALL_LINES['Check sources'].append(gline)
+
+        with open(cwd/'gammas') as f:
+            f.readline()
+            for line in f.readlines():
+                source_name, decaying_nucleus, gamma_erg, rel_rate, gammma_intensity = line.split(';')
+                gline = PltGammaLine(gamma_erg, gammma_intensity, decaying_nucleus, source=source_name)
+
+                if source_name not in PltGammaLine.ALL_LINES:
+                    PltGammaLine.ALL_LINES[source_name] = [gline]
+                else:
+                    PltGammaLine.ALL_LINES[source_name].append(gline)
+
+    def __eq__(self, other):
+        if other.erg != self.erg or self.nuclide_name != other.nuclide_name:
+            return False
+        return True
+
+    def __init__(self, erg, intensity, nuclide=None, source=None, color='black'):
         self.erg = erg
         self.intensity = intensity
         self.nuclide_name = nuclide.strip() if nuclide is not None else nuclide
@@ -59,6 +102,7 @@ class PltGammaLine:
         self.source = source
 
         self.annotation_text = None
+        self.color = color
 
     def label_name(self):
         out = f"{self.nuclide_name}"
@@ -71,38 +115,17 @@ class PltGammaLine:
         return f'{self.nuclide_name} @ {self.erg} keV'
 
 
-GAMMA_LINES = {'background': [],
-               'check_sources': []}
-
-with open(cwd / 'Background.csv') as f:
-    [f.readline() for i in range(3)]
-    while line := f.readline():
-        erg, intensity, nuclide, _ = line.split(',')
-        erg = float(erg)
-        try:
-            intensity = float(intensity)
-        except ValueError:
-            intensity = 1
-
-        gline = PltGammaLine(erg, intensity, nuclide, source="BG")
-        GAMMA_LINES['background'].append(gline)
-
-
-for nuclide_name in check_sources:
-        nuclide = Nuclide(nuclide_name)
-        for gline in nuclide.get_gammas():
-            gline = PltGammaLine(gline.erg.n, gline.intensity.n, nuclide.name)
-            GAMMA_LINES['check_sources'].append(gline)
+PltGammaLine.load_lines()
 
 
 def get_gamma_lines(check_sourcesQ=False, backgroundQ=False, nuclides=None):
     gamma_lines: List[PltGammaLine] = []
 
     if backgroundQ:
-        gamma_lines.extend(GAMMA_LINES['background'])
+        gamma_lines.extend(GAMMA_LINES['BG'])
 
     if check_sourcesQ:
-        gamma_lines.extend(GAMMA_LINES['check_sources'])
+        gamma_lines.extend(GAMMA_LINES['Check sources'])
 
     gamma_lines = list(sorted(gamma_lines, key=lambda x: x.erg))
 
@@ -118,11 +141,38 @@ def print_location(event):
     print(dir(event))
 
 
-def plt_init(spe: SPEFile, ax_erg, ax_shape):
+def plt_init(spe: SPEFile, ax_erg, ax_shape,):
     ax_erg.plot(spe.channels, spe.energies, color='red', lw=1, label="Prior fit")
     ax_shape.plot(spe.energies, spe.get_fwhm(spe.energies), color='red', lw=1, label="Prior fit")
     ax_shape.legend()
     ax_erg.legend()
+
+
+BG_auto_fit = [
+    ("Tl-208", 2614.453),
+    ("Tl-208", 583.191),
+    ("S.E.", 2103.5),
+    ("Bi-214", 1764.494),
+    ("Bi-214", 1120.287),
+    ("Bi-214", 609.312),
+    ("K-40", 1460.83),
+    ("Ac-228", 911.204),
+    ("Pb-214", 351.932),
+    ("Pb-214", 295.224),
+               ]
+
+
+class MyMouseEvent:
+    def __init__(self, xdata, ax):
+        self.xdata = xdata
+        self.ax = ax
+        self.dblclick = False
+
+
+class MyKeyEvent:
+    def __init__(self, key):
+        self.key = key
+
 
 class ErgCal(InteractivePlot):
     """
@@ -135,26 +185,29 @@ class ErgCal(InteractivePlot):
         self.spe: SPEFile = SPEFile(spe_path)
         self.erg_calibration = self.spe.erg_calibration
 
-        self.data_point_fig, self.data_point_axs = plt.subplots(1, 2, figsize=(12, 8))
-        plt_init(self.spe, *self.data_point_axs)
+        self.data_point_fig, self.data_point_axs = plt.subplots(2, 2, figsize=(12, 8))
+        plt_init(self.spe, self.data_point_axs[0, 0], self.data_point_axs[0, 1])
+        self.data_point_axs[1, 0].set_xlabel("Energy [keV]")
+        self.data_point_axs[1, 0].set_ylabel("Fit residue [keV]")
 
-        self.data_point_axs[0].set_title("Energy fit")
-        self.data_point_axs[1].set_title("Shape fit")
+        erg_ax = self.data_point_axs[0, 0]
+        shape_ax = self.data_point_axs[0, 1]
 
-        self.data_point_axs[0].set_xlabel("Ch.")
-        self.data_point_axs[0].set_ylabel("Energy")
+        erg_ax.set_title("Energy fit")
+        shape_ax.set_title("Shape fit")
 
-        self.data_point_axs[1].set_xlabel("Energy")
-        self.data_point_axs[1].set_ylabel("FWHM")
+        erg_ax.set_xlabel("Ch.")
+        erg_ax.set_ylabel("Energy")
 
-        self.data_point_axs = {'erg_fit': self.data_point_axs[0], 'shape_fit': self.data_point_axs[1]}
+        shape_ax.set_xlabel("Energy")
+        shape_ax.set_ylabel("FWHM")
+
+        self.data_point_axs = {'erg_fit': erg_ax, 'shape_fit': shape_ax, "erg_fit_residue": self.data_point_axs[1, 0]}
         self.data_point_lines = {'erg_fit': None, 'shape_fit': None}
 
         bins = self.spe.erg_bins
         counts = self.spe.get_counts(make_density=True, nominal_values=True)
         super().__init__(bins, counts)
-
-        self.gamma_lines: List[PltGammaLine] = get_gamma_lines(backgroundQ=True, check_sourcesQ=True)
 
         intensity_txt_box_ax = self.fig.add_axes([0.8, 0.88, 0.15, 0.04])
 
@@ -163,6 +216,11 @@ class ErgCal(InteractivePlot):
 
         self.intensity_textbox = TextBox(intensity_txt_box_ax, 'min.\nintensity(%)', initial='10%')
         self.intensity_textbox.on_submit(self.plot_glines)
+
+        check_button_ax = self.fig.add_axes([0.01, 0.3, 0.062, .55])
+        self.gline_labels_map = BijectiveMap({x: f"{'\n'.join(x.split())}" for x in PltGammaLine.ALL_LINES.keys()})
+        self.gamma_line_check_buttons = CheckButtons(check_button_ax, gline_labels_map.values())
+
         self.plot_glines()
 
         self.fig.canvas.mpl_connect("motion_notify_event", self.hover)
@@ -176,6 +234,8 @@ class ErgCal(InteractivePlot):
 
         self.fig.suptitle(self.spe.path.name)
 
+        self.residue_line = None
+
     def erg_2_channel(self, erg):
         if len(self.spe.erg_calibration) == 2:
             a, b = self.spe.erg_calibration
@@ -186,7 +246,7 @@ class ErgCal(InteractivePlot):
         if c != 0:
             a, b, c = self.spe.erg_calibration
             sqrt_term = np.sqrt(b**2 - 4*a*c + 4*c*erg)
-            sols = 2/c * np.array([sqrt_term - b, sqrt_term - b])
+            sols = 1/(2*c) * np.array([-sqrt_term - b, sqrt_term - b])
             return max(sols)
         else:
             return (erg - a)/b
@@ -240,10 +300,11 @@ class ErgCal(InteractivePlot):
             self.fit_erg_errs.append(fit_erg_error)
             self.fit_fwhms_errs.append(fit_fwhm_err)
 
-            print(f"Added fit @ {self.selected_gline.erg:.1f} keV len= {len(self.fit_chs)}\n")
-            deg = 1  # todo: make button
+            print(f"Added fit @ {self.selected_gline.erg:.1f} keV (ch = {fit_ch:.1f}) len= {len(self.fit_chs)}\n")
+            deg = 2  # todo: make button
+            print(self.selected_gline.erg, self.selected_gline.nuclide_name)
 
-            if len(self.fit_chs) > 1:
+            if len(self.fit_chs) > deg:
                 erg_fit_result, new_erg_cal = lin_fit(self.fit_chs, self.fit_ergs, self.fit_erg_errs, deg=deg)
                 self.erg_calibration = new_erg_cal
 
@@ -259,6 +320,25 @@ class ErgCal(InteractivePlot):
                 print('\t' + ' '.join([f'{x.n if isinstance(x, UFloat) else x:.5e}' for x in new_erg_cal]))
                 print("Current shape cal.:")
                 print('\t' + ' '.join([f'{x.n if isinstance(x, UFloat) else x:.5e}' for x in new_shape_cal]))
+
+    def auto_fit(self, nuclide_names_ergs: List, fit_window=4):
+        line_lookup = {}
+        self.set_fit_window(fit_window)
+
+        for name in GAMMA_LINES:
+            for line in GAMMA_LINES[name]:
+                line: PltGammaLine
+                line_lookup[(line.nuclide_name, line.erg)] = line
+
+        def find_gline():
+            return line_lookup[(nuclide_name, erg)]
+
+        for nuclide_name, erg in nuclide_names_ergs:
+            self._selected_gline = find_gline()
+            event = MyMouseEvent(erg, self.ax)
+            self.holding_space = True
+            self.on_click(event)
+            self.on_key_release(MyKeyEvent(' '))
 
     def _plot_fit(self, erg_fit, shape_fit):
         def plot(x, y, yerr, fit, name):
@@ -289,6 +369,11 @@ class ErgCal(InteractivePlot):
         energies = erg_fit.data
         yerr = 1/erg_fit.weights
 
+        if self.residue_line is not None:
+            self.residue_line.set_visible(0)
+
+        self.residue_line, = self.data_point_axs['erg_fit_residue'].plot(energies, erg_fit.eval(x=chs) - energies, color='black', marker='o', ls='None')
+
         plot(chs, energies, yerr, erg_fit, 'erg_fit')
 
         energies = shape_fit.userkws['x']
@@ -296,6 +381,7 @@ class ErgCal(InteractivePlot):
         yerr = 1/shape_fit.weights
 
         plot(energies, fwhms, yerr, shape_fit, 'shape_fit')
+
 
         self.data_point_fig.canvas.draw_idle()
 
@@ -331,8 +417,13 @@ class ErgCal(InteractivePlot):
         if self.holding_space:
             super(ErgCal, self).on_click(event)
         else:
-            if self.mouse_over_gline and self.mouse_over_gline.axvline.contains(event): # set currently selected Gline to current line if mouse is inside one
-                self.selected_gline = self.mouse_over_gline
+            if self.mouse_over_gline:  # set currently selected GLine to current line if mouse is inside one
+                if isinstance(event, MyMouseEvent):  # fake mouse event
+                    contains = True
+                else:
+                    contains = self.mouse_over_gline.axvline.contains(event)
+                if contains:
+                    self.selected_gline = self.mouse_over_gline
 
     def annotate(self):
         x = self.mouse_over_gline.erg
@@ -355,7 +446,7 @@ class ErgCal(InteractivePlot):
     @selected_gline.setter
     def selected_gline(self, val: Union[None, PltGammaLine]):
         if self._selected_gline is not None:  # set old selected line back to default
-            self._selected_gline.axvline.set_color('black')
+            self._selected_gline.axvline.set_color(self._selected_gline.color)
             self._selected_gline.axvline.set_linestyle('--')
 
         else:  # None to deselect
@@ -379,6 +470,12 @@ class ErgCal(InteractivePlot):
         if val is not None:
             self.annotate()
 
+    @property
+    def get_gamma_lines(self):
+
+        pass
+    #     todo: Return list of activated gamma lines
+
     def hover(self, event):
         if self.mouse_over_gline is not None:
             if not self.mouse_over_gline.axvline.contains(event)[0]:
@@ -396,10 +493,24 @@ class ErgCal(InteractivePlot):
             self.mouse_over_gline = None  # Removes annotation
             return
 
+    def update_gamma_lines(self):
+        for index, label in self.gamma_line_check_buttons.labels:
+            if self.gamma_line_check_buttons.get_status()[index]:
+                key = self.gline_labels_map[label]
+                glines = PltGammaLine.ALL_LINES[key]
+                # update self._gamma_line
+            else:
+                # update self._gamma_line
+                pass
+
+    @property
+    def gamma_lines(self):
+        pass # todo
+
     def plot_glines(self, event=None):
         if self.gamma_lines[0].axvline is None:  # set axvlines for each gamma line
             for g in self.gamma_lines:
-                g.axvline = self.ax.axvline(g.erg, c='black', ls='--')
+                g.axvline = self.ax.axvline(g.erg, c=g.color, ls='--')
 
         for g in self.gamma_lines:
             if g.intensity > self.min_intensity:

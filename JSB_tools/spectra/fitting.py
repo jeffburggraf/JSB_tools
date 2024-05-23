@@ -210,7 +210,7 @@ def gaus_fit(bins, counts, center_guesses, jit=True, fix_centersQ: Union[bool, L
             sigma = params[names_indices[f'_{i}_sigma']]
             _max = params[names_indices[f'_{i}_max']]
             # sigma = amplitude*0.398942/_max
-            # rates += bin_widths * norm(x, amplitude, center, sigma)
+            # gamma_rates += bin_widths * norm(x, amplitude, center, sigma)
             rates += bin_widths * norm(x, _max, center, sigma)
 
         return rates + bg

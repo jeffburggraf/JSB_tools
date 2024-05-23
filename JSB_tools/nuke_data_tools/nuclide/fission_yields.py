@@ -3,7 +3,7 @@ from typing import Tuple, Dict, List, Union, Collection
 import numpy as np
 from numbers import Number
 from JSB_tools.tab_plot import TabPlot
-from JSB_tools.nuke_data_tools.nuclide import DecayNuclide, Nuclide
+from JSB_tools.nuke_data_tools.nuclide import Nuclide
 from JSB_tools.nuke_data_tools.nuclide.cross_section import CrossSection1D
 from scipy.interpolate import interp1d
 from warnings import warn
@@ -599,58 +599,58 @@ class RawFissionYieldData:
         return out
 
 
-class DecayedFissionYields:
-    def __init__(self, target: str, inducing_par: Union[None, str], energies: Union[Collection[float], None] = None,
-                 library: Union[str, None] = None, independent_bool: bool = True):
-        """
-        Calculates fission yields at a time after factoring in decays.
-
-        Args:
-            target: Fission target nucleus
-            inducing_par: None for SF. Or, e.g., 'proton', 'neutron', 'gamma'
-            energies: If None, use energies from the data file.
-            library: Fission yield library. See FissionYields.FISSION_YIELD_SUBDIRS for available yield libraries.
-            independent_bool:
-        """
-        self.indep_fission_yields = FissionYields(target=target, inducing_par=inducing_par, energies=energies,
-                                                  library=library, independent_bool=independent_bool)
-
-    def decay(self, times, yield_thresh=1E-4) -> Dict[str, np.ndarray]:
-        """
-        Returns dict of yields at each time t.
-        Args:
-            times: An array or float.
-            yield_thresh: If yield is below this, don't include it.
-
-        Returns: Dict[str, ]
-
-        """
-        out = {}
-
-        for n_name, yield_ in self.indep_fission_yields.yields.items():
-            if hasattr(yield_, '__iter__'):
-                assert len(yield_) == 1, 'Weight yields before applying the decay function! '
-                yield_ = yield_[0]
-
-            if yield_ < yield_thresh:
-                if n_name not in out:
-                    out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
-                continue
-
-            decay_func = DecayNuclide(n_name)
-            for n_name_decay, decay_yield in decay_func(times).items():
-                if max(decay_yield) < yield_thresh:  # todo: wont work with non-iter `times`?
-                    if n_name not in out:
-                        out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
-                    continue
-                try:
-                    out[n_name_decay] += yield_*decay_yield
-                except KeyError:
-                    out[n_name_decay] = yield_ * decay_yield
-        if hasattr(times, '__iter__'):
-            out = {k: v for k, v in sorted(out.items(), key=lambda x: -x[1][-1])}
-        else:
-            out = {k: v for k, v in sorted(out.items(), key=lambda x: -x[1])}
-
-        return out
+# class DecayedFissionYields:
+#     def __init__(self, target: str, inducing_par: Union[None, str], energies: Union[Collection[float], None] = None,
+#                  library: Union[str, None] = None, independent_bool: bool = True):
+#         """
+#         Calculates fission yields at a time after factoring in decays.
+#
+#         Args:
+#             target: Fission target nucleus
+#             inducing_par: None for SF. Or, e.g., 'proton', 'neutron', 'gamma'
+#             energies: If None, use energies from the data file.
+#             library: Fission yield library. See FissionYields.FISSION_YIELD_SUBDIRS for available yield libraries.
+#             independent_bool:
+#         """
+#         self.indep_fission_yields = FissionYields(target=target, inducing_par=inducing_par, energies=energies,
+#                                                   library=library, independent_bool=independent_bool)
+#
+#     # def decay(self, times, yield_thresh=1E-4) -> Dict[str, np.ndarray]:
+#     #     """
+#     #     Returns dict of yields at each time t.
+#     #     Args:
+#     #         times: An array or float.
+#     #         yield_thresh: If yield is below this, don't include it.
+#     #
+#     #     Returns: Dict[str, ]
+#     #
+#     #     """
+#     #     out = {}
+#     #
+#     #     for n_name, yield_ in self.indep_fission_yields.yields.items():
+#     #         if hasattr(yield_, '__iter__'):
+#     #             assert len(yield_) == 1, 'Weight yields before applying the decay function! '
+#     #             yield_ = yield_[0]
+#     #
+#     #         if yield_ < yield_thresh:
+#     #             if n_name not in out:
+#     #                 out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
+#     #             continue
+#     #
+#     #         decay_func = DecayNuclide(n_name)
+#     #         for n_name_decay, decay_yield in decay_func(times).items():
+#     #             if max(decay_yield) < yield_thresh:  # todo: wont work with non-iter `times`?
+#     #                 if n_name not in out:
+#     #                     out[n_name] = ufloat(0, 0) if not hasattr(times, '__iter__') else unp.uarray(np.zeros_like(times), np.zeros_like(times))
+#     #                 continue
+#     #             try:
+#     #                 out[n_name_decay] += yield_*decay_yield
+#     #             except KeyError:
+#     #                 out[n_name_decay] = yield_ * decay_yield
+#     #     if hasattr(times, '__iter__'):
+#     #         out = {k: v for k, v in sorted(out.items(), key=lambda x: -x[1][-1])}
+#     #     else:
+#     #         out = {k: v for k, v in sorted(out.items(), key=lambda x: -x[1])}
+#     #
+#     #     return out
 

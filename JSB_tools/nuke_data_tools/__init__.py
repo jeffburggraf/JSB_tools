@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 
-from JSB_tools.nuke_data_tools.nuclide import Nuclide, DecayNuclide
+from JSB_tools.nuke_data_tools.nuclide import Nuclide
+from JSB_tools.nuke_data_tools.nuclide.decay_nuclide import DecayNuclide
 import warnings
 
 if __name__ == "__main__":
