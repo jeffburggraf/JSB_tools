@@ -1,3 +1,4 @@
+import pickle
 import re
 import warnings
 import numpy as np
@@ -5,10 +6,11 @@ from JSB_tools.spe_reader import SPEFile, InteractivePlot
 from JSB_tools.nuke_data_tools import Nuclide
 from JSB_tools import BijectiveMap
 from pathlib import Path
+from matplotlib import transforms
 from matplotlib import pyplot as plt
 import matplotlib
 from matplotlib.lines import Line2D
-from typing import Union, List
+from typing import Union, List, Set
 from matplotlib.widgets import TextBox, CheckButtons
 from uncertainties import UFloat
 from lmfit.models import PolynomialModel
@@ -57,17 +59,19 @@ class PltGammaLine:
         PltGammaLine.ALL_LINES['BG'] = []
         with open(cwd / 'Background.csv') as f:
             [f.readline() for i in range(3)]
-
+            i=0
             while line := f.readline():
                 erg, intensity, nuclide, _ = line.split(',')
                 erg = float(erg)
                 try:
                     intensity = float(intensity)
                 except ValueError:
-                    intensity = 1
+                    intensity = 1.
 
                 gline = PltGammaLine(erg, intensity, nuclide, source="BG", color="green")
                 PltGammaLine.ALL_LINES['BG'].append(gline)
+                i += 1
+                print(i)
 
         PltGammaLine.ALL_LINES['Check sources'] = []
         for nuclide_name in check_sources:
@@ -80,6 +84,9 @@ class PltGammaLine:
             f.readline()
             for line in f.readlines():
                 source_name, decaying_nucleus, gamma_erg, rel_rate, gammma_intensity = line.split(';')
+                source_name = source_name.strip()
+                gammma_intensity = float(gammma_intensity)
+                gamma_erg = float(gamma_erg)
                 gline = PltGammaLine(gamma_erg, gammma_intensity, decaying_nucleus, source=source_name)
 
                 if source_name not in PltGammaLine.ALL_LINES:
@@ -87,27 +94,62 @@ class PltGammaLine:
                 else:
                     PltGammaLine.ALL_LINES[source_name].append(gline)
 
+        with open(cwd/'neutron_activation_lines.pickle', 'rb') as f:
+            lines = pickle.load(f)
+            for symbol, d in lines.items():
+                source_name = f'{symbol}(n,*g)'
+                PltGammaLine.ALL_LINES[source_name] = []
+
+                for A, lines in d.items():
+                    for line in lines:
+                        gamma_erg = line['energy']
+                        gammma_intensity = line['intensity'] * line['abundance']
+                        decaying_nucleus = line['decaying_daughter']
+                        # source_name = line['target']
+                        gline = PltGammaLine(gamma_erg, gammma_intensity, decaying_nucleus, source=source_name)
+                        PltGammaLine.ALL_LINES[source_name].append(gline)
+
+    def plot(self, ax):
+        self.axvline = ax.axvline(self.erg, c=self.color, ls='--')
+        return self.axvline
+
+    def __hash__(self):
+        return hash((self.erg, self.nuclide_name))
+
     def __eq__(self, other):
-        if other.erg != self.erg or self.nuclide_name != other.nuclide_name:
+        if self.__hash__() != other.__hash__:
             return False
+        # if other.erg != self.erg or self.nuclide_name != other.nuclide_name:
+        #     return False
         return True
 
     def __init__(self, erg, intensity, nuclide=None, source=None, color='black'):
         self.erg = erg
+        assert isinstance(intensity, float)
+
         self.intensity = intensity
         self.nuclide_name = nuclide.strip() if nuclide is not None else nuclide
 
         self.axvline: Union[None, Line2D] = None
 
-        self.source = source
+        self.source = source.strip() if source is not None else None
 
         self.annotation_text = None
         self.color = color
 
-    def label_name(self):
+    def get_label(self):
         out = f"{self.nuclide_name}"
-        if self.source is not None:
+        if self.source is not None and self.source != self.nuclide_name:
             out += f" ({self.source})"
+
+        if not np.isnan(self.intensity):
+            intensity = 100 * self.intensity
+            if intensity < 1:
+                intensity = f'{intensity:.2e}'
+            else:
+                intensity = f'{int(intensity)}'
+
+            out += f'\n{intensity}%'
 
         return out
 
@@ -117,21 +159,6 @@ class PltGammaLine:
 
 PltGammaLine.load_lines()
 
-
-def get_gamma_lines(check_sourcesQ=False, backgroundQ=False, nuclides=None):
-    gamma_lines: List[PltGammaLine] = []
-
-    if backgroundQ:
-        gamma_lines.extend(GAMMA_LINES['BG'])
-
-    if check_sourcesQ:
-        gamma_lines.extend(GAMMA_LINES['Check sources'])
-
-    gamma_lines = list(sorted(gamma_lines, key=lambda x: x.erg))
-
-    if nuclide is None:
-        pass  # todo
-    return gamma_lines
 
 
 def print_location(event):
@@ -208,21 +235,32 @@ class ErgCal(InteractivePlot):
         bins = self.spe.erg_bins
         counts = self.spe.get_counts(make_density=True, nominal_values=True)
         super().__init__(bins, counts)
+        self.ax.set_yscale('log')
 
-        intensity_txt_box_ax = self.fig.add_axes([0.8, 0.88, 0.15, 0.04])
+        # intensity_txt_box_ax = self.fig.add_axes([0.8, 0.88, 0.15, 0.04])
+        intensity_txt_box_ax = self.fig.add_axes([0.01, 0.2, 0.062, .03])
+        self.intensity_textbox = TextBox(intensity_txt_box_ax, '', initial='10%')
+        self.fig.text(0.01, 0.24, 'min.\nintensity(%)')
+        self.intensity_textbox.on_submit(self.on_intensity_change)
 
         self._mouse_over_gline: Union[PltGammaLine, None] = None  # PltGammaLine that the mouse is currently over
         self._selected_gline: Union[PltGammaLine, None] = None
 
-        self.intensity_textbox = TextBox(intensity_txt_box_ax, 'min.\nintensity(%)', initial='10%')
-        self.intensity_textbox.on_submit(self.plot_glines)
+        self.visible_gamma_lines: Set[PltGammaLine] = set()
 
+        self._visible_decay_sources = set()
+
+        clickable_lines = 'BG', 'Check sources', 'Fiss. Prod'
         check_button_ax = self.fig.add_axes([0.01, 0.3, 0.062, .55])
-        self.gline_labels_map = BijectiveMap({x: f"{'\n'.join(x.split())}" for x in PltGammaLine.ALL_LINES.keys()})
-        self.gamma_line_check_buttons = CheckButtons(check_button_ax, gline_labels_map.values())
+        self.gline_labels_map = BijectiveMap({x: f"{'\n'.join(x.split())}" for x in clickable_lines})
+        self.gamma_line_check_buttons = CheckButtons(check_button_ax, self.gline_labels_map.values())
+        self.gamma_line_check_buttons.on_clicked(self.on_source_check_button)
 
-        self.plot_glines()
+        submit_nuclide_textbox_ax = self.fig.add_axes([0.1, 0.95, 0.062, .03])
+        self.submit_nuclide_textbox = TextBox(submit_nuclide_textbox_ax, 'Add nucleus', initial='N(n,*g)')
+        self.submit_nuclide_textbox.on_submit(self.add_subtract_nucleus_textbox)
 
+        self._visible_decay_sources_text = self.fig.text(0.175, 0.96, "")
         self.fig.canvas.mpl_connect("motion_notify_event", self.hover)
 
         self.fit_chs = []
@@ -236,6 +274,50 @@ class ErgCal(InteractivePlot):
 
         self.residue_line = None
 
+        self.add_subtract_nucleus_textbox("N(n,*g)")
+        self.on_intensity_change(99)
+
+    def _set_display_nuclides_text(self):
+        t = ', '.join(self._visible_decay_sources)
+        self._visible_decay_sources_text.set_text(t)
+
+    def check_intensity(self, val):
+        """
+        If True, intensity of val means line should bne plotted
+        Args:
+            val:
+
+        Returns:
+
+        """
+        if np.isnan(val):
+            return True
+        return val > self.min_intensity
+
+    def add_subtract_nucleus_textbox(self, value):
+        try:
+            lines = PltGammaLine.ALL_LINES[value]
+
+            removeQ = False
+            if value in self._visible_decay_sources:
+                removeQ = True
+                self._visible_decay_sources.remove(value)
+            else:
+                self._visible_decay_sources.add(value)
+
+            self._set_display_nuclides_text()
+            for line in lines:
+                if removeQ:
+                    self.remove_line(line)
+                else:
+                    if self.check_intensity(line.intensity):
+                        self.add_line(line)
+
+            self.update()
+        except KeyError:
+            print(f'Invalid nucleus, "{value}".\noptions are:\n{'\n\t'.join(PltGammaLine.ALL_LINES.keys())}'
+                  '\n See valid decay sources above!')
+
     def erg_2_channel(self, erg):
         if len(self.spe.erg_calibration) == 2:
             a, b = self.spe.erg_calibration
@@ -246,7 +328,7 @@ class ErgCal(InteractivePlot):
         if c != 0:
             a, b, c = self.spe.erg_calibration
             sqrt_term = np.sqrt(b**2 - 4*a*c + 4*c*erg)
-            sols = 1/(2*c) * np.array([-sqrt_term - b, sqrt_term - b])
+            sols = 1/(2*c) * np.array([sqrt_term - b])
             return max(sols)
         else:
             return (erg - a)/b
@@ -266,6 +348,78 @@ class ErgCal(InteractivePlot):
         self.data_point_fig.canvas.draw_idle()
 
         print("Cleared fit!")
+
+    def add_line(self, line: PltGammaLine):
+        if line not in self.visible_gamma_lines:
+            if line.axvline is not None:
+                line.axvline.set_visible(True)
+            else:
+                line.plot(self.ax)
+
+            self.visible_gamma_lines.add(line)
+
+    def remove_line(self, line: PltGammaLine):
+        if line in self.visible_gamma_lines:
+            line.axvline.set_visible(False)
+            self.visible_gamma_lines.remove(line)
+
+    def on_intensity_change(self, text):
+        for label in self._visible_decay_sources:
+            for line in  PltGammaLine.ALL_LINES[label]:
+                if self.check_intensity(line.intensity):
+                    self.add_line(line)
+                else:
+                    self.remove_line(line)
+        # for line in list(self.visible_gamma_lines):
+        #     if not self.check_intensity(line.intensity):
+        #         self.remove_line(line)
+        #     else:
+
+        # for status, label in zip(self.gamma_line_check_buttons.get_status(),
+        #                          self.gamma_line_check_buttons.labels):
+        #     if not status:
+        #         continue
+        #
+        #     label = self.gline_labels_map[label.get_text()]
+        #
+        #     for line in PltGammaLine.ALL_LINES[label]:
+        #         if self.check_intensity(line.intensity):
+        #             self.add_line(line)
+        #         else:
+        #             self.remove_line(line)
+
+    def on_source_check_button(self, clicked_label):
+        """
+        Updates visible gamma lines
+
+        Args:
+            *args:
+
+        Returns:
+
+        """
+        label = self.gline_labels_map[clicked_label]
+        _label_index = ([x.get_text() for x in self.gamma_line_check_buttons.labels]).index(clicked_label)
+        just_turned_on = self.gamma_line_check_buttons.get_status()[_label_index]
+
+        lines = PltGammaLine.ALL_LINES[label]
+
+        if just_turned_on:
+            self._visible_decay_sources.add(label)
+            for line in lines:
+                try:
+                    if self.check_intensity(line.intensity):
+                        self.add_line(line)
+                except TypeError:
+                    print(f'line.intensity: {line.intensity} {type(line.intensity)}\nself.min_intensity: {self.min_intensity}')
+                    raise
+        else:
+            self._visible_decay_sources.remove(label)
+
+            for line in lines:
+                self.remove_line(line)
+
+        self.update()
 
     def on_key_press(self, event):
         super(ErgCal, self).on_key_press(event)
@@ -325,8 +479,8 @@ class ErgCal(InteractivePlot):
         line_lookup = {}
         self.set_fit_window(fit_window)
 
-        for name in GAMMA_LINES:
-            for line in GAMMA_LINES[name]:
+        for name, lines in PltGammaLine.ALL_LINES.items():
+            for line in lines:
                 line: PltGammaLine
                 line_lookup[(line.nuclide_name, line.erg)] = line
 
@@ -382,7 +536,6 @@ class ErgCal(InteractivePlot):
 
         plot(energies, fwhms, yerr, shape_fit, 'shape_fit')
 
-
         self.data_point_fig.canvas.draw_idle()
 
     @property
@@ -426,17 +579,18 @@ class ErgCal(InteractivePlot):
                     self.selected_gline = self.mouse_over_gline
 
     def annotate(self):
+        if self.mouse_over_gline.annotation_text is not None:
+            self.mouse_over_gline.annotation_text.set_visible(True)
+            return
+        trans = transforms.blended_transform_factory(self.ax.transData, self.ax.transAxes)
         x = self.mouse_over_gline.erg
-        y = self.ax.get_ylim()[-1]
-
-        self.mouse_over_gline.annotation_text = self.ax.annotate(self.mouse_over_gline.label_name(), (x, y))
+        self.mouse_over_gline.annotation_text = self.fig.text(x, 1, self.mouse_over_gline.get_label(), transform=trans, va='bottom')
 
         self.update()
 
     def clear_annotate(self):
         if self.mouse_over_gline is not None and self.mouse_over_gline.annotation_text is not None:
             self.mouse_over_gline.annotation_text.set_visible(False)
-            self.mouse_over_gline.annotation_text = None
             self.update()
 
     @property
@@ -470,10 +624,10 @@ class ErgCal(InteractivePlot):
         if val is not None:
             self.annotate()
 
-    @property
-    def get_gamma_lines(self):
-
-        pass
+    # @property
+    # def get_gamma_lines(self):
+    #
+    #     pass
     #     todo: Return list of activated gamma lines
 
     def hover(self, event):
@@ -482,43 +636,18 @@ class ErgCal(InteractivePlot):
                 self.mouse_over_gline = None
                 return
 
-        for gline in self.gamma_lines:
+        for gline in self.visible_gamma_lines:
             if not gline.axvline.get_visible():
                 continue
 
             if gline.axvline.contains(event)[0]:
                 self.mouse_over_gline = gline  # does annotation
                 break
+            else:
+                pass
         else:
             self.mouse_over_gline = None  # Removes annotation
             return
-
-    def update_gamma_lines(self):
-        for index, label in self.gamma_line_check_buttons.labels:
-            if self.gamma_line_check_buttons.get_status()[index]:
-                key = self.gline_labels_map[label]
-                glines = PltGammaLine.ALL_LINES[key]
-                # update self._gamma_line
-            else:
-                # update self._gamma_line
-                pass
-
-    @property
-    def gamma_lines(self):
-        pass # todo
-
-    def plot_glines(self, event=None):
-        if self.gamma_lines[0].axvline is None:  # set axvlines for each gamma line
-            for g in self.gamma_lines:
-                g.axvline = self.ax.axvline(g.erg, c=g.color, ls='--')
-
-        for g in self.gamma_lines:
-            if g.intensity > self.min_intensity:
-                g.axvline.set_visible(True)
-            else:
-                g.axvline.set_visible(False)
-
-        self.update()
 
     @property
     def min_intensity(self):

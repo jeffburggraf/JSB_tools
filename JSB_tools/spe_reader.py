@@ -42,24 +42,6 @@ def _backup_file(path: Path):
     shutil.copy(path, newpath)
 
 
-def save_spe(spe: SPEFile, path):
-    lines = ['$SPEC_ID:', spe.description,
-             '$DATE_MEA:', datetime.strftime(spe.system_start_time, spe.time_format),
-             '$MEAS_TIM:', f'{int(spe.livetime)} {int(spe.realtime)}', '$DATA', f'0 {len(spe.energies)}',
-             '\n'.join(map(lambda x:f"       {int(x)}", unp.nominal_values(spe.counts))),
-             '$ENER_FIT:', ' '.join(map(lambda x: f"{x:.7E}", spe.erg_calibration[:2])),
-             '$MCA_CAL:',
-             len(spe.erg_calibration), ' '.join(map(lambda x: f"{x:.7E}", spe.erg_calibration)) + ' keV']
-    if spe.shape_cal is not None:
-        lines.extend(['$SHAPE_CAL:',
-                      len(spe.shape_cal),
-                      ' '.join(map(lambda x: f"{x:.7E}", spe.shape_cal))])
-    out = '\n'.join(map(str, lines))
-    path = Path(path).with_suffix('.Spe')
-    with open(path, 'w') as f:
-        f.write(out)
-
-
 def _get_SPE_data(path):
     with open(path) as f:
         lines = f.readlines()
@@ -79,7 +61,7 @@ def _get_SPE_data(path):
                 out['detector_id'] = int(lines[i][5:])
                 # i += 1
             elif lines[i][:8] == 'DETDESC#':
-                out['device_serial_number'] = lines[i][8:].rstrip().lstrip()
+                out['gui_name'] = lines[i][8:].rstrip().lstrip()
                 # i += 1
             elif 'Maestro Version' in lines[i]:
                 out['maestro_version'] = lines[i].split()[-1]
@@ -130,7 +112,7 @@ def _get_SPE_data(path):
         finally:
             i += 1
 
-    for key in ['description', 'detector_id', 'device_serial_number', 'maestro_version']:
+    for key in ['description', 'detector_id', 'gui_name', 'maestro_version']:
         if key not in out:
             out[key] = None
     counts = []
@@ -197,7 +179,7 @@ class SPEFile(EfficiencyCalMixin):
         data = _get_SPE_data(path)
         self.description = data['description']
         self.detector_id = data['detector_id']
-        self.device_serial_number = data['device_serial_number']
+        self.gui_name = data['gui_name']
         self.maestro_version = data['maestro_version']
         self.system_start_time = data['system_start_time']
         self.livetime = data['livetime']
@@ -445,7 +427,7 @@ class SPEFile(EfficiencyCalMixin):
                     '_erg_calibration': self._erg_calibration, 'channels': self.channels, 'livetime': self.livetime,
                     'realtime': self.realtime, 'system_start_time': self.system_start_time.strftime(SPEFile.time_format)
                     ,'description': self.description, 'maestro_version': self.maestro_version,
-                    'device_serial_number': self.device_serial_number, 'detector_id': self.detector_id,
+                    'gui_name': self.gui_name, 'detector_id': self.detector_id,
                     'path': str(self.path)}
 
         np_dtypes = {'channels': 'int'}
@@ -548,7 +530,7 @@ class SPEFile(EfficiencyCalMixin):
             description = ''
         self.description = description
 
-        self.device_serial_number = 0
+        self.gui_name = 0
         self.detector_id = 0
         self.maestro_version = None
 
@@ -870,9 +852,36 @@ class SPEFile(EfficiencyCalMixin):
     def nominal_counts(self) -> np.ndarray:
         return unp.nominal_values(self.counts)
 
-    # def get_baseline_ROOT(self, num_iterations=20, clipping_window_order=2, smoothening_order=5) -> np.ndarray:
-    #     return calc_background(self.counts, num_iterations=num_iterations, clipping_window_order=clipping_window_order,
-    #                            smoothening_order=smoothening_order)
+    def write_spe(self, path):
+        """
+        Spe ASCII file generator.
+
+        Args:
+            path: path to spe file to be written
+
+        Returns:
+
+        """
+        lines = ['$SPEC_ID:', self.description,
+                 '$SPEC_REM:', f'Det# {self.detector_id}',
+                 f'DETDESC# {self.gui_name}',
+                 '$DATE_MEA:', datetime.strftime(self.system_start_time, self.time_format),
+                 '$MEAS_TIM:', f'{int(self.livetime)} {int(self.realtime)}', '$DATA:', f'0 {len(self.energies)}',
+                 '\n'.join(map(lambda x: f"       {int(x)}", unp.nominal_values(self.counts))),
+                 '$ENER_FIT:', ' '.join(map(lambda x: f"{x:.7E}", self.erg_calibration)),
+                 '$MCA_CAL:',
+                 len(self.erg_calibration), ' '.join(map(lambda x: f"{x:.7E}", self.erg_calibration)) + ' keV']
+
+        if self.shape_cal is not None:
+            lines.extend(['$SHAPE_CAL:',
+                          len(self.shape_cal),
+                          ' '.join(map(lambda x: f"{x:.7E}", self.shape_cal))])
+
+        out = '\n'.join(map(str, lines))
+        path = Path(path).with_suffix('.Spe')
+
+        with open(path, 'w') as f:
+            f.write(out)
 
     def get_baseline_median(self, erg_min: float = None, erg_max: float = None, window_kev=30):
         """
@@ -1039,6 +1048,19 @@ class SPEFile(EfficiencyCalMixin):
 
     def __len__(self):
         return len(self.counts)
+
+    def __iadd__(self, other: SPEFile):
+        assert len(self) == len(other)
+        if not all(np.isclose(self.erg_calibration, other.erg_calibration)):
+            other.rebin(self.erg_bins)
+
+        self.counts.flags.writeable = True
+        self.counts += other.counts
+        self.counts.flags.writeable = False
+        self.livetime += other.livetime
+        self.realtime += other.realtime
+
+        return self
 
     def interactive_plot(self, nominal_values=True, channels=False, debug=False, scale=1):
         if channels:

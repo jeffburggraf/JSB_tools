@@ -930,6 +930,9 @@ class ListSpectra(EfficiencyCalMixin):
             scale:
 
         Returns:
+                ax
+            or,
+                ax, bin_values
 
         """
 

@@ -61,7 +61,8 @@ def get_spe_lines(_l: MaestroListFile):
 class MaestroListFile(ListSpectra):
     pickle_attribs = '_erg_calibration', 'device_address', 'MCB_type_string', 'serial_number', \
                      'detector_id', 'total_realtime', 'total_livetime', 'count_rate_meter', 'n_adc_channels',\
-                     'description', 'realtimes', 'livetimes', 'sample_ready_state', 'gate_state'
+                     'description', 'realtimes', 'livetimes', 'sample_ready_state', 'gate_state', 'hrd_times'
+
 
     """
     Start time is determined by the Connections Win_64 time sent right after the header. This clock doesn't
@@ -130,6 +131,8 @@ class MaestroListFile(ListSpectra):
             self.sample_ready_state = []
             self.gate_state = []
 
+            self.hrd_times = []
+
             self.__10ms_counts__ = 0  # The number of ADC events each 10ms clock tick. Used for self.counts_per_sec.
             self.count_rate_meter = []
 
@@ -186,6 +189,8 @@ class MaestroListFile(ListSpectra):
 
         self.realtimes = np.array(self.realtimes)
         self.livetimes = np.array(self.livetimes)
+
+        self.hrd_times = np.array(self.hrd_times)
 
         self.realtimes.flags.writeable = False
         self.livetimes.flags.writeable = False
@@ -375,6 +380,7 @@ class MaestroListFile(ListSpectra):
 
         elif word[:8] == '00000000':
             hrd_time = int(word[16:], 2)
+            self.hrd_times.append(hrd_time)
             if debug:
                 word_debug = f"Hdw Time: {hrd_time}"
 
@@ -587,18 +593,6 @@ class MaestroListFile(ListSpectra):
             directory.mkdir()
         return directory
 
-    # @property
-    # def energy_spec(self):
-    #     """
-    #     Just the number of counts in each energy bin. Redundant. Just a special case of
-    #         self.get_erg_spectrum (but faster).
-    #     Returns:
-    #
-    #     """
-    #     if self._energy_spec is None:
-    #         self._energy_spec = np.array(list(map(len, self.energy_binned_times)))
-    #     return self._energy_spec
-
     def channel_to_erg(self, channel) -> np.ndarray:
         if isinstance(channel, list):
             channel = np.array(channel)
@@ -616,24 +610,24 @@ class MaestroListFile(ListSpectra):
         """
         return self.energies[np.where((self.times >= time_min) & (self.times <= time_max))]
 
-    def energy_slice(self, erg_min, erg_max, return_num_bins=False):
-        """
-        Return the times of all events with energy greater than `erg_min` and less than `erg_max`
-        Args:
-            erg_min:
-            erg_max:
-            return_num_bins: Whether to return the number of energy bins accessed
-
-        Returns:
-
-        """
-        i0 = self.__erg_index__(erg_min)
-        i1 = self.__erg_index__(erg_max)+1
-        out = np.concatenate(self.__energy_binned_times__[i0: i1])
-        if return_num_bins:
-            return out, i1-i0
-        else:
-            return out
+    # def energy_slice(self, erg_min, erg_max, return_num_bins=False):
+    #     """
+    #     Return the times of all events with energy greater than `erg_min` and less than `erg_max`
+    #     Args:
+    #         erg_min:
+    #         erg_max:
+    #         return_num_bins: Whether to return the number of energy bins accessed
+    #
+    #     Returns:
+    #
+    #     """
+    #     i0 = self.__erg_index__(erg_min)
+    #     i1 = self.__erg_index__(erg_max)+1
+    #     out = np.concatenate(self.__energy_binned_times__[i0: i1])
+    #     if return_num_bins:
+    #         return out, i1-i0
+    #     else:
+    #         return out
 
     def build_spe(self, min_time=None, max_time=None):
         # todo after canges
@@ -763,11 +757,14 @@ def get_merged_time_dependence(list_files: List[MaestroListFile], energy,
 
 
 if __name__ == '__main__':
-    old = MaestroListFile('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/tuesday/shot1.Lis')
-    old.pickle()
-    ax = old.plot_erg_spectrum()
+    close_path = "/Users/burgjs/PycharmProjects/Misc/CoincGamma/close detector list.Lis"
+    far_path = "/Users/burgjs/PycharmProjects/Misc/CoincGamma/far detector list.Lis"
+    far = MaestroListFile(far_path)
+    close = MaestroListFile(close_path)
 
-    s = MaestroListFile.from_pickle('/Users/burggraf1/PycharmProjects/IACExperiment/exp_data/tuesday/shot1.Lis')
-    s.plot_erg_spectrum(ax=ax)
+    print(far.hrd_times[:10] * 200E-9)
+    print(close.hrd_times[:10] * 200E-9)
+
+    far.plot_erg_spectrum()
+    close.plot_erg_spectrum()
     plt.show()
-    print()
