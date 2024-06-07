@@ -714,6 +714,11 @@ class Nuclide(Element):
         """
         return self.get_fission_xs('neutron')
 
+    def neutron_energy_spectrum(self, ergs, binsQ=False):
+        assert self.name == 'Cf252'
+        from JSB_tools.nuke_data_tools.nuclide.misc_data.watt_neutron_spectra import Cf252_watt_spectrum
+        return Cf252_watt_spectrum(ergs, binsQ)
+
     def rest_energy(self, units='MeV'):  # in J or MeV
         units = units.lower()
         ev = constants['J_to_eV']
@@ -1216,6 +1221,19 @@ class Nuclide(Element):
 
     def total_xs(self, projectile, data_source=None):
         return self.__get_misc_xs__('total_xs', projectile, data_source)
+
+    def get_sf_nubar(self):
+        from JSB_tools.nuke_data_tools.nuclide.misc_data.nubar import get_nubar
+        return get_nubar(self.Z, self.A)
+
+    def get_neutron_emission_rate(self):
+        """Neutron emission rate from SF"""
+
+        if ('sf',) not in self.decay_modes:
+            return ufloat(0, 0)
+
+        br_ratio = Nuclide('Cf252').decay_modes['sf',][0].branching_ratio
+        return self.decay_rate * br_ratio * self.get_sf_nubar()
 
     def __get_misc_xs__(self, attrib, projectile, data_source=None) -> CrossSection1D:
         """
@@ -1784,6 +1802,15 @@ class Sample:
             return f"{out:.3g} {unit}"
         else:
             raise ValueError("Invalid return type. ")
+
+    def get_atoms(self,  dt: Union[float, int, Interval, Date] = 0,):
+        out = self.n_atoms
+
+        if dt != 0:
+            dt = get_seconds(dt)
+            out *= 0.5 ** (dt / self.nuclide.half_life)
+
+        return out
 
     def get_mass(self, unit='g', dt: Union[float, int, Interval, Date] = 0, return_type=float):
         """

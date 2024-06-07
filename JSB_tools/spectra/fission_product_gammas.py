@@ -1,6 +1,6 @@
 import pickle
 import re
-
+from JSB_tools.tab_plot import TabPlot
 import numpy as np
 from JSB_tools.nuke_data_tools.nuclide.fission_yields import FissionYields
 from JSB_tools.nuke_data_tools import DecayNuclide, Nuclide
@@ -138,44 +138,155 @@ for g in fp_gammas:
         file.write(print_gamms('Fiss. Prod', frac, g) + "\n")
 
 
+
+class Source:
+    def __init__(self, src_name):
+        self.name = src_name
+        self.init_parents = []
+        self.init_fracs = []
+
+        self.rates = None
+        self.ts = None
+        self.max_final_rate = -np.inf
+
+    def set_rates(self, ts):
+        self.ts = ts
+        self.rates = {}
+        self.max_final_rate = -np.inf
+
+        for frac, parent in zip(self.init_fracs, self.init_parents):
+            decay = DecayNuclide(parent)
+
+            for k, v in decay(ts, decay_rate=True).items():
+                v = frac * v
+                try:
+                    self.rates[k] += v
+                except KeyError:
+                    self.rates[k] = v
+
+                self.max_final_rate = max(self.max_final_rate, v[-1])
+
+        self.rates = {k: v for k, v in sorted(self.rates.items(), key=lambda k_v: -k_v[1][-1])}
+
+    def get_gammas(self, frac_cut=None, ages=None):
+        gammas_dict = {}
+        _max = -np.inf
+
+        if ages is None:
+            indices = [-1]
+        else:
+            indices = np.searchsorted(self.ts, ages)
+
+        for i in indices:
+            i = min(len(self.ts) - 1, i)
+
+            for k, v in self.rates.items():
+                nuclide = Nuclide(k)
+
+                for gline in nuclide.decay_gamma_lines:
+                    rel_rate = v[i] * gline.intensity.n / len(indices)
+
+                    try:
+                        gammas_dict[gline].append(rel_rate)
+                    except KeyError:
+                        gammas_dict[gline] = [rel_rate]
+
+        rel_intensities = [np.max(x) for x in gammas_dict.values()]
+
+        gammas = list(gammas_dict.keys())
+
+        rel_intensities /= max(rel_intensities)
+
+        out = [(g, rel_rate) for g, rel_rate in zip(gammas, rel_intensities)]
+
+        if frac_cut is not None:
+            out = [x for x in out if x[-1] > frac_cut]
+
+        out = list(sorted(out, key=lambda x: -x[-1]))
+
+        return out
+
+    def get_gamma_rates(self, min_erg=30):
+        out = {}
+
+        for k, v in self.rates.items():
+            nuclide = Nuclide(k)
+            tot_intensity = sum([g.intensity.n for g in nuclide.decay_gamma_lines if g.erg > min_erg])
+
+            out[k] = v * tot_intensity
+
+        out = {k: v for k, v in sorted(out.items(), key=lambda k_v: -k_v[1][-1])}
+        return out
+
+    def add_init_parent(self, name, rel_frac):
+        self.init_parents.append(name)
+        self.init_fracs.append(rel_frac)
+
+        s = sum(self.init_fracs)
+        self.init_fracs = [x/s for x in self.init_fracs]
+
+
 gammas = {}
-for src_name, parents in {'Cf252': [(0.8, 'Cf252'), (0.1, 'Cf249'), (0.8, 'Cf251')],
+tab = TabPlot()
+
+for src_name, parents in {'Cf252': [(0.8, 'Cf252'), (0.045, 'Cf249'), (0.08, 'Cf250'), (0.02, 'Cf251'), (0.03, 'Cf253'), (0.015, 'Cf254')],
                           'U238': [(1, 'U238')],
                           'Th232': [(1, 'Th232')],
                           'Pu239': [(1, 'Pu239')],
                           }.items():
+
+    source = Source(src_name)
+
+    [source.add_init_parent(n_name, frac) for frac, n_name in parents]
+
     gammas[src_name] = []
 
     max_rate = -np.inf
 
-    for rel_frac, parent in parents:
-        n = Nuclide(parent)
-        dt = min(n.half_life.n, year * 5)
+    rates_dict = {}
 
-        rates = DecayNuclide(parent, )(dt, decay_rate=1)
-        for k, v in rates.items():
-            for gline in Nuclide(k).decay_gamma_lines:
-                grate = v * gline.intensity
-                gline.rate = grate
-                max_rate = max(max_rate, grate)
-                gammas[src_name].append(gline)
+    if src_name == 'Cf252':
+        ages = [5 * year, 10 * year, 30 * year]
+    else:
+        ages = [min(Nuclide(src_name).half_life.n, year * 5)]
 
-    gammas[src_name] = list(sorted(gammas[src_name], key=lambda x: -x.rate))
+    tmin = year
+
+    ts = np.logspace(np.log10(tmin), np.log10(ages[-1]), 1000)
+    source.set_rates(ts)
 
     print(src_name)
+    for g, rel_rate in source.get_gammas(1E-3, ages=ages):
+        print(f"\t{rel_rate: >6.2e} {print_gamms(src_name, rel_rate, g)}")
+        if write:
+            file.write(print_gamms(src_name, rel_rate, g) + "\n")
 
-    for g in gammas[src_name][:]:
-        frac = g.rate/max_rate
-        frac = frac.n
+    axs = tab.new_ax(f"{src_name}", 2, 1, sharex="all")
 
-        if frac < 0.5E-2:
-            break
-        print("\t", frac, print_gamms(src_name, frac, g))
+    colors = {}
+    for label, v in list(source.rates.items()):
+        if v[-1]/source.max_final_rate > 1E-4:
+            _handle, = axs[0].plot(ts/year, v, label=label)
+            print(_handle.get_color(), max(v))
+            colors[label] = _handle.get_color()
 
-        if file is not None:
-            file.write(print_gamms(src_name, frac, g) + "\n")
+    gamma_rates = source.get_gamma_rates()
+    for k, color in colors.items():
+        v = gamma_rates[k]
+        axs[1].plot(ts/year, v, label=k, color=color)
+
+    axs[0].set_ylabel("Decay rates [1/s]")
+    axs[1].set_ylabel("Gamma rates [1/s]")
+    axs[0].set_yscale('log')
+    axs[1].set_yscale('log')
+
+    axs[1].set_xlabel('Age [yr]')
+
+    axs[0].legend()
+
 
 if file is not None:
     file.close()
 
 
+plt.show()

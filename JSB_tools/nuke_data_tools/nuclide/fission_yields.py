@@ -16,7 +16,10 @@ from JSB_tools.nuke_data_tools.nuclide.data_directories import FISS_YIELDS_PATH,
 import marshal
 from functools import cached_property
 
+NUBAR = {}
 
+def get_nubar():
+    452
 class FissionYields:
     """
     Retrieve fission yield data, if available. In some cases, the code will convert neutron yield

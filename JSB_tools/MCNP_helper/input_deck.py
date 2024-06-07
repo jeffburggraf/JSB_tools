@@ -135,6 +135,8 @@ class MCNPSICard:
         else:
             self.si_option = 'A'
 
+        self.variable_probs /= max(self.variable_probs)
+
         assert isinstance(cell_vol_dist, bool), '`cell_vol_dist` must be True of False'
         if cell_vol_dist is True:
             self.sp_option = 'V'
@@ -338,7 +340,7 @@ class F8Tally:
         Returns:
 
         """
-        assert emin > 0
+        # assert emin > 0, f'`emin` must be greater than 0 for F8 tally.\n\tValue provided: {emin}'
 
         if binwidth is not None:
             assert nbins is None
@@ -417,6 +419,21 @@ class InputDeck:
 
         if cleanup_msg:
             register(self.__del)
+
+    @staticmethod
+    def get_mcnp_ctime(hpc_ctime, hpc_ncpus, safety_factor=1.065):
+        """
+        Get the MCNP CTME card so that the simulation ends before HPC walltime expires.
+        Args:
+            hpc_ctime: Number of minutes for HPC "walltime"
+            hpc_ncpus:
+            safety_factor:
+
+        Returns:
+
+        """
+        mcnp_ctime = hpc_ctime * hpc_ncpus / safety_factor
+        return mcnp_ctime
 
     @staticmethod
     def PHITS2MCNP_plotter(directory, new_file_name, dict_of_globals):
@@ -591,8 +608,10 @@ class InputDeck:
 
             max_precision: Max number of decimal digits, beyond which the values will be simplified to `max_precision` and replaced in input deck.
 
-            hpc_simname: Top-level simulation name for INL's HPC system
+            hpc_simname:  Path relative to ~/mcnp_sims/ on HPC
+
             hpc_ctime: computer time (IN MINUTES!!)
+
             hpc_ncpus: # of CPUs to use on HPC
             hpc_cluster: 'sawtooth' or 'lemhi
             hpc_kwargs: `select`, `mpiprocs`,
@@ -660,7 +679,7 @@ class InputDeck:
             hpc_ctime *= 60  # minutes to seconds
 
             sim_sub_name = new_file_full_path.parent.name
-            hpc = self.get_hpc_script(local_dir=new_file_full_path.parent, remote_sim_main_name=hpc_simname, remote_sim_sub_name=sim_sub_name,
+            hpc = self.get_hpc_script(local_dir=new_file_full_path.parent, remote_sim_main_name_path=hpc_simname, remote_sim_sub_name=sim_sub_name,
                                       ctime=hpc_ctime, ncpus=hpc_ncpus, cluster=hpc_cluster, email_notifications=hpc_notifications)
 
             hpc_run_all_cmd = f'cd {hpc.directory}\nqsub job.pbs\n\n'
@@ -812,9 +831,23 @@ class InputDeck:
                          is_mcnp=False, __internal__=True, sch_cmd=sch_cmd)
 
     @staticmethod
-    def get_hpc_script(local_dir: Path, remote_sim_main_name, remote_sim_sub_name, ctime, cluster='sawtooth',
+    def get_hpc_script(local_dir: Path, remote_sim_main_name_path, remote_sim_sub_name, ctime, cluster='sawtooth',
                        email_notifications=False, ncpus=20):
-        hpc = HPCScript(remote_sim_main_name, remote_sim_sub_name, ctime, cluster=cluster, ncpus=ncpus, email_notifications=email_notifications)
+        """
+
+        Args:
+            local_dir:
+            remote_sim_main_name_path: Path relative to ~/mcnp_sims/ on HPC
+            remote_sim_sub_name:
+            ctime: Units of minutes. Used for the "walltime" argument.
+            cluster:
+            email_notifications:
+            ncpus:
+
+        Returns:
+
+        """
+        hpc = HPCScript(remote_sim_main_name_path, remote_sim_sub_name, ctime, cluster=cluster, ncpus=ncpus, email_notifications=email_notifications)
 
         local_dir.mkdir(exist_ok=True)
 
@@ -869,33 +902,34 @@ def __clean__(paths, warn_message):
 
 
 class HPCScript:
-    def __init__(self, sim_name, sim_sub_path, walltime, cluster='sawtooth',
+    def __init__(self, sim_name_path, sim_sub_path, walltime, cluster='sawtooth',
                  mpiprocs=20, ncpus=20, select=10, email_notifications=False):
         """
 
         Args:
-            sim_path:
-            ctime:
+            sim_name_path:
+            sim_sub_path:
+            walltime:
             cluster:
             mpiprocs:
             ncpus:
             select:
+            email_notifications:
         """
-        # walltime = 1.05 * ctime / ncpus
-
-        self.pbs_lines = [self.get_header(f'{sim_name}_{sim_sub_path}', walltime=walltime, ncpus=ncpus, mpiprocs=mpiprocs, select=select, email_notifications=email_notifications)]
+        # sim_name_path = sim_name_path
+        self.pbs_lines = [self.get_header(f'{sim_name_path}_{sim_sub_path}', walltime=walltime, ncpus=ncpus, mpiprocs=mpiprocs, select=select, email_notifications=email_notifications)]
 
         module_line = 'module load use.exp_ctl MCNP6/' + \
                       {'lemhi': '2.0-intel-19.1.3',
                        'sawtooth': '3.0-intel'}[cluster]
 
         self.pbs_lines.append(f'{module_line}\n')
-        self.directory = Path(f'$HOME/mcnp_sims/{sim_name}/{sim_sub_path}')
+        self.directory = Path(f'$HOME/mcnp_sims/{sim_name_path}/{sim_sub_path}')
 
         tmp_dir = self.directory / "TMPDIR"
-        self.pbs_lines.append(f'mkdir -p $HOME/mcnp_sims/{sim_name}\n'
-                              f'mkdir -p $HOME/mcnp_sims/{sim_name}/{sim_sub_path}\n\n'
-                              f'cd $HOME/mcnp_sims/{sim_name}/{sim_sub_path}\n'
+        self.pbs_lines.append(f'mkdir -p $HOME/mcnp_sims/{sim_name_path}\n'
+                              f'mkdir -p $HOME/mcnp_sims/{sim_name_path}/{sim_sub_path}\n\n'
+                              f'cd $HOME/mcnp_sims/{sim_name_path}/{sim_sub_path}\n'
                               f'export TMPDIR={tmp_dir}  # Directory used for MPI related files\n'
                               f'mkdir -p {tmp_dir.name}\n')
 
@@ -931,6 +965,7 @@ class HPCScript:
         else:
             raise ValueError(f"Invalid argument, `walltime`: '{walltime}'")
 
+        job_name = job_name.replace("/", '_')
         out = "#!/bin/bash\n" \
               f"#PBS -l select={select}:ncpus={ncpus}:mpiprocs={mpiprocs}\n" \
               f"#PBS -N {job_name}\n" \

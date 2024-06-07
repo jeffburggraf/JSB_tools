@@ -5,13 +5,18 @@ from JSB_tools.spectra.time_depend import multi_guass_fit, GausFitResult
 from matplotlib import pyplot as plt
 from JSB_tools.hist import mpl_hist
 import numpy as np
+import ipywidgets as widgets
 import matplotlib
 from typing import List
 from uncertainties import unumpy as unp
 from matplotlib.axes import Axes
 from matplotlib.widgets import TextBox, CheckButtons, RadioButtons
+from matplotlib.widgets import ToolHandles
 from typing import Union
 matplotlib.use('Qt5agg')
+
+
+dropdown=widgets.Dropdown(options=[('Temp1', 0), ('Temp2', 1), ('Temp3', 2)],value=0,description='Temp')
 
 
 class Click:
@@ -75,7 +80,7 @@ class InteractivePlot:
     def setup_buttons(self):
         sigma_t_ax = self.fig.add_axes([0.90, 0.1, 0.03, 0.03])
         window_t_ax = self.fig.add_axes([0.90, 0.15, 0.03, 0.03])
-        bg_check_ax = self.fig.add_axes([0.90, 0.3, 0.07, 0.2])
+        bg_check_ax = self.fig.add_axes([0.90, 0.2, 0.07, 0.2])
         sigma_check_ax = self.fig.add_axes([0.9, 0.05, 0.055, 0.04])
 
         self.sigma_textbox = TextBox(sigma_t_ax, r'$\sigma_{0}$')
@@ -83,7 +88,7 @@ class InteractivePlot:
         self.sigma_share_check_button = CheckButtons(sigma_check_ax, [r'Share $\sigma$'])
 
         self.bg_radio_button = RadioButtons(bg_check_ax, ['Const', 'Lin', 'None'], )
-        self.fig.text(0.93, 0.515, 'Background\nterm', ha='center')
+        self.fig.text(0.93, 0.415, 'Background\nterm', ha='center')
 
     def update(self):
         self.fig.canvas.draw_idle()

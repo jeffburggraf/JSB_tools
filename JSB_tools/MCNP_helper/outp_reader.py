@@ -149,11 +149,16 @@ class F8Tally:
     def bin_widths(self):
         return self.erg_bins[1:] - self.erg_bins[:-1]
 
-    def plot(self, ax=None):
+    def plot(self, ax=None, nominal_values=False, **kwargs):
         if ax is None:
             fig, ax = plt.subplots()
 
-        mpl_hist(self.erg_bins, self.counts, ax=ax)
+        if nominal_values:
+            counts = unp.nominal_values(self.counts)
+        else:
+            counts = self.counts
+
+        mpl_hist(self.erg_bins, counts, ax=ax, **kwargs)
         return ax
 
     @staticmethod

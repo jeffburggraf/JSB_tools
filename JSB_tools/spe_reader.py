@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+import pendulum
+
 from JSB_tools.interactive_plot import InteractivePlot
 import re
 import warnings
@@ -468,6 +471,11 @@ class SPEFile(EfficiencyCalMixin):
             pass
 
         return self
+
+    @property
+    def start_datetime(self) -> pendulum.DateTime:
+        return pendulum.datetime(year=self.system_start_time.year, month=self.system_start_time.month, day=self.system_start_time.day,
+                                 hour=self.system_start_time.hour, minute=self.system_start_time.minute, second=self.system_start_time.second)
 
     @classmethod
     def build(cls, path, counts, erg_calibration: List[float], livetime, realtime, channels=None, erg_units='KeV',

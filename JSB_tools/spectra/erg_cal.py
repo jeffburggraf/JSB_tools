@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import matplotlib
 from matplotlib.lines import Line2D
 from typing import Union, List, Set
-from matplotlib.widgets import TextBox, CheckButtons
+from matplotlib.widgets import TextBox, CheckButtons, RadioButtons
 from uncertainties import UFloat
 from lmfit.models import PolynomialModel
 from uncertainties import ufloat
@@ -71,7 +71,6 @@ class PltGammaLine:
                 gline = PltGammaLine(erg, intensity, nuclide, source="BG", color="green")
                 PltGammaLine.ALL_LINES['BG'].append(gline)
                 i += 1
-                print(i)
 
         PltGammaLine.ALL_LINES['Check sources'] = []
         for nuclide_name in check_sources:
@@ -236,6 +235,8 @@ class ErgCal(InteractivePlot):
         counts = self.spe.get_counts(make_density=True, nominal_values=True)
         super().__init__(bins, counts)
         self.ax.set_yscale('log')
+        self.ax.set_xlabel("Energy [MeV]")
+        self.ax.set_ylabel("Counts")
 
         # intensity_txt_box_ax = self.fig.add_axes([0.8, 0.88, 0.15, 0.04])
         intensity_txt_box_ax = self.fig.add_axes([0.01, 0.2, 0.062, .03])
@@ -260,6 +261,9 @@ class ErgCal(InteractivePlot):
         self.submit_nuclide_textbox = TextBox(submit_nuclide_textbox_ax, 'Add nucleus', initial='N(n,*g)')
         self.submit_nuclide_textbox.on_submit(self.add_subtract_nucleus_textbox)
 
+        fit_deg_text_box_ax = self.fig.add_axes([0.9, 0.6, 0.03, 0.1])
+        self.fitdeg_radio_buttons = RadioButtons(fit_deg_text_box_ax, ['1', '2'])
+
         self._visible_decay_sources_text = self.fig.text(0.175, 0.96, "")
         self.fig.canvas.mpl_connect("motion_notify_event", self.hover)
 
@@ -276,6 +280,14 @@ class ErgCal(InteractivePlot):
 
         self.add_subtract_nucleus_textbox("N(n,*g)")
         self.on_intensity_change(99)
+        plt.subplots_adjust(top=0.905,
+                            bottom=0.11,
+                            left=0.135,
+                            right=0.995)
+
+    @property
+    def fit_degree(self):
+        return int(self.fitdeg_radio_buttons.value_selected)
 
     def _set_display_nuclides_text(self):
         t = ', '.join(self._visible_decay_sources)
@@ -455,18 +467,16 @@ class ErgCal(InteractivePlot):
             self.fit_fwhms_errs.append(fit_fwhm_err)
 
             print(f"Added fit @ {self.selected_gline.erg:.1f} keV (ch = {fit_ch:.1f}) len= {len(self.fit_chs)}\n")
-            deg = 2  # todo: make button
-            print(self.selected_gline.erg, self.selected_gline.nuclide_name)
 
-            if len(self.fit_chs) > deg:
-                erg_fit_result, new_erg_cal = lin_fit(self.fit_chs, self.fit_ergs, self.fit_erg_errs, deg=deg)
+            if len(self.fit_chs) > self.fit_degree:
+                erg_fit_result, new_erg_cal = lin_fit(self.fit_chs, self.fit_ergs, self.fit_erg_errs, deg=self.fit_degree)
                 self.erg_calibration = new_erg_cal
 
-                shape_fit_result, new_shape_cal = fwhm_lin_fit(self.fit_ergs, self.fit_fwhms, self.fit_fwhms_errs, deg=deg)
+                shape_fit_result, new_shape_cal = fwhm_lin_fit(self.fit_ergs, self.fit_fwhms, self.fit_fwhms_errs, deg=self.fit_degree)
 
                 self._plot_fit(erg_fit_result, shape_fit_result)
 
-                if len(new_erg_cal) == 2:
+                if self.fit_degree == 1:
                     new_erg_cal = self.erg_calibration + [0.0]
                     new_shape_cal = new_shape_cal + [0.0]
 

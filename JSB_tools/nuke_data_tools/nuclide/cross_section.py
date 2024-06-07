@@ -98,7 +98,7 @@ class CrossSection1D:
     def ergs(self):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), 250)
 
-    def get_plot_ergs(self, npoints=1500):
+    def get_plot_ergs(self, npoints=3500):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), npoints)
 
     def __call__(self, ergs):
@@ -115,12 +115,12 @@ class CrossSection1D:
             out *= self.__yield__(1E6 * ergs)
         return out
 
-    def plot(self, ergs=None, ax=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
+    def plot(self, ergs=None, ax=None, npoints=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
              **mpl_kwargs):
         if ergs is None:
             self.__call__(self.emin)  # induce TENDL fetch if resonance bug is present
 
-            ergs = self.get_plot_ergs()
+            ergs = self.get_plot_ergs(npoints=npoints)
 
         elif isinstance(ergs, int):
             ergs = self.get_plot_ergs(ergs)
@@ -389,7 +389,7 @@ class ActivationCrossSection(CrossSection1D):
 
         ax2.legend()
 
-    def plot(self, ergs=None, ax=None,  plot_mts=False, fig_title=None, units="b", erg_min=None, erg_max=None,
+    def plot(self, ergs=None, ax=None, npoints=None, plot_mts=False, fig_title=None, units="b", erg_min=None, erg_max=None,
              return_handle=False, color=None,
              **mpl_kwargs):
         """
@@ -409,7 +409,7 @@ class ActivationCrossSection(CrossSection1D):
 
         """
         color_ = 'black' if plot_mts else mpl_kwargs.pop('c', color)
-        ax, handle = super(ActivationCrossSection, self).plot(ergs=ergs, ax=ax, fig_title=fig_title, units=units,
+        ax, handle = super(ActivationCrossSection, self).plot(ergs=ergs, ax=ax, npoints=npoints, fig_title=fig_title, units=units,
                                                               erg_min=erg_min,
                                                               erg_max=erg_max, return_handle=True, lw=2,
                                                               c=color_, **mpl_kwargs)
