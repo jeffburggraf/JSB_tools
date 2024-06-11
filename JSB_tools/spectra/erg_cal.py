@@ -468,6 +468,9 @@ class ErgCal(InteractivePlot):
 
             print(f"Added fit @ {self.selected_gline.erg:.1f} keV (ch = {fit_ch:.1f}) len= {len(self.fit_chs)}\n")
 
+            print(f"Ergs: {self.fit_ergs}")
+            print(f"FWHMs: {self.fit_fwhms}")
+
             if len(self.fit_chs) > self.fit_degree:
                 erg_fit_result, new_erg_cal = lin_fit(self.fit_chs, self.fit_ergs, self.fit_erg_errs, deg=self.fit_degree)
                 self.erg_calibration = new_erg_cal

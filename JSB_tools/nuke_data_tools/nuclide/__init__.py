@@ -1227,7 +1227,7 @@ class Nuclide(Element):
         return get_nubar(self.Z, self.A)
 
     def get_neutron_emission_rate(self):
-        """Neutron emission rate from SF"""
+        """Neutron emission rate from SF  (per atom)"""
 
         if ('sf',) not in self.decay_modes:
             return ufloat(0, 0)
