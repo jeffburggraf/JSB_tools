@@ -11,7 +11,7 @@ try:
     from plotly.subplots import make_subplots
 except ModuleNotFoundError:
     go = make_subplots = ModuleNotFoundError
-from typing import List, Dict
+from typing import List, Dict, Literal
 from scipy.special import ndtr
 import numpy as np
 from itertools import islice
@@ -171,8 +171,86 @@ def latex_form(val, n_digits=2):
     return fr"${base}\times 10^{{{exp}}}$"
 
 
-def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=5, xfmt='.2g', yfmt='.2g',
-           cmap=plt.cm.get_cmap("jet"), interpolation="none", imshow_kwargs=None):
+def remove_nans(data):
+    cut = None
+    if any(np.isnan([np.min(data), np.max(data)])):
+        cut = np.bitwise_not(np.isnan(data))
+
+    if cut is not None:
+        data = data[cut]
+
+    return data
+
+
+def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  interpolation="none",
+           cmap=matplotlib.colormaps['jet'], zmin=None, zmax=None, **imshow_kwargs):
+    """
+
+    Args:
+        Zdata:
+        xbins:
+        ybins:
+        ax:
+        extent:
+        logz:
+        interpolation:
+        cmap:
+        zmin: Min value on color bar
+        zmax: Max value on colorbar
+        **imshow_kwargs:
+
+    Returns:
+
+    """
+    Zdata = np.asarray(Zdata)
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    def get_min_after_zero(a):
+        return min(a[np.where(a > 0)])
+
+    if xbins is None:
+        xbins = np.arange(Zdata.shape[0])
+
+    if ybins is None:
+        ybins = np.arange(Zdata.shape[1])
+
+    Zdata = Zdata.transpose()
+
+    if extent is None:
+        extent = [xbins[0], xbins[-1], ybins[0], ybins[-1]]
+
+    flatZ = Zdata.flatten()
+    abs_flatZ = np.abs(flatZ)
+
+    if logz:
+        # Z[np.where(Z <= 0)] = np.nan
+        if min(flatZ) < 0:
+            linthresh = np.percentile(abs_flatZ, 1)
+            if linthresh == 0:
+                linthresh = get_min_after_zero(abs_flatZ)
+
+            norm = SymLogNorm(linthresh=linthresh, vmin=zmin, vmax=zmax, )
+        else:
+            norm = LogNorm(vmin=zmin, vmax=zmax, )
+    else:
+        norm = None
+
+    if imshow_kwargs is None:
+        imshow_kwargs = {}
+
+    im = ax.imshow(Zdata, origin='lower', extent=extent, norm=norm, cmap=cmap, interpolation=interpolation, aspect='auto', **imshow_kwargs)
+    plt.subplots_adjust(right=0.97)
+
+    cbar = fig.colorbar(im, ax=ax)
+    return {'ax': ax, 'ax_cbar': cbar.ax, 'im': im, 'cbar': cbar, 'xbins': xbins, 'ybins': ybins}
+
+
+def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None,
+           cmap=matplotlib.colormaps['jet'], interpolation="none", imshow_kwargs=None, swallow_nans=False):
     """
     2D heatmap, similar to ROOTs TH2D
 
@@ -182,75 +260,25 @@ def hist2D(datax, datay, ax=None, bins=35, logz=False, n_labels_x=5, n_labels_y=
         ax:
         bins:
         logz:
-        n_labels_x:
-        n_labels_y:
-        xfmt:
-        yfmt:
+        extent:
+        cmap
 
     Returns:
 
     """
-    def get_min_after_zero(a):
-        return min(flatZ[np.where(a > 0)])
+    datay = np.asarray(datay)
+    datax = np.asarray(datax)
 
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.figure
+    if swallow_nans:
+        datax, datay = remove_nans(datax), remove_nans(datay)
 
-    Z, xbins, ybins = np.histogram2d(datax, datay, bins=bins)
-    Z = Z.transpose()
-
-    flatZ = Z.flatten()
-    abs_flatZ = np.abs(flatZ)
-    if logz:
-        Z[np.where(Z <= 0)] = np.nan
-        if min(flatZ) < 0:
-            linthresh = np.percentile(abs_flatZ, 1)
-            if linthresh == 0:
-                linthresh = get_min_after_zero(abs_flatZ)
-
-            norm = SymLogNorm(linthresh=linthresh, vmin=min(flatZ), vmax=max(flatZ), )
-        else:
-            if min(flatZ) == 0:
-                z0 = get_min_after_zero(flatZ)
-                Z[np.where(Z == 0)] = z0
-                _min = z0
-            else:
-                _min = np.min(flatZ)
-            norm = LogNorm(vmin=_min, vmax=max(flatZ))
-
-    else:
-        norm = None
+    Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins)
 
     if imshow_kwargs is None:
         imshow_kwargs = {}
 
-    im = ax.imshow(Z, origin='lower', norm=norm, cmap=cmap, interpolation=interpolation, **imshow_kwargs)
-
-    cbar = fig.colorbar(im, ax=ax)
-
-    xs, ys = 0.5 * (xbins[1:] + xbins[:-1]), 0.5 * (ybins[1:] + ybins[:-1])
-
-    def index2data(index, bins):
-        return np.interp(index, np.arange(len(bins)), bins)
-
-    def get_labels(n_labels, bin_centers, fmt):
-        poss = np.linspace(0, len(bin_centers), n_labels)
-        labels = index2data(poss, bin_centers)
-
-        labels = [fmt(x) for x in labels]
-        return poss, labels
-
-    posx, labelx = get_labels(n_labels_x, xs, lambda x: float(f'{x:{xfmt}}'))
-    posy, labely = get_labels(n_labels_y, ys, lambda x: float(f'{x:{yfmt}}'))
-
-    ax.set_xticks(posx, labels=labelx)
-    ax.set_yticks(posy, labels=labely)
-
-    ax.format_coord = lambda x, y: f'x={index2data(x, xs):g}, y={index2data(y, ys):g}'
-
-    return {'ax': ax, 'ax_cbar': cbar.ax, 'cbar': cbar, 'xbins': xbins, 'ybins': ybins}
+    return hist2D(Z, xbins=binsx, ybins=binsy, ax=ax, extent=extent, logz=logz,
+                  interpolation=interpolation, cmap=cmap, **imshow_kwargs)
 
 
 def binned_down_sample(bins, y, yerr, n):
@@ -331,7 +359,7 @@ class RadioButtons(RadioButtons):
                 return index
 
     def __init__(self, ax, labels, label_colors=None, active=0, activecolor='blue', size=49,
-                 orientation="vertical", **kwargs):
+                 orientation: Literal['horizontal', 'vertical'] = 'vertical', **kwargs):
         """
         Add radio buttons to an `~.axes.Axes`.
         Parameters
@@ -351,7 +379,7 @@ class RadioButtons(RadioButtons):
         Further parameters are passed on to `Legend`.
         """
         AxesWidget.__init__(self, ax)
-        self.activecolor = activecolor
+        self._activecolor = activecolor
         axcolor = ax.get_facecolor()
         self.value_selected = None
 
@@ -378,8 +406,8 @@ class RadioButtons(RadioButtons):
         self.box = ax.legend(circles, labels, loc="center", **kwargs)
         self.labels = self.box.texts
 
-        self.circles = self.box.legendHandles
-        for c in self.circles:
+        self._circles = self.box.legendHandles
+        for c in self._circles:
             c.set_picker(5)
         self.cnt = 0
 
@@ -390,9 +418,9 @@ class RadioButtons(RadioButtons):
         if (self.ignore(event) or event.mouseevent.button != 1 or
                 event.mouseevent.inaxes != self.ax):
             return
-        if event.artist in self.circles:
+        if event.artist in self._circles:
             # if hasattr(self, '_observers'):
-            self.set_active(self.circles.index(event.artist))
+            self.set_active(self._circles.index(event.artist))
 
     def set_label_colors(self, colors):
         assert len(colors) == len(self.labels)
@@ -401,7 +429,7 @@ class RadioButtons(RadioButtons):
 
     def set_label_color(self, index, color):
         self.labels[index].set_color(color)
-        self.circles[index].set_edgecolor(color)
+        self._circles[index].set_edgecolor(color)
 
 
 def get_linear_fit(y_data, y_model, offsetQ=False):
@@ -909,7 +937,7 @@ def mpl_2dhist_from_data(x_bin_edges, y_bin_edges, x_points, y_points, weights=N
     yw = YW.flatten()
 
     if cmap is None:
-        cmap = cm.get_cmap('jet')
+        cmap = matplotlib.colormaps['jet']
 
     max_height = np.max(z_data)
     min_height = np.min(z_data)

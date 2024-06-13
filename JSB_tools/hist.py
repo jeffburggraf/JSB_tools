@@ -204,7 +204,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
 
 def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
-                       return_line_color=False, log_space=False, stats_box=False, norm=None, **mpl_kwargs):
+                       nominal_values=False, log_space=False, stats_box=False, norm=None, **mpl_kwargs):
     """
     Plots a histogram from raw data.
 
@@ -216,7 +216,7 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
         label:
         fig_kwargs:
         title:
-        return_line_color:
+        nominal_values:
         log_space: If True, bin_edges must be an int and bins will be constant width in log space
         stats_box:
         norm: Scale data such that integral equals norm
@@ -252,13 +252,19 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
             bin_edges = np.linspace(min(data), max(data), bin_edges + 1)
 
     y, _ = np.histogram(data, bins=bin_edges, weights=weights)
-    yerr = np.sqrt(y)
+
+    if nominal_values:
+        yerr = None
+    else:
+        yerr = np.sqrt(y)
 
     if norm is not None:
         integral = trapezoid(y, x=0.5*(bin_edges[1:] + bin_edges[:-1]))
         scale = norm/integral
         y = y * scale
-        yerr = yerr * scale
+
+        if yerr is not None:
+            yerr = yerr * scale
 
     return y, mpl_hist(bin_edges, y, yerr, ax=ax, label=label, fig_kwargs=fig_kwargs, title=title,
                        stats_box=stats_box,  **mpl_kwargs)

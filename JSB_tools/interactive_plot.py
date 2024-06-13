@@ -4,6 +4,7 @@ from uncertainties import UFloat
 from JSB_tools.spectra.time_depend import multi_guass_fit, GausFitResult
 from matplotlib import pyplot as plt
 from JSB_tools.hist import mpl_hist
+from JSB_tools import RadioButtons as MyRadioButtons
 import numpy as np
 import ipywidgets as widgets
 import matplotlib
@@ -16,7 +17,7 @@ from typing import Union
 matplotlib.use('Qt5agg')
 
 
-dropdown=widgets.Dropdown(options=[('Temp1', 0), ('Temp2', 1), ('Temp3', 2)],value=0,description='Temp')
+dropdown = widgets.Dropdown(options=[('Temp1', 0), ('Temp2', 1), ('Temp3', 2)], value=0, description='Temp')
 
 
 class Click:
@@ -40,17 +41,26 @@ class Click:
 
 
 class InteractivePlot:
-    color_cycle = ['blue', 'red', 'green', 'black', 'gray']
+    def __init__(self,  binss, ys, fit_window=3, ax=None, make_density=False, debug=False,
+                 plt_kwargs: List[dict] = None, labels=None):
+        if not isinstance(binss[0], (np.ndarray, list)) and not isinstance(ys[0], (np.ndarray, list)):
+            binss = [binss]
+            ys = [ys]
 
-    def __init__(self, bins, y, fit_window=3, ax=None, button_ax=None, make_density=False, debug=False):
-        self.bins = bins
+        self.binss = binss
+        self.ys = ys
+
+        assert len(self.ys) == len(self.binss)
+
+        if labels is not None:
+            assert len(labels) == len(ys)
+
         self.debug = debug
 
         if make_density:
-            bw = bins[1:] - bins[:-1]
-            self.y = y / bw
-        else:
-            self.y = y
+            for i, y in enumerate(self.ys):
+                bws = self.binss[i][1:] - self.binss[i][:-1]
+                self.ys[i] = y / bws
 
         self.fit_clicks: List[Click] = []
         self.fit_visuals = []
@@ -65,11 +75,33 @@ class InteractivePlot:
 
         self.button_ax.set_axis_off()
 
-        self.sigma_textbox = self.window_textbox = self.sigma_share_check_button = self.bg_radio_button = None
+        self.handles = []
+
+        for index, (bins, y) in enumerate(zip(self.binss, self.ys)):
+            if plt_kwargs is not None:
+                kwargs = plt_kwargs[index]
+            else:
+                kwargs = {}
+
+            if labels is not None:
+                kwargs['label'] = labels[index]
+            else:
+                kwargs['label'] = None
+
+            assert len(bins) - 1 == len(y), "Length of bins and y are not correct"
+
+            _, handle = mpl_hist(bins, y, ax=self.ax, zorder=-10 + index, return_handle=True, **kwargs)
+            self.handles.append(handle)
+
+        if labels is not None:
+            self.ax.legend()
+
+        self.sigma_textbox = self.window_textbox = self.sigma_share_check_button = self.bg_radio_button = self.select_curve_radio_buttons = None
 
         self.setup_buttons()
 
-        mpl_hist(bins, self.y, ax=self.ax, zorder=-10, return_handle=True)
+        if plt_kwargs is not None:
+            assert len(plt_kwargs) == len(binss)
 
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         self.fig.canvas.mpl_connect('key_release_event', self.on_key_release)
@@ -82,6 +114,16 @@ class InteractivePlot:
         window_t_ax = self.fig.add_axes([0.90, 0.15, 0.03, 0.03])
         bg_check_ax = self.fig.add_axes([0.90, 0.2, 0.07, 0.2])
         sigma_check_ax = self.fig.add_axes([0.9, 0.05, 0.055, 0.04])
+
+        if len(self.ys) > 1:
+            if len(self.ys) > 2:
+                change_curve_ax = self.fig.add_axes([0.875, 0.62, 0.03, 0.35])
+            else:
+                change_curve_ax = self.fig.add_axes([0.875, 0.62, 0.03, 0.15])
+
+            self.select_curve_radio_buttons = RadioButtons(change_curve_ax, [f'{i}' for i in range(1, len(self.ys) + 1)], 0)
+            self.on_select_curve_change()
+            self.select_curve_radio_buttons.on_clicked(self.on_select_curve_change)
 
         self.sigma_textbox = TextBox(sigma_t_ax, r'$\sigma_{0}$')
         self.window_textbox = TextBox(window_t_ax, 'Fit\nwindow', initial='3')
@@ -105,6 +147,23 @@ class InteractivePlot:
 
             self.update()
 
+    def get_curve_index(self):
+        if self.select_curve_radio_buttons is None:
+            index = 0
+
+        else:
+            index = int(self.select_curve_radio_buttons.value_selected.lower()) - 1
+
+        return index
+
+    @property
+    def y(self):
+        return self.ys[self.get_curve_index()]
+
+    @property
+    def bins(self):
+        return self.binss[self.get_curve_index()]
+
     def clear(self):
         for t in (self.fit_visuals + self.fit_clicks):
             try:
@@ -113,6 +172,37 @@ class InteractivePlot:
                 continue
 
         self.fit_visuals = []
+
+        self.update()
+
+    def get_color(self):
+        """
+        Color of selected curve
+
+        Returns:
+
+        """
+        handle = self.handles[self.get_curve_index()]
+        return handle[0][0].get_color()
+
+    def on_select_curve_change(self, *args):
+
+        def set_alpha(val):
+            hs[0][0].set_alpha(val)
+
+            if hs[1] is not None:
+                for lines in hs[1].lines:
+                    if hasattr(lines, '__iter__'):
+                        [x.set_alpha(val) for x in lines]
+                    else:
+                        lines.set_alpha(val)
+
+        new_index = self.get_curve_index()
+        for i, hs in enumerate(self.handles):
+            if i == new_index:
+                set_alpha(1)
+            else:
+                set_alpha(0.26)
 
         self.update()
 
@@ -166,8 +256,8 @@ class InteractivePlot:
                 y0 = y0.n
 
             dy = (self.ax.get_ylim()[1] - self.ax.get_ylim()[0])/12
-            t = self.ax.text(efit.n, y0 + dy, fr"$\mu$={f(efit)}" "\n" fr"$\sigma={f(fit.sigmas(i))}$" "\n" f"A={A:.3g}", va='center',
-                             fontsize=7.5, zorder=10)
+            t = self.ax.text(efit.n, y0 + dy, fr"$\mathbf{{\mu}}$={f(efit)}" "\n" fr"$\mathbf{{\sigma}}$={f(fit.sigmas(i))}" "\n" f"A={A:.3g}", va='center',
+                             fontsize=7.5, zorder=10, color=self.get_color(), weight='bold')
 
             self.fit_visuals.append(t)
 
@@ -209,10 +299,10 @@ class InteractivePlot:
                                sigma_guesses=sigma_guess,
                                fit_buffer_window=fit_window, fix_bg=fix_bg, bg=bg)
 
-        x = np.linspace(fits.fit_x[0], fits.fit_x[-1], 5000)
+        x = np.linspace(fits.fit_x[0], fits.fit_x[-1], 2000)
         y = fits.eval(x=x)
 
-        plt, = self.ax.plot(x, y, c='tab:orange', zorder=3)
+        plt, = self.ax.plot(x, y, color='black', zorder=3, ls='--', gapcolor=self.get_color())
         self.fit_visuals.append(plt)
 
         self.label(fits)
@@ -225,7 +315,7 @@ class InteractivePlot:
             click.remove()
 
             _x = fits.centers(i).nominal_value
-            axvline = self.ax.axvline(_x,  ls='-' if click.dblclick else '--', lw=0.7, c='black')
+            axvline = self.ax.axvline(_x,  ls='-' if click.dblclick else '--', lw=0.7, c=self.get_color())
             self.fit_visuals.append(axvline)
 
         print(msg)
@@ -261,7 +351,7 @@ if __name__ == '__main__':
 
     y /= bins[1:] - bins[:-1]
 
-    i = InteractivePlot(bins, y, make_density=False)
+    i = InteractivePlot([bins, bins], [y, y * 1.1], make_density=False)
 
     plt.show()
 

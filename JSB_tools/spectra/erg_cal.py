@@ -445,7 +445,7 @@ class ErgCal(InteractivePlot):
 
             i0 = np.argmin([abs(self.selected_gline.erg - fit.centers(i)) for i in range(len(fit))])
 
-            if abs(fit.centers(i0).n - self.selected_gline.erg) > 15:
+            if abs(fit.centers(i0).n - self.selected_gline.erg) > 25:
                 warnings.warn("Selected gamma line and fitted center are not within acceptable range!")
                 return
 

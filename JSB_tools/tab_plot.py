@@ -279,7 +279,10 @@ class TabPlot:
 
         """
         if not hasattr(ax, 'set_visible'):
-            raise ValueError(f'Supplied argument cannot be used by TabPlot.add_aux_axis:\nType, "{type(ax)}", does not have "set_visible" attribute.')
+            try:
+                ax = ax.ax
+            except AttributeError:
+                raise AttributeError(f'Supplied argument cannot be used by TabPlot.add_aux_axis:\nType, "{type(ax)}", does not have "set_visible" attribute.')
 
         self.plt_axs[-1] = np.concatenate([self.plt_axs[-1], [ax]])
 
