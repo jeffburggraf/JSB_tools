@@ -62,6 +62,24 @@ except ModuleNotFoundError:
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
+def step_shoulder(x, A, x0, sigma, b=0.9):
+    """
+    A step function that goes to y=0 as x -> -inf, passes through y=A/2 at x=x0, and goes to y=A as x -> inf.
+    The transition between 0 and A around x0 occurs over a width specified by`width
+
+    Args:
+        x: X points
+        A: Amplitude, or max value as x -> inf
+        x0: Center location
+        sigma: Defines scale over which function transitions from 0 to A
+        b: Defines the transition window (sigma) as when the function reaches 90% of its maximum.
+
+    Returns:
+        Function evaluated at x
+    """
+    return A*(0.5 + np.arctan(((x - x0)*np.tan((b*np.pi)/2.))/(2.*sigma))/np.pi)
+
+
 def auto_yscale(ax, margin=0.1, labels2avoid=None, xmax=None, xmin=None):
     """
     Adds a callback for `ax` which causes pressing the y key to automatically scale the y axis.
@@ -441,7 +459,7 @@ def get_linear_fit(y_data, y_model, offsetQ=False):
         y_model:
         offsetQ: If False, then fit using only a scaling constant.
 
-    Returns: a, b
+    Returns: scale, offset
 
     """
     y_data = np.asarray(y_data)

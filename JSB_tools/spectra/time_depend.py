@@ -269,6 +269,36 @@ def find_local_maximum(a, i0, N=3):
     return out_indices[1]
 
 
+def count_peak(bins, ys, centers, window):
+    """
+    Self centers on peak near `center`, and counts over neighborhood determined by "window"
+    Args:
+        bins:
+        ys:
+        centers:
+        window:
+
+    Returns:
+
+    """
+    if not hasattr(centers, '__iter__'):
+        centers = [centers]
+        iter_flag = True
+    else:
+        iter_flag = True
+
+    out = []
+    for center in centers:
+        i0 = find_local_maximum(ys, np.searchsorted(bins, center, side='right') - 1)
+        bw = bins[i0] - bins[i0 - 1]
+        di = int(window/bw/2)
+        out.append(sum(ys[i0 - di: i0 + di]))
+
+    if not iter_flag:
+        return out[0]
+
+    return np.array(out)
+
 # def find_local_max(a, i0):
 #     """
 #     Starting from a[i0], find index of nearest local maxima.

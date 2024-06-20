@@ -169,6 +169,36 @@ class TabPlot:
     def button_len(self):
         return sum(map(len, self.button_labels))
 
+    def set_yscale(self, min_val=None, max_val=None):
+        """
+        Sets yscale for all axes.
+
+        Can also be used to set all axes to the same range--that which is able to fit all data
+
+        Todo: Make max/min val different for each axis
+
+        Args:
+            min_val:
+            max_val:
+
+        Returns:
+
+        """
+        if min_val is None or max_val is None:
+            min_val, max_val = np.inf, -np.inf
+
+            for ax_group in self.plt_axs:
+                for ax in ax_group:
+                    for line in ax.lines:
+                        y = line.get_ydata()
+                        min_val = min(min(y), min_val)
+                        max_val = max(max(y), max_val)
+
+        dy = 0.02 * (max_val - min_val)
+
+        for ax in self.axes_flat:
+            ax.set_ylim(min_val - dy, max_val + dy)
+
     def on_press(self, event):
         if isinstance(event, str):
             class E:
