@@ -76,6 +76,10 @@ class CalSource:
         return f'{self.name} ({self.serial_num}); {self.get_activity():.3E} Bq'
 
 
+class CF252Source:
+    pass  # todo
+
+
 std_3_pct_err = 0.03/2.57583   # converting 3% at 99% interval to sigma
 
 ALL_SOURCES = {
