@@ -1,13 +1,16 @@
+import datetime
 import warnings
 from typing import List, Dict
 import numpy as np
 from typing import Union, Sequence
+
+import pendulum
 from uncertainties import unumpy as unp
 from uncertainties import UFloat
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from scipy.integrate import trapezoid
-
+import pendulum
 
 __default_stats_kwargs = {'loc': (0.7, 0.8)}
 
@@ -144,22 +147,25 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     assert y.ndim == 1, f"`y` must be a one dimensional array, not shape of {y.shape}"
 
-    bin_centers = [(bin_edges[i + 1] + bin_edges[i]) / 2 for i in range(len(bin_edges) - 1)]
+    if isinstance(bin_edges[0], datetime.datetime):
+        bin_centers = [bin_edges[i] + (bin_edges[i + 1] - bin_edges[i]) / 2 for i in range(len(bin_edges) - 1)]  #
+    else:
+        bin_centers = [(bin_edges[i + 1] + bin_edges[i]) / 2 for i in range(len(bin_edges) - 1)]
     yp = np.concatenate([y, [y[-1]]])
 
     capsize = mpl_kwargs.pop('capsize', None)
 
     # handle1 = ax.errorbar(bin_edges, yp, yerr=np.zeros_like(yp), label=label, capsize=0, ds='steps-post', elinewidth=elinewidth, **mpl_kwargs)
-    handle1 = ax.plot(bin_edges, yp, label=label,  ds='steps-post',  **mpl_kwargs)
+    handle1, = ax.plot(bin_edges, yp, label=label,  ds='steps-post',  **mpl_kwargs)
 
-    handle1[0].set_marker('None')
+    handle1.set_marker('None')
 
     if "c" in mpl_kwargs:
         pass
     elif 'color' in mpl_kwargs:
         pass
     else:  # color was from color cycle. Fetch from handle.
-        mpl_kwargs['color'] = handle1[0].get_color()
+        mpl_kwargs['color'] = handle1.get_color()
     mpl_kwargs.pop('ls', None)
     mpl_kwargs.pop('linestyle', None)
 

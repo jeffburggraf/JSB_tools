@@ -14,6 +14,7 @@ except ModuleNotFoundError:
 from typing import List, Dict, Literal
 from scipy.special import ndtr
 import numpy as np
+from scipy import stats
 from itertools import islice
 from scipy.interpolate import InterpolatedUnivariateSpline
 try:
@@ -60,6 +61,102 @@ except ModuleNotFoundError:
 
 
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
+
+
+def constant_rate_chi2(times, plotQ=True, nbins=100):
+    """
+    Performs statistical test to see if the rate of events in `times` are independent on time (e.g. occur at constant rate).
+    Null hypothesis = Constant event rate
+
+    Args:
+        times:
+        plotQ:
+        nbins:
+
+    Notes:
+        Small return value means more likely to be non-constant event rate.
+            ~0.10: consider rejecting Null
+            ~0.05: probably should reject Null
+            <0.01: reject Null
+            <1E-3: absolutely reject Null
+
+    Returns:
+        p-value
+
+    """
+    dts = times[1:] - times[:-1]
+    lam = 1 / np.mean(dts)
+
+    def predicted(_x):
+        return sum(y) * np.e**-(lam * _x) * lam
+
+    if len(dts) / nbins < 10:
+        nbins = len(dts)/10  # Enforce at least 10 events per bin
+
+    bins = get_equal_count_bins(dts, nbins)
+
+    y, bins = np.histogram(dts, bins)
+    bws = bins[1:] - bins[:-1]
+
+    expected_counts = np.array([np.e**(-lam * b1) - np.e ** (-lam * b2) for b1, b2 in zip(bins[1:], bins[:-1])])
+    expected_counts *= sum(y) / sum(expected_counts)
+
+    dof = len(y) - 2
+    chi2s = (y - expected_counts)**2/expected_counts
+    chi2 = sum(chi2s)
+    prob = 1 - stats.chi2.cdf(chi2, dof)
+
+    if plotQ:
+        fig = plt.figure()
+        time_bins = get_equal_count_bins(times, len(times) / 350)
+        tbws = time_bins[1:] - time_bins[:-1]
+
+        counts, _ = np.histogram(times, time_bins)
+
+        gs = fig.add_gridspec(2, 2)
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.set_xlabel(r'$\Delta t$')
+        ax1.set_ylabel('Counts')
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax2.set_xlabel(r'$\chi^2$')
+        ax2.set_ylabel('Probability')
+
+        ax3 = fig.add_subplot(gs[1, :])
+        ax3.set_xlabel(r'Time [s]')
+        ax3.set_ylabel('Rate [Hz]')
+
+        mpl_hist(bins, y / bws, poisson_errors=True, ax=ax1)
+        x_plt = np.linspace(0, max(dts), 200)
+        ax1.plot(x_plt, predicted(x_plt))
+
+        chi2s_x = np.linspace(max(0, min(dof - 3 * dof, 0.9 * chi2)), max(dof + 3 * dof, chi2*1.2), 300)
+        chi2s_y = stats.chi2.pdf(chi2s_x, dof)
+        ax2.plot(chi2s_x, chi2s_y, label=r'$\chi^2$ of constant rate')
+        ax2.axvline(chi2, c='black', label=fr'Observed $\chi^2$ (p={prob:.2e}')
+        ax2.legend()
+        ax1.legend()
+        mpl_hist(time_bins, unp.uarray(counts, np.sqrt(counts)) / tbws, ax=ax3, poisson_errors=True)
+
+    return prob
+
+def get_equal_count_bins(vals, nbins):
+    """
+    Given data set `vals`, find the bins such that when `vals` are histogrammed,
+        the result will have roughly equal number of counts in each bin.
+
+    Args:
+        vals: 1-D array
+
+    Returns:
+        bins     (len(vale) + 1)
+
+    """
+    vals = np.asarray(vals)
+
+    nbins = int(nbins)
+    eq_indices = np.argsort(vals)[np.linspace(0, len(vals) - 1, nbins + 1, dtype=int)]
+    # out = [vals[i] for i in eq_indices]
+    return vals[eq_indices]
 
 
 def step_shoulder(x, A, x0, sigma, b=0.9):
