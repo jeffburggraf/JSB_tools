@@ -326,9 +326,21 @@ class ErgCal(InteractivePlot):
                         self.add_line(line)
 
             self.update()
+
         except KeyError:
-            print(f'Invalid nucleus, "{value}".\noptions are:\n{'\n\t'.join(PltGammaLine.ALL_LINES.keys())}'
-                  '\n See valid decay sources above!')
+            try:
+                n = Nuclide(value)
+
+                PltGammaLine.ALL_LINES[n.name] = []
+                for line in n.decay_gamma_lines:
+                    l = PltGammaLine(line.erg.n, line.intensity.n, value, value, )
+                    PltGammaLine.ALL_LINES[n.name].append(l)
+
+                self.add_subtract_nucleus_textbox(value)
+
+            except ValueError:
+                print(f'Invalid nucleus, "{value}".\noptions are:\n{'\n\t'.join(PltGammaLine.ALL_LINES.keys())}'
+                      '\n See valid decay sources above!')
 
     def erg_2_channel(self, erg):
         if len(self.spe.erg_calibration) == 2:

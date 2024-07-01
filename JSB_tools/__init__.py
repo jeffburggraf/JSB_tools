@@ -63,7 +63,7 @@ except ModuleNotFoundError:
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
-def constant_rate_chi2(times, plotQ=True, nbins=100):
+def constant_rate_chi2(times, plotQ=True, nbins=10):
     """
     Performs statistical test to see if the rate of events in `times` are independent on time (e.g. occur at constant rate).
     Null hypothesis = Constant event rate
@@ -108,7 +108,7 @@ def constant_rate_chi2(times, plotQ=True, nbins=100):
 
     if plotQ:
         fig = plt.figure()
-        time_bins = get_equal_count_bins(times, len(times) / 350)
+        time_bins = get_equal_count_bins(times, nbins)
         tbws = time_bins[1:] - time_bins[:-1]
 
         counts, _ = np.histogram(times, time_bins)

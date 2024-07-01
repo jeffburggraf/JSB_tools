@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 from matplotlib import pyplot as plt
 import matplotlib
-
+from uncertainties import ufloat
 matplotlib.use('Qt5agg')
 cwd = Path(__file__).parent
 
@@ -58,6 +58,9 @@ with open(cwd / 'nubars.pickle', 'rb') as f:
 
 
 def get_nubar(Z, A):
+    if Z == 252 and A == 98:
+        return ufloat(3.7573, 0.0056)
+
     try:
         return data[Z, A]
     except KeyError:

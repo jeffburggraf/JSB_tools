@@ -1232,7 +1232,7 @@ class Nuclide(Element):
         if ('sf',) not in self.decay_modes:
             return ufloat(0, 0)
 
-        br_ratio = Nuclide('Cf252').decay_modes['sf',][0].branching_ratio
+        br_ratio = self.decay_modes['sf',][0].branching_ratio
         return self.decay_rate * br_ratio * self.get_sf_nubar()
 
     def __get_misc_xs__(self, attrib, projectile, data_source=None) -> CrossSection1D:

@@ -1,5 +1,6 @@
 from __future__ import annotations
-from datetime import datetime
+from pendulum import datetime
+import pendulum
 import re
 from JSB_tools.nuke_data_tools import Nuclide
 from typing import Union
@@ -48,18 +49,19 @@ class CalSource:
 
         CalSource.instances[self.serial_num] = self
 
-    def get_activity(self, date=datetime.now()):
+    def get_activity(self, date=pendulum.now()):
         dt = (date - self.ref_date).total_seconds()
         hl = self.nuclide.half_life
         correction = 0.5 ** (dt / hl)
         return self.ref_activity * correction
 
-    def get_n_decays(self, duration, start_date=datetime.now()):
+    def get_n_decays(self, duration, start_date=pendulum.now(), make_rate=False):
         """
 
         Args:
             duration: Acquisition is seconds
             start_date: For source activity correction.
+            make_rate:
 
         Returns:
 
@@ -70,7 +72,10 @@ class CalSource:
         l = self.nuclide.decay_rate
 
         out = n_nuclides_ref * (np.e**(-l * dt) - np.e**(-l * (dt + duration)))
-        return out
+        if not make_rate:
+            return out
+        else:
+            return out / duration
 
     def __repr__(self):
         return f'{self.name} ({self.serial_num}); {self.get_activity():.3E} Bq'
