@@ -183,26 +183,37 @@ class InteractivePlot:
 
         """
         handle = self.handles[self.get_curve_index()]
-        return handle[0][0].get_color()
+        return handle[0].get_color()
 
     def on_select_curve_change(self, *args):
 
-        def set_alpha(val):
-            hs[0][0].set_alpha(val)
-
-            if hs[1] is not None:
-                for lines in hs[1].lines:
-                    if hasattr(lines, '__iter__'):
-                        [x.set_alpha(val) for x in lines]
-                    else:
-                        lines.set_alpha(val)
+        def set_alpha(handle, val):
+            for item in handle:
+                if hasattr(item, '__iter__'):
+                    set_alpha(item, val)
+                    # item[0].set_alpha(item, val)
+                else:
+                    if item is not None:
+                        item.set_alpha(val)
+            # try:
+            #     hs[0][0].set_alpha(val)
+            # except TypeError:
+            #     hs[0].set_alpha(val)
+            #     return
+            #
+            # if hs[1] is not None:
+            #     for lines in hs[1].lines:
+            #         if hasattr(lines, '__iter__'):
+            #             [x.set_alpha(val) for x in lines]
+            #         else:
+            #             lines.set_alpha(val)
 
         new_index = self.get_curve_index()
         for i, hs in enumerate(self.handles):
             if i == new_index:
-                set_alpha(1)
+                set_alpha(hs, 1)
             else:
-                set_alpha(0.26)
+                set_alpha(hs, 0.26)
 
         self.update()
 

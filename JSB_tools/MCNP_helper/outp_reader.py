@@ -1126,7 +1126,7 @@ class StoppingPowerData:
         unit_conversion = 10. ** -orders[i]
         return unit_conversion, units
 
-    def plot_range(self, ax=None, label=None, title=None, material_name_4_title=None, particle_name_4_title=None,
+    def plot_range(self, ax=None, energies=None , label=None, title=None, material_name_4_title=None, particle_name_4_title=None,
                    density=None, units=None):
 
         if ax is None:
@@ -1151,7 +1151,13 @@ class StoppingPowerData:
             unit_conversion, units = self._dist_unit(y, units)
             ax.set_ylabel("range [{}]".format(units))
 
-        ax.plot(self.energies, y*unit_conversion, label=label)
+        if energies is None:
+            x = self.energies
+        else:
+            x = energies
+            y = np.interp(energies, self.energies, y)
+
+        ax.plot(x, y*unit_conversion, label=label)
 
         if label is not None:
             ax.legend()

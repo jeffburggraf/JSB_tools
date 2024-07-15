@@ -7,6 +7,7 @@ from typing import Union
 from typing import Dict
 import numpy as np
 from uncertainties import ufloat
+from JSB_tools.spe_reader import SPEFile
 
 
 class CalSource:
@@ -129,6 +130,14 @@ ALL_SOURCES = {
                                datetime(2014, 4, 1), unit='uCi', rel_err=std_3_pct_err)
     }
 }
+
+
+def get_source_serial(spe: SPEFile) -> str:
+    m = re.match('.*source +([a-zA-Z0-9-]+)(?:$| |,|;)', spe.description, re.IGNORECASE)
+    if not m:
+        raise ValueError(f"No source serial number found in SPE description:\n{spe.description}")
+
+    return m.groups()[0]
 
 
 def get_src_cal(serial, facility='ARMS') -> CalSource:

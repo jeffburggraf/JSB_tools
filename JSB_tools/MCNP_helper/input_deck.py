@@ -114,7 +114,7 @@ class MCNPSICard:
         assert all([isinstance(x, Number) for x in array]), 'All `{0}` mut be a number, not {1}'.format(var_name,
                                                                                                         [x for x in array]) #type(array[0]))
 
-        return array
+        return np.asarray(array)
 
     def __init__(self, variable_values, variable_probs, si_card_number=None, discrete=False, cell_vol_dist=False):
         self.variable_values = MCNPSICard.__check_arrays__(variable_values, 'variable_values')
