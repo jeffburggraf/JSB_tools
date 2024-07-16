@@ -201,7 +201,10 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
     out = [ax]
 
     if return_handle:
-        out += [(handle1, handle2)]
+        if handle2 is None:
+            out += [(handle1,)]
+        else:
+            out += [(handle1, handle2)]
 
     if len(out) == 1:
         return ax
