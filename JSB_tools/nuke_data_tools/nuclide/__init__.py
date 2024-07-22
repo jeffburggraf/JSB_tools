@@ -955,14 +955,15 @@ class Nuclide(Element):
 
     @property
     def latex_name(self):
-        if self.isometric_state != 0:
-            try:
-                m = 'mnop'[self.isometric_state - 1]
-            except IndexError:
-                m = f'_l{self.isometric_state}'
-        else:
-            m = ''
-        return f"$^{{{self.A}{m}}}${self.atomic_symbol}"
+        return self.get_latex_name(True)
+        # if self.isometric_state != 0:
+        #     try:
+        #         m = 'mnop'[self.isometric_state - 1]
+        #     except IndexError:
+        #         m = f'_l{self.isometric_state}'
+        # else:
+        #     m = ''
+        # return f"$^{{{self.A}{m}}}${self.atomic_symbol}"
 
     def get_latex_name(self, unboldmath_cmd=False):
         """

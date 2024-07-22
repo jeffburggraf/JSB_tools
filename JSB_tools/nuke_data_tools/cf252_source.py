@@ -13,7 +13,7 @@ cf252 = Nuclide("Cf252")
 
 
 class Cf252:
-    neutron_nu = {'Cf252': 3.7509, 'Cf250': 3.50, 'Cf254': 3.89, 'Cf246': 3.14}
+    neutron_nu = {'Cf252': 3.7509, 'Cf250': 3.52, 'Cf254': 3.89, 'Cf246': 3.14}
 
     def __init__(self, tot_weight,
                  serial_number, cal_date: pendulum.DateTime,

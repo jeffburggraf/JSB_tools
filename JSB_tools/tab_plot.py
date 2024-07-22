@@ -117,7 +117,7 @@ class TabPlot:
     def axes_flat(self) -> List[Axes]:
         return flatten(self.plt_axs)
 
-    def __init__(self, figsize=(10, 8), universal_zoom=True,  window_title: Union[str, None] = None,
+    def __init__(self, figsize=(10, 8), universal_zoom=True,  window_title: Union[str, None] = None, no_titles=False,
                  *fig_args, **fig_kwargs):
 
         """
@@ -164,6 +164,8 @@ class TabPlot:
         self.max_buttons_reached = False
 
         self.fig.canvas.mpl_connect('key_press_event', self.on_press)
+
+        self.no_titles = no_titles
 
     @property
     def button_len(self):
@@ -443,7 +445,10 @@ class TabPlot:
         if suptitle is None:
             suptitle = button_label
 
-        self.suptitles.append(suptitle)
+        if self.no_titles:
+            self.suptitles.append('')
+        else:
+            self.suptitles.append(suptitle)
 
         button_label = f"{button_label: <4}"
         self.button_labels.append(button_label)

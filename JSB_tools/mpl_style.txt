@@ -104,4 +104,4 @@ legend.fontsize: 15
 legend.columnspacing: 1.0
 legend.borderaxespad: 0  # legend position borderaxespad
 legend.frameon: True
-legend.framealpha: 0.8
+legend.framealpha: 1
