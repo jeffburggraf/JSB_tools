@@ -286,19 +286,47 @@ def latex_form(val, n_digits=2):
     return fr"${base}\times 10^{{{exp}}}$"
 
 
-def remove_nans(data):
-    cut = None
-    if any(np.isnan([np.min(data), np.max(data)])):
-        cut = np.bitwise_not(np.isnan(data))
+def remove_nans(datas):
+    """
+    Removes NaNs of 2D NxM arrays where each array will
+        receive the same cut, returning a NxM' array.
 
-    if cut is not None:
-        data = data[cut]
+    Args:
+        datas:
 
-    return data
+    Returns:
+        (NxM' array), cut
+    """
+
+    datas = np.asarray(datas)
+
+    if datas.ndim == 1:
+        datas = datas[np.newaxis, :]
+
+    cut = np.ones(len(datas[0]), dtype=bool)
+
+    cut_flag = False
+
+    for data in datas:
+        assert len(data) == len(datas[0])
+
+        if any(np.isnan([np.min(data), np.max(data)])):
+            cut_flag = True
+            cut &= np.bitwise_not(np.isnan(data))
+
+    if cut_flag:
+        out = np.zeros((datas.shape[0], sum(cut)))
+
+        for i in range(len(datas)):
+            out[i] = datas[i][cut]
+    else:
+        out = datas
+
+    return out, cut
 
 
 def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  interpolation="none",
-           cmap=matplotlib.colormaps['jet'], zmin=None, zmax=None, **imshow_kwargs):
+           cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, **imshow_kwargs):
     """
 
     Args:
@@ -315,6 +343,7 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
         **imshow_kwargs:
 
     Returns:
+        Dict with keys: 'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata'
 
     """
     Zdata = np.asarray(Zdata)
@@ -348,9 +377,9 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
             if linthresh == 0:
                 linthresh = get_min_after_zero(abs_flatZ)
 
-            norm = SymLogNorm(linthresh=linthresh, vmin=zmin, vmax=zmax, )
+            norm = SymLogNorm(linthresh=linthresh, vmin=vmin, vmax=vmax, )
         else:
-            norm = LogNorm(vmin=zmin, vmax=zmax, )
+            norm = LogNorm(vmin=vmin, vmax=vmax, )
     else:
         norm = None
 
@@ -361,11 +390,12 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
     plt.subplots_adjust(right=0.97)
 
     cbar = fig.colorbar(im, ax=ax)
-    return {'ax': ax, 'ax_cbar': cbar.ax, 'im': im, 'cbar': cbar, 'xbins': xbins, 'ybins': ybins}
+    return {'ax': ax, 'ax_cbar': cbar.ax, 'im': im, 'cbar': cbar,
+            'xbins': xbins, 'ybins': ybins, 'Zdata': Zdata}
 
 
-def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None,
-           cmap=matplotlib.colormaps['jet'], interpolation="none", imshow_kwargs=None, swallow_nans=False):
+def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, weights=None,
+                     cmap=matplotlib.colormaps['jet'], interpolation="none", imshow_kwargs=None, swallow_nans=False):
     """
     2D heatmap, similar to ROOTs TH2D
 
@@ -385,9 +415,12 @@ def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None,
     datax = np.asarray(datax)
 
     if swallow_nans:
-        datax, datay = remove_nans(datax), remove_nans(datay)
+        (datax, datay), _ = remove_nans([datax, datay])
 
-    Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins)
+    if isinstance(weights, (int, float)):
+        weights = np.ones_like(datax) * weights
+
+    Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins, weights=weights)
 
     if imshow_kwargs is None:
         imshow_kwargs = {}

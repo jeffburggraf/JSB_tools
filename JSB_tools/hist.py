@@ -84,7 +84,8 @@ def get_stats(bins, y, errors=True, percentiles=(0.25, 0.5, 0.75)):
 
 
 def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, title=None, poisson_errors=False,
-             return_handle=False, stats_box=False, stats_kwargs=None, elinewidth=1.1, errorevery=1, **mpl_kwargs):
+             return_handle=False, stats_box=False, stats_kwargs=None, make_density=False,
+             errorevery=1, **mpl_kwargs):
     """
 
     Args:
@@ -103,6 +104,7 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
         stats_box: If true write stats box akin to ROOT histograms.
         stats_kwargs: Default is {'loc': (0.7, 0.8)}
+        make_density:
         elinewidth:
         **mpl_kwargs:
 
@@ -144,6 +146,12 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
 
     if title is not None:
         ax.set_title(title)
+
+    if make_density:
+        bwidths = (bin_edges[1:] - bin_edges[:-1])
+        y = y / bwidths
+        if yerr is not None:
+            yerr = yerr / bwidths
 
     assert y.ndim == 1, f"`y` must be a one dimensional array, not shape of {y.shape}"
 

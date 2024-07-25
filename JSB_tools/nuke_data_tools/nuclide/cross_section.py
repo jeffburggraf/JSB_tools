@@ -98,7 +98,7 @@ class CrossSection1D:
     def ergs(self):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), 250)
 
-    def get_plot_ergs(self, npoints=3500):
+    def get_plot_ergs(self, npoints):
         return np.logspace(np.log10(self.emin), np.log10(self.emax), npoints)
 
     def __call__(self, ergs):
@@ -115,15 +115,12 @@ class CrossSection1D:
             out *= self.__yield__(1E6 * ergs)
         return out
 
-    def plot(self, ergs=None, ax=None, npoints=None, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
+    def plot(self, ergs=None, ax=None, npoints=3500, fig_title=None, units="b", erg_min=None, erg_max=None, return_handle=False,
              **mpl_kwargs):
-        if ergs is None:
+        if ergs is None or isinstance(ergs, int):
             self.__call__(self.emin)  # induce TENDL fetch if resonance bug is present
 
             ergs = self.get_plot_ergs(npoints=npoints)
-
-        elif isinstance(ergs, int):
-            ergs = self.get_plot_ergs(ergs)
 
         if erg_max is not None:
             i1 = np.searchsorted(ergs, erg_max)
@@ -389,7 +386,7 @@ class ActivationCrossSection(CrossSection1D):
 
         ax2.legend()
 
-    def plot(self, ergs=None, ax=None, npoints=None, plot_mts=False, fig_title=None, units="b", erg_min=None, erg_max=None,
+    def plot(self, ergs=None, ax=None, npoints=3000, plot_mts=False, fig_title=None, units="b", erg_min=None, erg_max=None,
              return_handle=False, color=None,
              **mpl_kwargs):
         """
@@ -1084,6 +1081,8 @@ class ActivationReactionContainer:
 
 
 if __name__ == "__main__":
+    from JSB_tools.nuke_data_tools import Nuclide
+    Nuclide('H1').elastic_xs('neutron').plot()
     print()
     nuclide_module.Nuclide('In113').get_incident_neutron_daughters(data_source='TENDL')['In112'].xs.plot()
 
