@@ -17,7 +17,7 @@ from pathlib import Path
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 
-path = Path(__file__).parent/'Cf252Spectra.pickle'
+path = Path(__file__).parent/'Cf252_PFNS.pickle'
 
 try:
     with open(path, 'rb') as f:

@@ -63,6 +63,47 @@ except ModuleNotFoundError:
 markers = ['p', 'X', 'D', 'o', 's', 'P', '^', '*']
 
 
+def integrate_hist(bins, y, a=None, b=None):
+    """
+    Does simple, linear integration  (area under the curve) of a histogram.
+
+    Args:
+        bins:
+        y:
+        a:
+        b:
+
+    Returns:
+
+    """
+
+    if a is None:
+        a = bins[0]
+
+    if b is None:
+        b = bins[-1]
+
+    assert len(bins) == len(y) + 1
+    assert bins[0] <= a < b <= bins[-1]
+
+    bins = np.asarray(bins)
+    bws = bins[1:] - bins[:-1]
+
+    ia, ib = np.searchsorted(bins, [a, b], side='right') - 1
+
+    out = np.sum(bws[ia: ib + 1] * y[ia: ib + 1])
+
+    if ia != 0:
+        dx = (a - bins[ia])
+        out -= dx * y[ia]
+
+    if ib != len(y):
+        dx = (bins[ib + 1] - b)
+        out -= dx * y[ib]
+
+    return out
+
+
 def constant_rate_chi2(times, plotQ=True, nbins=10):
     """
     Performs statistical test to see if the rate of events in `times` are independent on time (e.g. occur at constant rate).
