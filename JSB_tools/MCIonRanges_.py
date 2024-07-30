@@ -49,13 +49,13 @@ class Base:
         self._z = ROOT.vector('float')()
         self._t = ROOT.vector('float')()
         self._tree = None
-        fractions = np.array(list(sorted(material._zaid_proportions)), dtype=float)
+        fractions = np.array(list(sorted(material.atom_fractions)), dtype=float)
         fractions *= 1.0/sum(fractions)
         if material.is_weight_fraction:
             fractions *= -1
         fractions = tuple(fractions)
 
-        zaids = tuple(sorted(material._zaids))
+        zaids = tuple(sorted(material.zaids))
         out = projectile, material.density, zaids, fractions, material.density, energy
         self.__param_tuples = out
         self.save_dir = None

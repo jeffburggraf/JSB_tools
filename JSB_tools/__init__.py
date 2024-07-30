@@ -450,6 +450,7 @@ def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, we
         cmap
 
     Returns:
+        Dict with keys: 'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata'
 
     """
     datay = np.asarray(datay)

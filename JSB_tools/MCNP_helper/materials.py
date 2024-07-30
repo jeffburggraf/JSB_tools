@@ -133,6 +133,31 @@ def get_most_abundant_isotope(symbol):
 class Material:
     all_materials = MCNPNumberMapping('Material', 1000, 1000)
 
+    def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None,
+                 is_gas=False, is_mcnp=True):
+        self.mat_number = mat_number
+        self.__name__ = mat_name
+        Material.all_materials[self.mat_number] = self
+        self.density = density
+        self.zaids = []
+        self.atom_fractions = []
+        self._xs_libraries: List[str] = []  # e.g. .84p
+
+        if mat_kwargs is None:
+            self.mat_kwargs = {}
+        else:
+            self.mat_kwargs = mat_kwargs
+
+        self.is_gas = is_gas
+
+        if is_gas:
+            self.mat_kwargs['GAS'] = '1'
+
+        self._is_weight_fraction = None  # ensure add_zaid can only be done by weight or by fraction, but not both
+        self.is_mcnp = is_mcnp
+
+        self.dedx_path = None
+
     def delete(self):
         try:
             del Material.all_materials[self.mat_number]
@@ -148,21 +173,27 @@ class Material:
         Returns: (elements, fractions)
         """
         elements_dict = {}
-        for zaid, frac in zip(self._zaids, self._zaid_proportions):
+
+        for zaid, frac in zip(self.zaids, self.atom_fractions):
             z = zaid//1000
             a = zaid % 1000
+
             if a == 0:
                  a = Nuclide(get_most_abundant_isotope(ATOMIC_SYMBOL[z])).A
             s = Nuclide.from_Z_A_M(z, a).atomic_symbol
+
             try:
                 elements_dict[s] += frac
             except KeyError:
                 elements_dict[s] = frac
+
         fractions = np.array(list(elements_dict.values()))
         elements = np.array(list(elements_dict.keys()))
+
         arg_sort = np.argsort(elements)
         fractions = fractions[arg_sort] / sum(fractions)
         elements = elements[arg_sort]
+
         return elements, fractions
 
     @staticmethod
@@ -197,7 +228,7 @@ class Material:
             zaid = int(vals[0])
             frac = float(vals[1])
 
-            out.add_zaid(zaid, frac, is_weight_fraction= frac < 0)
+            out.add_zaid(zaid, frac, is_weight_fraction=frac < 0)
 
         return out
 
@@ -208,35 +239,6 @@ class Material:
             mat: Material
             cards.append(mat.mat_card)
         return '\n'.join(cards)
-
-    # @staticmethod
-    # def all_materials() -> List[Material]:
-    #     out = []
-    #     for mat in Material.__all_materials.values():
-    #         mat: Material
-    #         out.append(mat)
-    #     return out
-
-    def __init__(self, density: float, mat_number: int = None, mat_name: str = None, mat_kwargs: Dict[str, str] = None,
-                 is_mcnp=True):
-        self.mat_number = mat_number
-        self.__name__ = mat_name
-        Material.all_materials[self.mat_number] = self
-        self.density = density
-        self._zaids = []
-        self._zaid_proportions = []
-        self._xs_libraries: List[str] = []  # e.g. .84p
-
-        if mat_kwargs is None:
-            self.mat_kwargs = {}
-        else:
-            self.mat_kwargs = mat_kwargs
-
-        self.is_weight_fraction = None
-        self.is_gas = False
-        self.is_mcnp = is_mcnp
-
-        self.dedx_path = None
 
     @staticmethod
     def __get_dedx_name(mat, file_number, dedx_path):
@@ -480,46 +482,76 @@ class Material:
             zaid = 1000 * z + a
             self.add_zaid(zaid, percent*fraction, False, xs_library=xs_library)
 
-    def add_zaid(self, zaid_or_nuclide: Union[Nuclide, int], fraction, is_weight_fraction=False,
+    def add_zaid(self, zaid_or_nuclide: Union[Nuclide, int, str], fraction, is_weight_fraction=False,
                  elemental_zaid=False, xs_library=''):
         """
 
         Args:
             zaid_or_nuclide:
-            fraction:
+
+            fraction: Atom fraction unless `is_weight_fraction` equals True
+
             is_weight_fraction:
-            elemental_zaid:
+
+            elemental_zaid: Forces elemental ZAID
+
             xs_library: e.g.:  .84p
 
 
         Returns:
 
         """
-        if self.is_weight_fraction is None:
-            self.is_weight_fraction = is_weight_fraction
+        if self._is_weight_fraction is None:
+            self._is_weight_fraction = is_weight_fraction
+
+        if not self._is_weight_fraction == is_weight_fraction:
+            raise ValueError('Can only do add_zaid with atom fraction of weight fraction, not both!')
+
         if isinstance(zaid_or_nuclide, int):
-            pass
+            pass  # Correct form
+
         elif isinstance(zaid_or_nuclide, Nuclide):
             zaid_or_nuclide = 1000*zaid_or_nuclide.Z + zaid_or_nuclide.A
+
+        elif isinstance(zaid_or_nuclide, str):
+            try:
+                zaid_or_nuclide = int(zaid_or_nuclide)  # for cases like "1001"
+
+            except ValueError:  # for cases like, e.g., "U238"
+                m = re.match('([A-Z][a-z]{0,1})([0-9]*)', zaid_or_nuclide)
+                if not m:
+                    raise ValueError(f'Invalid nuclide str, "{zaid_or_nuclide}"')
+                symbol, A = m.groups()
+                Z = int(ATOMIC_NUMBER[symbol])
+                zaid_or_nuclide = 1000 * Z + (int(A) if len(A) else 0)
+
         else:
             assert False, 'Incorrect type, "{}", passed in `zaid_or_nuclide` argument.\n' \
                           'Must be zaid (int) or Nuclide'.format(type(zaid_or_nuclide))
+
         if elemental_zaid:
             zaid_or_nuclide = 1000 * (zaid_or_nuclide//1000)
-        self._zaids.append(zaid_or_nuclide)
-        self._zaid_proportions.append(fraction)
+
+        if is_weight_fraction:
+            z = zaid_or_nuclide // 1000
+            a = zaid_or_nuclide % 1000
+
+            fraction /= atomic_mass(ATOMIC_SYMBOL[z] + str(a))
+
+        self.zaids.append(zaid_or_nuclide)
+        self.atom_fractions.append(fraction)
 
         self._xs_libraries.append(xs_library)
 
     def remove_zaid(self, zaid):
-        for i in range(len(self._zaids)):
-            if self._zaids[i] == zaid:
+        for i in range(len(self.zaids)):
+            if self.zaids[i] == zaid:
                 break
         else:
             return
 
-        del self._zaids[i]
-        del self._zaid_proportions[i]
+        del self.zaids[i]
+        del self.atom_fractions[i]
         del self._xs_libraries[i]
 
     @property
@@ -527,13 +559,13 @@ class Material:
         if mat_kwargs is not None:
             self.mat_kwargs.update(mat_kwargs)
 
-        assert len(self._zaids) > 0, 'No materials added! Use Material.add_zaid'
+        assert len(self.zaids) > 0, 'No materials added! Use Material.add_zaid'
         comment = get_comment('density = {}'.format(self.density), self.name)
         outs = ['M{}  {}'.format(self.mat_number, comment)]
 
-        for n, zaid, xs_lib in zip(self._zaid_proportions, self._zaids, self._xs_libraries):
+        for frac, zaid, xs_lib in zip(self.atom_fractions, self.zaids, self._xs_libraries):
             zaid_str = f'{zaid}{xs_lib}'
-            outs.append('     {} {}'.format(zaid_str, '-{}'.format(n) if self.is_weight_fraction else n))
+            outs.append(f'     {zaid_str} {frac}')
 
         outs.extend(["     {} = {}".format(k, v) for k, v in self.mat_kwargs.items()])
 
@@ -760,15 +792,22 @@ class EJ200(Material):
         self.add_zaid(6000, 4.69, xs_library=xs_library)
         self.add_zaid(1001, 5.17, xs_library=xs_library)
 
-"""
-1001 -0.004530 1001 0.084739 1001 0.006090
-8016  -0.512600 8016 0.604079 8016 0.043412
-11023 -0.015270 11023 0.012523 11023 0.000900
-13027 -0.035550 13027 0.024842 13027 0.001785
-14000 -0.360360 14000 0.241921 14000 0.017386
-20000 -0.057910 20000 0.027244 20000 0.001958"""
+
+class EJ600(Material):
+    def __init__(self, density=4.09, mat_number: int = None, mat_name: str = "EJ600",
+                 mat_kwargs: Dict[str, str] = None, xs_library=''):
+        super(EJ600, self).__init__(density=density, mat_number=mat_number, mat_name=mat_name, mat_kwargs=mat_kwargs)
+        self.add_zaid('Zn', 1, xs_library=xs_library)
+        self.add_zaid('S', 1, xs_library=xs_library)
+
+
 if __name__ == "__main__":
     print(StainlessSteel())
+    m = Material(1)
+    m.add_zaid('H1', 1, True)
+    m.add_zaid('U235', 10, True)
+
+    print(list(zip(m.zaids, [i / sum(m.atom_fractions) for i in m.atom_fractions])))
     # m = Material.gas(['He', 'Ar'], atom_fractions=[1,1], pressure=1.35)
     # m.set_srim_dedx()
     # print(m)

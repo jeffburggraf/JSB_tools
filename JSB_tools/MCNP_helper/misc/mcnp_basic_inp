@@ -1,0 +1,18 @@
+stopping power calculation
+10 1000 -{material.density} -1 imp:{mode}=1
+11 0 1 imp:{mode}=0
+
+1 so 0.5
+
+mode {mode}
+phys:{mode} {emax}
+sdef
+     erg = 10
+     par = {sdef_par}
+nps 1
+{mat_card}
+print 85
+c FMESH144:p GEOM=cyl ORIGIN=0 0 1 AXS=0 0 1 VEC=1 0 0  $ None
+c     IMESH 10  IINTS 2
+c     JMESH 5  JINTS 10
+c     KMESH 1  KINTS 1
