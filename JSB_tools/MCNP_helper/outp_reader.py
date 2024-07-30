@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Set, Iterable, Sized, Union, Type, Optional
 from typing import List, Dict, Set, Iterable, Sized, Union, Type, Optional
 from numbers import Number
-from JSB_tools.MCNP_helper.stopping_power import StoppingPowerData
+from JSB_tools.MCNP_helper.stopping_power import MCNPStoppingPowerData
 import warnings
 try:
     from openmc import Material
@@ -874,6 +874,7 @@ if __name__ == "__main__":
     o = OutP('/Users/burggraf1/PycharmProjects/ISU/darkMatter/mcnp/0_inp/outp')
     print(o.get_f6_tally('Al heat').heating_joules*6.24E14)
     print(o.get_f6_tally('C13 heat').heating_joules*6.24E14)
+
     # test_outp = (Path(__file__).parent.parent / "FFandProtonSims" / "Protons" / "outp_saved")
     # o = OutP(test_outp)
     # d = o.read_stopping_powers("proton", 2000)

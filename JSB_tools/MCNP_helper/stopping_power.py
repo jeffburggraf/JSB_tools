@@ -90,7 +90,7 @@ def read_stopping_power(outp: outp_reader.OutP,
 
     """
     particle = particle.lower()
-    out = StoppingPowerData()
+    out = MCNPStoppingPowerData()
 
     if re.match('[0-9]+', particle):
         particle_type = 'heavy_ion'
@@ -150,7 +150,7 @@ def read_stopping_power(outp: outp_reader.OutP,
     return out
 
 
-class StoppingPowerData:
+class MCNPStoppingPowerData:
     def __init__(self):
         self.__energies__: np.ndarray = None  # MeV
         self.ranges: np.ndarray = None  # cm
@@ -413,7 +413,7 @@ class StoppingPowerData:
                            emax=200,
                            temperature: Optional[float] = None,
                            mcnp_command='mcnp6',
-                           verbose: bool = False) -> StoppingPowerData:
+                           verbose: bool = False) -> MCNPStoppingPowerData:
         """
 
         Args:
@@ -536,7 +536,7 @@ if __name__ == '__main__':
     # Material.get_nuclide_atom_densities()
     # mat.get_nuclide_atom_densities()
     # assert isinstance(mat, Material)
-    stop = StoppingPowerData.gen_stopping_power('electron', material=mat)
+    stop = MCNPStoppingPowerData.gen_stopping_power('electron', material=mat)
 
     stop.plot_range(energies=np.linspace(0, 3, 100))
     plt.show()

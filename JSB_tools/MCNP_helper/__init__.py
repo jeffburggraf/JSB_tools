@@ -2,7 +2,7 @@ from JSB_tools.MCNP_helper.geometry.geom_core import Cell, Surface, MCNPNumberMa
 from JSB_tools.MCNP_helper.geometry.primitives import RightCylinderSurface, RightCylinder, CuboidSurface, CellGroup, \
      CuboidCell
 from JSB_tools.MCNP_helper.input_deck import InputDeck
-from JSB_tools.MCNP_helper.outp_reader import OutP, StoppingPowerData
+from JSB_tools.MCNP_helper.outp_reader import OutP, MCNPStoppingPowerData
 from JSB_tools.MCNP_helper.input_deck import F4Tally, TallyBase
 import JSB_tools.MCNP_helper.units
 from typing import Union
