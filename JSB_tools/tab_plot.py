@@ -293,19 +293,20 @@ class TabPlot:
                     ax.set_ylim((0, 1))
 
             self.index = index  # save current "place" in list of plots (e.g. self.button_funcs).
-            # button = self.buttons[index]
 
             self.fig.canvas.draw_idle()
 
         return set_vis
 
-    def add_aux_axis(self, ax):
+    def add_aux_axis(self, ax, button_index=-1):
         """
         Add an axis to the list of axis that will switch on/off with the button presses.
-        Turns on for last axis returned by last call to self.add_new_axis().
+        TBy default, turns on for last axis returned by last call to self.add_new_axis().
+        Change button_index arg to change this.
 
         Args:
             ax:
+            button_index: List index to button which the `ax` will appear/disappear
 
         Returns:
 
@@ -314,9 +315,10 @@ class TabPlot:
             try:
                 ax = ax.ax
             except AttributeError:
-                raise AttributeError(f'Supplied argument cannot be used by TabPlot.add_aux_axis:\nType, "{type(ax)}", does not have "set_visible" attribute.')
+                raise AttributeError(f'Supplied argument cannot be used by TabPlot.add_aux_axis:\nType,'
+                                     f' "{type(ax)}", does not have "set_visible" attribute.')
 
-        self.plt_axs[-1] = np.concatenate([self.plt_axs[-1], [ax]])
+        self.plt_axs[button_index] = np.concatenate([self.plt_axs[button_index], [ax]])
 
         if len(self.button_labels) == 1:
             ax.set_visible(1)
@@ -407,7 +409,7 @@ class TabPlot:
         del self.button_funcs[-1]
 
     def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
-               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, *args, **kwargs) -> Union[List[Axes], Axes]:
+               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, insert_at_index=-1,  *args, **kwargs) -> Union[List[Axes], Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:

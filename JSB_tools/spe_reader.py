@@ -841,9 +841,14 @@ class SPEFile(EfficiencyCalMixin):
         if not isinstance(scale, (int, float)) or scale != 1:
             counts *= scale
 
-        label=ax_kwargs.pop('label', leg_label)
+        if leg_label is None:
+            leg_label = self.path.name
+
+        label = ax_kwargs.pop('label', leg_label)
+
         mpl_hist(bins, counts, ax=ax, label=label, **ax_kwargs)
         ylabel = 'Counts'
+
         if make_rate:
             ylabel += '/s'
         if make_density:
@@ -853,6 +858,8 @@ class SPEFile(EfficiencyCalMixin):
 
         ax.set_xlabel('Energy [KeV]')
         ax.set_title(self.path.name)
+
+
 
         return ax
 

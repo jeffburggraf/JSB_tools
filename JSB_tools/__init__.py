@@ -379,12 +379,14 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
         logz:
         interpolation:
         cmap:
-        zmin: Min value on color bar
-        zmax: Max value on colorbar
+        vmin:
+        vmax:
         **imshow_kwargs:
 
     Returns:
-        Dict with keys: 'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata'
+        Dict with keys:
+                        'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata', 'vmin', 'vmax'
+
 
     """
     Zdata = np.asarray(Zdata)
@@ -412,7 +414,6 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
     abs_flatZ = np.abs(flatZ)
 
     if logz:
-        # Z[np.where(Z <= 0)] = np.nan
         if min(flatZ) < 0:
             linthresh = np.percentile(abs_flatZ, 1)
             if linthresh == 0:
@@ -431,12 +432,17 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
     plt.subplots_adjust(right=0.97)
 
     cbar = fig.colorbar(im, ax=ax)
+
+    zflat = Zdata.flatten()
+
     return {'ax': ax, 'ax_cbar': cbar.ax, 'im': im, 'cbar': cbar,
-            'xbins': xbins, 'ybins': ybins, 'Zdata': Zdata}
+            'xbins': xbins, 'ybins': ybins, 'Zdata': Zdata,
+            'vmax': np.max(zflat), 'vmin': np.min(zflat)}
 
 
 def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, weights=None,
-                     cmap=matplotlib.colormaps['jet'], interpolation="none", imshow_kwargs=None, swallow_nans=False):
+                     cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, interpolation="none",
+                     imshow_kwargs=None, swallow_nans=False):
     """
     2D heatmap, similar to ROOTs TH2D
 
@@ -447,10 +453,18 @@ def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, we
         bins:
         logz:
         extent:
-        cmap
+        weights:
+        cmap:
+        vmin: Min value on color bar
+        vmax: Max value on colorbar
+        interpolation:
+        imshow_kwargs:
+        swallow_nans:
 
     Returns:
+
         Dict with keys: 'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata'
+
 
     """
     datay = np.asarray(datay)
@@ -468,7 +482,8 @@ def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, we
         imshow_kwargs = {}
 
     return hist2D(Z, xbins=binsx, ybins=binsy, ax=ax, extent=extent, logz=logz,
-                  interpolation=interpolation, cmap=cmap, **imshow_kwargs)
+                  interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax,
+                  **imshow_kwargs)
 
 
 def binned_down_sample(bins, y, yerr, n):
