@@ -87,5 +87,5 @@ CF252_SOURCES = {
     'M-4Cf052': Cf252(tot_weight=12.6E-6, serial_number="M-4Cf052", cal_date=pendulum.datetime(2003, 10, 28)),
     'M-4Cf053': Cf252(tot_weight=9.90E-6, serial_number="M-4Cf053", cal_date=pendulum.datetime(2004, 9, 9)),
     'M-4Cf054': Cf252(tot_weight=5.50E-6, serial_number="M-4Cf054", cal_date=pendulum.datetime(2005, 11, 8)),
-    'SN-22': Cf252(tot_weight=0.546E-6, serial_number="SN-22", cal_date=pendulum.datetime(2003, 9, 24)),
+    '1292-73-1': Cf252(tot_weight=0.546E-6, serial_number="SN-22", cal_date=pendulum.datetime(2003, 9, 24)),
 }
