@@ -272,7 +272,7 @@ class MCNPStoppingPowerData:
             if material_name_4_title is not None:
                 title += "{0} in material {1}".format(self.par, material_name_4_title)
             else:
-                title += "{0} in material {1}".format(self.par, self.mat)
+                title += "{0} in material {1}".format(self.par, self.material.name)
 
             if density is not None:
                 title += " density: {0:.4E} g/cm3".format(density)
@@ -536,7 +536,14 @@ if __name__ == '__main__':
     # Material.get_nuclide_atom_densities()
     # mat.get_nuclide_atom_densities()
     # assert isinstance(mat, Material)
-    stop = MCNPStoppingPowerData.gen_stopping_power('electron', material=mat)
+    stope = MCNPStoppingPowerData.gen_stopping_power('electron', material=mat)
 
-    stop.plot_range(energies=np.linspace(0, 3, 100))
+    ax = stope.plot_range(energies=np.linspace(0, 3, 100), label='electron')
+
+    stop_p = MCNPStoppingPowerData.gen_stopping_power('proton', material=mat)
+
+    stop_p.plot_range(energies=np.linspace(0, 3, 100), ax=ax, label='Proton')
+
+    stope.plot_dedx(density=1)
+
     plt.show()

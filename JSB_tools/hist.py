@@ -255,25 +255,29 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
     if not np.isfinite(data.max() + data.min()):
         data = data[np.where(np.isfinite(data))]
 
-    if log_space:
-        assert isinstance(bin_edges, int), "`bin_edges` must be an int to use log spaced bins."
-        if data.min() <= 0:
-            data = data[np.where(data > 0)]
+    if isinstance(bin_edges, int):
+        bin_edges = np.linspace(min(data), max(data), bin_edges + 1)
 
-        _min = np.log10(min(data))
-        _max = np.log10(max(data))
+    yerr = None
 
-        bin_edges = np.logspace(_min, _max, bin_edges + 1)
+    if isinstance(weights, (int, float)):
+        y, _ = np.histogram(data, bins=bin_edges, weights=None)
+        y = np.asarray(y, dtype=float)
+
+        if not nominal_values:
+            yerr = np.sqrt(y) * weights  # do first!
+
+        y *= float(weights)
+
+    elif weights is not None:
+        y, _ = np.histogram(data, bins=bin_edges, weights=weights)
+
+        if not nominal_values:
+            y_counts, _ = np.histogram(data, bins=bin_edges, weights=None)
+            rel_err = 1 / np.sqrt(y_counts)
+            yerr = y * rel_err
     else:
-        if isinstance(bin_edges, int):
-            bin_edges = np.linspace(min(data), max(data), bin_edges + 1)
-
-    y, _ = np.histogram(data, bins=bin_edges, weights=weights)
-
-    if nominal_values:
-        yerr = None
-    else:
-        yerr = np.sqrt(y)
+        y, _ = np.histogram(data, bins=bin_edges, weights=None)
 
     if norm is not None:
         integral = trapezoid(y, x=0.5*(bin_edges[1:] + bin_edges[:-1]))

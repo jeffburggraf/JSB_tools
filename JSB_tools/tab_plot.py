@@ -95,10 +95,11 @@ class TabPlot:
 
     def new_show(*args, **wkargs):
         for self in TabPlot._instnaces:
-            try:
-                self.button_funcs[0]()
-            except IndexError:
-                pass
+            if self._auto_start_zero:
+                try:
+                    self.button_funcs[0]()
+                except IndexError:
+                    pass
         return TabPlot.old_show(*args, **wkargs)
 
     plt.show = new_show  # link calls to plt.show to a function that initiates all TabPlots
@@ -136,6 +137,8 @@ class TabPlot:
         plt.rcParams['keymap.forward'] = []
         plt.rcParams['keymap.back'] = []
 
+        self._auto_start_zero = True  # starting button index
+
         self.universal_zoom = universal_zoom
 
         self.fig = plt.figure(figsize=figsize, *fig_args, **fig_kwargs)
@@ -165,7 +168,7 @@ class TabPlot:
 
         self.fig.canvas.mpl_connect('key_press_event', self.on_press)
 
-        self.no_titles = no_titles
+        self.no_sup_title = no_titles
 
     @property
     def button_len(self):
@@ -215,9 +218,14 @@ class TabPlot:
         if event.key in ['right', 'up']:
             index = min(len(self.button_funcs) - 1, self.index + 1)
             self.button_funcs[index](event)
+
         elif event.key in ['down', 'left']:
             index = max(0, self.index - 1)
             self.button_funcs[index](event)
+
+    def select_plot(self, index):
+        self._auto_start_zero = False
+        self.button_funcs[index]()
 
     def add_button_callback(self, func, index=None, self_kwargs: List[str] = None):
         """
@@ -244,7 +252,7 @@ class TabPlot:
 
         self.buttons[index].on_clicked(new_func)
 
-    def get_button_func(self):
+    def _get_button_func(self):
         """
         Callback function on button click. Generates and returns the func for the last call to self.new_ax(...)
 
@@ -311,7 +319,10 @@ class TabPlot:
         Returns:
 
         """
-        if not hasattr(ax, 'set_visible'):
+        if isinstance(ax, dict):
+            ax = ax['ax_cbar']  # for output from JSB_tools.hist2D
+
+        elif not hasattr(ax, 'set_visible'):
             try:
                 ax = ax.ax
             except AttributeError:
@@ -409,7 +420,7 @@ class TabPlot:
         del self.button_funcs[-1]
 
     def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
-               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, insert_at_index=-1,  *args, **kwargs) -> Union[List[Axes], Axes]:
+               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, no_sup_title=False,  *args, **kwargs) -> Union[List[Axes], Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:
@@ -419,7 +430,7 @@ class TabPlot:
             sharex:
             sharey:
             suptitle:
-            subplot_kw: kwargs dict to be passed to subplots, e.g. like doing fig.add_subplot(**subplot_kw)
+            subplot_kw: kwarop suptitle on this plot
             *args:
             **kwargs:
 
@@ -447,7 +458,7 @@ class TabPlot:
         if suptitle is None:
             suptitle = button_label
 
-        if self.no_titles:
+        if self.no_sup_title or no_sup_title:
             self.suptitles.append('')
         else:
             self.suptitles.append(suptitle)
@@ -504,7 +515,7 @@ class TabPlot:
         button = Button(button_ax, button_label)
         self.buttons.append(button)
 
-        self.button_funcs.append(self.get_button_func())
+        self.button_funcs.append(self._get_button_func())
         button.on_clicked(self.button_funcs[-1])
 
         new_fig_bottom = self.button_axs[0][0].get_position().y1 + 0.1

@@ -440,7 +440,7 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
             'vmax': np.max(zflat), 'vmin': np.min(zflat)}
 
 
-def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, weights=None,
+def hist2D_from_data(datax, datay, ax=None, bins=100, logz=False, extent=None, weights=None,
                      cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, interpolation="none",
                      imshow_kwargs=None, swallow_nans=False):
     """
@@ -476,7 +476,12 @@ def hist2D_from_data(datax, datay, ax=None, bins=35, logz=False, extent=None, we
     if isinstance(weights, (int, float)):
         weights = np.ones_like(datax) * weights
 
-    Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins, weights=weights)
+    try:
+        Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins, weights=weights)
+    except ValueError:
+        if np.isnan(np.min([datay, datax])):
+            raise ValueError('NaNs in data! Try again with `swallow_nans` set to True')
+        raise
 
     if imshow_kwargs is None:
         imshow_kwargs = {}
