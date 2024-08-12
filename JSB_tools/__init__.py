@@ -385,7 +385,7 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
 
     Returns:
         Dict with keys:
-                        'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata', 'vmin', 'vmax'
+                        'ax', 'bins', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata', 'vmin', 'vmax'
 
 
     """
@@ -437,7 +437,7 @@ def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  int
 
     return {'ax': ax, 'ax_cbar': cbar.ax, 'im': im, 'cbar': cbar,
             'xbins': xbins, 'ybins': ybins, 'Zdata': Zdata,
-            'vmax': np.max(zflat), 'vmin': np.min(zflat)}
+            'vmax': np.max(zflat), 'vmin': np.min(zflat), 'bins': (xbins, ybins)}
 
 
 def hist2D_from_data(datax, datay, ax=None, bins=100, logz=False, extent=None, weights=None,
@@ -464,7 +464,6 @@ def hist2D_from_data(datax, datay, ax=None, bins=100, logz=False, extent=None, w
     Returns:
 
         Dict with keys: 'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'zdata'
-
 
     """
     datay = np.asarray(datay)
