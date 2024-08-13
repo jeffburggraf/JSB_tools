@@ -419,8 +419,40 @@ class TabPlot:
 
         del self.button_funcs[-1]
 
-    def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None, figsize=None,
-               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None, no_sup_title=False,  *args, **kwargs) -> Union[List[Axes], Axes]:
+    def new_ax_mosaic(self, mosaic, button_label=None, per_subplot_kw=None, sharex=False, sharey=False, suptitle=None,
+               gridspec_kw=None, height_ratios=None, width_ratios=None, **kwargs) -> Dict[str, Axes]:
+        """
+
+        Args:
+            mosaic: e.g.: 'A;B'
+            button_label:
+            nrows:
+            ncols:
+            per_subplot_kw: e.g.:   {('A',): {'projection': '3d'}}
+            sharex:
+            sharey:
+            suptitle:
+            figsize:
+            gridspec_kw:
+            height_ratios:
+            width_ratios:
+            no_sup_title:
+            *args:
+            **kwargs:
+
+        Returns:
+
+        """
+
+        _kwargs = {'mosaic': mosaic, 'sharex': sharex, 'sharey': sharey, 'width_ratios': width_ratios, 'per_subplot_kw': per_subplot_kw,
+                   'height_ratios': height_ratios, 'gridspec_kw': gridspec_kw, 'suptitle': suptitle}
+        kwargs.update(_kwargs)
+        out = self.new_ax(button_label, subplot_mosaicQ=True, **kwargs)
+        return out
+
+    def new_ax(self, button_label=None, nrows=1, ncols=1, sharex=False, sharey=False, suptitle=None,
+               subplot_kw=None, gridspec_kw=None, height_ratios=None, width_ratios=None,
+               subplot_mosaicQ=False, *args, **kwargs) -> Union[List[Axes], Axes]:
         """
         Raises OverflowError if too many axes have been created.
         Args:
@@ -431,6 +463,8 @@ class TabPlot:
             sharey:
             suptitle:
             subplot_kw: kwarop suptitle on this plot
+            subplot_mosaicQ: Call fig.subplot_mosaic instead of fig.subplots in order to generate axes.
+
             *args:
             **kwargs:
 
@@ -452,13 +486,13 @@ class TabPlot:
         gridspec_kw.setdefault('height_ratios', height_ratios)
         gridspec_kw.setdefault('width_ratios', width_ratios)
 
-        if figsize is not None:
+        if kwargs.get('figsize', None) is not None:
             raise ValueError("figsize argument is applied in the TabPlot constructor")
 
         if suptitle is None:
             suptitle = button_label
 
-        if self.no_sup_title or no_sup_title:
+        if self.no_sup_title:
             self.suptitles.append('')
         else:
             self.suptitles.append(suptitle)
@@ -466,8 +500,13 @@ class TabPlot:
         button_label = f"{button_label: <4}"
         self.button_labels.append(button_label)
 
-        axs = self.fig.subplots(nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, subplot_kw=subplot_kw,
-                                gridspec_kw=gridspec_kw, *args, **kwargs)
+        if subplot_mosaicQ:
+            mosaic = kwargs.pop('mosaic')
+            axs_out = self.fig.subplot_mosaic(mosaic, sharex=sharex, sharey=sharey, gridspec_kw=gridspec_kw, **kwargs)
+            axs = np.array(list(axs_out.values()))
+        else:
+            axs_out = axs = self.fig.subplots(nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, subplot_kw=subplot_kw,
+                                    gridspec_kw=gridspec_kw, *args, **kwargs)
 
         if not hasattr(axs, '__iter__'):
             axs = np.array([axs])
@@ -528,15 +567,12 @@ class TabPlot:
 
         if self._vis_flag:
             self._vis_flag = False
-            # if suptitle is not None:
-            #     self.fig.suptitle(suptitle)
-            # else:
-            #     self.fig.suptitle(button_label)
+
         else:
             [ax.set_visible(0) for ax in axs_flat]
 
         self._set_new_twinx()
-        return axs if len(axs_flat) > 1 else axs[0]
+        return axs_out if len(axs_flat) > 1 else axs_out[0]
 
     def legend(self):
         for axs in self.plt_axs:
