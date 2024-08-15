@@ -1,9 +1,11 @@
 import datetime
+import re
 import warnings
 from typing import List, Dict
 import numpy as np
 from typing import Union, Sequence
-
+from matplotlib.colors import LogNorm, SymLogNorm
+import matplotlib
 import pendulum
 from uncertainties import unumpy as unp
 from uncertainties import UFloat
@@ -220,6 +222,46 @@ def mpl_hist(bin_edges, y, yerr=None, ax=None, label=None, fig_kwargs=None, titl
         return tuple(out)
 
 
+
+def remove_nans(datas):
+    """
+    Removes NaNs of 2D NxM arrays where each array will
+        receive the same cut, returning a NxM' array.
+
+    Args:
+        datas:
+
+    Returns:
+        (NxM' array), cut
+    """
+
+    datas = np.asarray(datas)
+
+    if datas.ndim == 1:
+        datas = datas[np.newaxis, :]
+
+    cut = np.ones(len(datas[0]), dtype=bool)
+
+    cut_flag = False
+
+    for data in datas:
+        assert len(data) == len(datas[0])
+
+        if any(np.isnan([np.min(data), np.max(data)])):
+            cut_flag = True
+            cut &= np.isfinite(data)
+
+    if cut_flag:
+        out = np.zeros((datas.shape[0], sum(cut)))
+
+        for i in range(len(datas)):
+            out[i] = datas[i][cut]
+    else:
+        out = datas
+
+    return out, cut
+
+
 def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=None, ax=None, label=None, fig_kwargs=None, title=None,
                        nominal_values=False, log_space=False, stats_box=False, norm=None, **mpl_kwargs):
     """
@@ -291,6 +333,144 @@ def mpl_hist_from_data(bin_edges: Union[list, np.ndarray, int], data, weights=No
                        stats_box=stats_box,  **mpl_kwargs)
 
 
+def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  interpolation="none",
+           cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, no_cbar=False, **imshow_kwargs):
+    """
+
+    Args:
+        Zdata:
+        xbins:
+        ybins:
+        ax:
+        extent:
+        logz:
+        interpolation:
+        cmap:
+        vmin:
+        vmax:
+        **imshow_kwargs:
+
+    Returns:
+        Dict with keys:
+            'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'bins', 'zdata', 'vmin', 'vmax', 'norm', 'cmap'
+
+    """
+    Zdata = np.asarray(Zdata)
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    def get_min_after_zero(a):
+        return min(a[np.where(a > 0)])
+
+    if xbins is None:
+        xbins = np.arange(Zdata.shape[0])
+
+    if ybins is None:
+        ybins = np.arange(Zdata.shape[1])
+
+    Zdata = Zdata.transpose()
+
+    if extent is None:
+        extent = [xbins[0], xbins[-1], ybins[0], ybins[-1]]
+
+    flatZ = Zdata.flatten()
+    abs_flatZ = np.abs(flatZ)
+
+    if logz:
+        if min(flatZ) < 0:
+            linthresh = np.percentile(abs_flatZ, 1)
+            if linthresh == 0:
+                linthresh = get_min_after_zero(abs_flatZ)
+
+            norm = SymLogNorm(linthresh=linthresh, vmin=vmin, vmax=vmax, )
+        else:
+            norm = LogNorm(vmin=vmin, vmax=vmax, )
+    else:
+        norm = None
+
+    if imshow_kwargs is None:
+        imshow_kwargs = {}
+
+    im = ax.imshow(Zdata, origin='lower', extent=extent, norm=norm, cmap=cmap, interpolation=interpolation, aspect='auto', **imshow_kwargs)
+    plt.subplots_adjust(right=0.97)
+
+    if not no_cbar:
+        cbar = fig.colorbar(im, ax=ax)
+        ax_cbar = cbar.ax
+    else:
+        cbar = ax_cbar = None
+
+    zflat = Zdata.flatten()
+
+    return {'ax': ax, 'ax_cbar': ax_cbar, 'im': im, 'cbar': cbar,
+            'xbins': xbins, 'ybins': ybins, 'Zdata': Zdata,
+            'vmax': np.max(zflat), 'vmin': np.min(zflat), 'bins': (xbins, ybins), 'norm': norm, 'cmap': cmap}
+
+
+def hist2D_from_data(datax, datay, ax=None, bins=100, logz=False, extent=None, weights=None,
+                     cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, interpolation="none",
+                     imshow_kwargs=None, swallow_nans=False, no_cbar=False):
+    """
+    2D heatmap, similar to ROOTs TH2D
+
+    Args:
+        datax: x data values,  to be binned
+        datay: y data values,  to be binned
+        ax:
+        bins:
+            If int, then the number of bins per axis.
+            If two tuple, then number of bins for each axis.
+            If two tuple of arrays, then bins for each axis.
+            If three tuple of floats, e.g.,
+                    (min_percent, max_percent, n_bins)
+                then percentile bins are generated.
+        logz:
+        extent:
+        weights:
+        cmap:
+        vmin: Min value on color bar
+        vmax: Max value on colorbar
+        interpolation:
+        imshow_kwargs:
+        swallow_nans:
+
+    Returns:
+
+        Dict with keys:
+            'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'bins', 'zdata', 'vmin', 'vmax', 'norm', 'cmap'
+
+    """
+    datay = np.asarray(datay)
+    datax = np.asarray(datax)
+
+    if swallow_nans:
+        (datax, datay), _ = remove_nans([datax, datay])
+
+    if isinstance(bins, tuple) and len(bins) == 3:
+        minp, maxp, nbins = bins
+        binsx = np.linspace(np.percentile(datax, minp), np.percentile(datax, maxp), nbins)
+        binsy = np.linspace(np.percentile(datay, minp), np.percentile(datay, maxp), nbins)
+        bins = binsx, binsy
+
+    if isinstance(weights, (int, float)):
+        weights = np.ones_like(datax) * weights
+
+    try:
+        Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins, weights=weights)
+    except ValueError:
+        if np.isnan(np.min([datay, datax])):
+            raise ValueError('NaNs in data! Try again with `swallow_nans` set to True')
+        raise
+
+    if imshow_kwargs is None:
+        imshow_kwargs = {}
+
+    return hist2D(Z, xbins=binsx, ybins=binsy, ax=ax, extent=extent, logz=logz,
+                  interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax, no_cbar=no_cbar,
+                  **imshow_kwargs)
 
 
 if __name__ == '__main__':

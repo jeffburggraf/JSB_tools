@@ -5,8 +5,8 @@ with open("README.md", "r") as fh:
 setuptools.setup(
     name="JSB_tools",
     version="0.0.1",
-    author="Jeffrey Burggraf",
-    author_email="jeffburggraf@gmail.com",
+    author="Jeff",
+    author_email="",
     description="Scientific tools",
     long_description=long_description,
     long_description_content_type="text/markdown",

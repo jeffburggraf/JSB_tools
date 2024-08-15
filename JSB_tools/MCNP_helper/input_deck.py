@@ -692,8 +692,7 @@ class InputDeck:
             if self.__num_writes__ == 1:
                 hpc_msg = 'To do X, Type the following command in your local shell:\n'
                 hpc_msg += "... move sim files to HPC:\n"\
-                           f"\t{HPCScript.gen_scp_folder2remote(f'{new_file_full_path.parents[1]}/*', 
-                                                               f'~/mcnp_sims/{hpc_simname}')}"
+                           f"\t{HPCScript.gen_scp_folder2remote(f'{new_file_full_path.parents[1]}/*', f'~/mcnp_sims/{hpc_simname}')}"
 
                 hpc_msg += ('\n\n... move sim files back to local machine:\n'
                             f'\trsync -chavzP --stats burgjs@{hpc_cluster}1.hpc.inl.gov:~/mcnp_sims/{hpc_simname}/ {self.inp_root_directory} ')

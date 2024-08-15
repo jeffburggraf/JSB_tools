@@ -361,10 +361,10 @@ class MCNPStoppingPowerData:
 
         if density is None:
             unit_conversion, units = 1, 'cm'
-            ax.set_ylabel("range [g/cm2]")
+            ax.set_ylabel("Range [g/cm2]")
         else:
             unit_conversion, units = self._dist_unit(y, units)
-            ax.set_ylabel("range [{}]".format(units))
+            ax.set_ylabel("Range [{}]".format(units))
 
         if energies is None:
             x = self.energies
@@ -531,6 +531,8 @@ class MCNPStoppingPowerData:
 
 if __name__ == '__main__':
     from JSB_tools.MCNP_helper.materials import EJ600
+    from JSB_tools import mpl_style
+    mpl_style(fig_size=(7,7))
 
     mat = EJ600()
     # Material.get_nuclide_atom_densities()
@@ -538,12 +540,17 @@ if __name__ == '__main__':
     # assert isinstance(mat, Material)
     stope = MCNPStoppingPowerData.gen_stopping_power('electron', material=mat)
 
-    ax = stope.plot_range(energies=np.linspace(0, 3, 100), label='electron')
+    ax = stope.plot_range(energies=np.linspace(0, 2.5, 100), label='Electron', units='mm')
 
     stop_p = MCNPStoppingPowerData.gen_stopping_power('proton', material=mat)
 
-    stop_p.plot_range(energies=np.linspace(0, 3, 100), ax=ax, label='Proton')
+    stop_p.plot_range(energies=np.linspace(0, 2.5, 100), ax=ax, label='Proton', units='mm')
 
     stope.plot_dedx(density=1)
+
+    ax.set_title(r'\textbf{Range of protons/electrons in EJ600}')
+    ax.set_xlabel('Particle energy [MeV]')
+
+    plt.gcf().subplots_adjust(left=0.135)
 
     plt.show()

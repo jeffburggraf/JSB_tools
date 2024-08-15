@@ -1,21 +1,23 @@
-name: JSB_tools_3.9
+#name: openmc
+# Command: mamba env update -c conda-forge --file ~/PycharmProjects/JSB_tools/environment.yml --prune  --name env_name
 channels:
   - conda-forge
 dependencies:
-#  - root    # Problem on Windows
+#  - root    # Do manually and probably dont install both in save environment. Problem on Windows
 #  - openmc  # Problem on Windows
   - numpy
-  - numdifftools  # for lmfit internal
+  - numba
+  - numdifftools
   - scipy
   - uncertainties
   - matplotlib
   - sortedcontainers
   - pandas
+  - openssl
   - lmfit
   - bs4
-  - pip
-  - numba
-  - pip:
-    - filetime
-    - sortednp
-    - bitstring
+  - lxml
+## Uncomment below whe doing a routine installation
+#  - pip:
+#    - sortednp
+#    - bitstring

@@ -5,7 +5,6 @@ todo: move some of these imports into functions to speed up loading of this modu
 """
 from __future__ import annotations
 import warnings
-from matplotlib.colors import LogNorm, SymLogNorm
 try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -40,7 +39,7 @@ from scipy import ndimage
 from scipy.stats import pearsonr
 from matplotlib.widgets import Button
 from matplotlib.lines import Line2D
-from JSB_tools.hist import mpl_hist, mpl_hist_from_data
+from JSB_tools.hist import mpl_hist, mpl_hist_from_data, hist2D_from_data, hist2D
 from JSB_tools.common import ProgressReport, MPLStyle, ROOT_loop
 import matplotlib
 from uncertainties.umath import sqrt as usqrt
@@ -325,169 +324,6 @@ def latex_form(val, n_digits=2):
         base = base.replace('-/+', r'\mp')
 
     return fr"${base}\times 10^{{{exp}}}$"
-
-
-def remove_nans(datas):
-    """
-    Removes NaNs of 2D NxM arrays where each array will
-        receive the same cut, returning a NxM' array.
-
-    Args:
-        datas:
-
-    Returns:
-        (NxM' array), cut
-    """
-
-    datas = np.asarray(datas)
-
-    if datas.ndim == 1:
-        datas = datas[np.newaxis, :]
-
-    cut = np.ones(len(datas[0]), dtype=bool)
-
-    cut_flag = False
-
-    for data in datas:
-        assert len(data) == len(datas[0])
-
-        if any(np.isnan([np.min(data), np.max(data)])):
-            cut_flag = True
-            cut &= np.bitwise_not(np.isnan(data))
-
-    if cut_flag:
-        out = np.zeros((datas.shape[0], sum(cut)))
-
-        for i in range(len(datas)):
-            out[i] = datas[i][cut]
-    else:
-        out = datas
-
-    return out, cut
-
-
-def hist2D(Zdata, xbins=None, ybins=None, ax=None, extent=None, logz=False,  interpolation="none",
-           cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, **imshow_kwargs):
-    """
-
-    Args:
-        Zdata:
-        xbins:
-        ybins:
-        ax:
-        extent:
-        logz:
-        interpolation:
-        cmap:
-        vmin:
-        vmax:
-        **imshow_kwargs:
-
-    Returns:
-        Dict with keys:
-            'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'bins', 'zdata', 'vmin', 'vmax', 'norm', 'cmap'
-
-    """
-    Zdata = np.asarray(Zdata)
-
-    if ax is None:
-        fig, ax = plt.subplots()
-    else:
-        fig = ax.figure
-
-    def get_min_after_zero(a):
-        return min(a[np.where(a > 0)])
-
-    if xbins is None:
-        xbins = np.arange(Zdata.shape[0])
-
-    if ybins is None:
-        ybins = np.arange(Zdata.shape[1])
-
-    Zdata = Zdata.transpose()
-
-    if extent is None:
-        extent = [xbins[0], xbins[-1], ybins[0], ybins[-1]]
-
-    flatZ = Zdata.flatten()
-    abs_flatZ = np.abs(flatZ)
-
-    if logz:
-        if min(flatZ) < 0:
-            linthresh = np.percentile(abs_flatZ, 1)
-            if linthresh == 0:
-                linthresh = get_min_after_zero(abs_flatZ)
-
-            norm = SymLogNorm(linthresh=linthresh, vmin=vmin, vmax=vmax, )
-        else:
-            norm = LogNorm(vmin=vmin, vmax=vmax, )
-    else:
-        norm = None
-
-    if imshow_kwargs is None:
-        imshow_kwargs = {}
-
-    im = ax.imshow(Zdata, origin='lower', extent=extent, norm=norm, cmap=cmap, interpolation=interpolation, aspect='auto', **imshow_kwargs)
-    plt.subplots_adjust(right=0.97)
-
-    cbar = fig.colorbar(im, ax=ax)
-
-    zflat = Zdata.flatten()
-
-    return {'ax': ax, 'ax_cbar': cbar.ax, 'im': im, 'cbar': cbar,
-            'xbins': xbins, 'ybins': ybins, 'Zdata': Zdata,
-            'vmax': np.max(zflat), 'vmin': np.min(zflat), 'bins': (xbins, ybins), 'norm': norm, 'cmap': cmap}
-
-
-def hist2D_from_data(datax, datay, ax=None, bins=100, logz=False, extent=None, weights=None,
-                     cmap=matplotlib.colormaps['jet'], vmin=None, vmax=None, interpolation="none",
-                     imshow_kwargs=None, swallow_nans=False):
-    """
-    2D heatmap, similar to ROOTs TH2D
-
-    Args:
-        datax: x data values,  to be binned
-        datay: y data values,  to be binned
-        ax:
-        bins:
-        logz:
-        extent:
-        weights:
-        cmap:
-        vmin: Min value on color bar
-        vmax: Max value on colorbar
-        interpolation:
-        imshow_kwargs:
-        swallow_nans:
-
-    Returns:
-
-        Dict with keys:
-            'ax', 'ax_cbar', 'im', 'cbar', 'xbins', 'ybins', 'bins', 'zdata', 'vmin', 'vmax', 'norm', 'cmap'
-
-    """
-    datay = np.asarray(datay)
-    datax = np.asarray(datax)
-
-    if swallow_nans:
-        (datax, datay), _ = remove_nans([datax, datay])
-
-    if isinstance(weights, (int, float)):
-        weights = np.ones_like(datax) * weights
-
-    try:
-        Z, binsx, binsy = np.histogram2d(datax, datay, bins=bins, weights=weights)
-    except ValueError:
-        if np.isnan(np.min([datay, datax])):
-            raise ValueError('NaNs in data! Try again with `swallow_nans` set to True')
-        raise
-
-    if imshow_kwargs is None:
-        imshow_kwargs = {}
-
-    return hist2D(Z, xbins=binsx, ybins=binsy, ax=ax, extent=extent, logz=logz,
-                  interpolation=interpolation, cmap=cmap, vmin=vmin, vmax=vmax,
-                  **imshow_kwargs)
 
 
 def binned_down_sample(bins, y, yerr, n):
