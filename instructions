@@ -7,13 +7,13 @@ OpenMC installation (from source)
         export OpenMP_ROOT=$(brew --prefix)/opt/libomp
 
     Run the following commands:
+        conda activate ENV_NAME
         git clone --recurse-submodules https://github.com/openmc-dev/openmc.git
         cd openmc
         mkdir build && cd build
         cmake ..
         make
         sudo make install
-
-    Activate desired conda environment, then run,
+        # now install:
         cd ~/openmc
         python -m pip install .

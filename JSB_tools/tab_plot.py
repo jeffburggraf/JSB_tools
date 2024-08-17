@@ -506,10 +506,10 @@ class TabPlot:
             axs = np.array(list(axs_out.values()))
         else:
             axs_out = axs = self.fig.subplots(nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey, subplot_kw=subplot_kw,
-                                    gridspec_kw=gridspec_kw, *args, **kwargs)
+                                              gridspec_kw=gridspec_kw, *args, **kwargs)
 
-        if not hasattr(axs, '__iter__'):
-            axs = np.array([axs])
+            if not hasattr(axs, '__iter__'):
+                axs = axs_out = np.array([axs])
 
         axs_flat = axs.flatten()
 
