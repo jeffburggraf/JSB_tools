@@ -6,6 +6,7 @@ import time
 
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from mpl_toolkits.mplot3d import Axes3D
 from pathlib import Path
 
 
@@ -117,8 +118,8 @@ class MPLStyle:
 
     @staticmethod
     def set_bold_axes_labels():
-        def new_func(axis):
-            orig_func = getattr(Axes, f'set_{axis}label')
+        def new_func(axis, class_):
+            orig_func = getattr(class_, f'set_{axis}label')
 
             def f(self, *args, **kwargs):
                 args = list(args)
@@ -127,8 +128,12 @@ class MPLStyle:
 
             return f
 
-        for x in ['x', 'y']:
-            setattr(Axes, f'set_{x}label', new_func(x))
+        for x in ['x', 'y', 'z']:
+            if x == 'z':
+                class_ = Axes3D
+            else:
+                class_ = Axes
+            setattr(class_, f'set_{x}label', new_func(x, class_))
 
     def __init__(self, minor_xticks=True, minor_yticks=True, bold_ticklabels=True, bold_axes_labels=True,
                  usetex=True, fontscale=None, fig_size=(15, 8), scilimitsx=(-2, 4), scilimitsy=(-3, 3)):
